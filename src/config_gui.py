@@ -483,9 +483,10 @@ class ConfigGUI:
 
         cx = self.preview_size // 2
         cy = self.preview_size // 2
-        inner_r = 85
-        outer_r = 160
-        dead_r = 28
+        # 使用配置文件中的半径，保持与实际运行一致
+        inner_r = self.config.get("settings", {}).get("ring_radius", 100)
+        outer_r = self.config.get("settings", {}).get("outer_ring_radius", 180)
+        dead_r = self.config.get("settings", {}).get("dead_zone_radius", 30)
 
         self._preview_cx = cx
         self._preview_cy = cy
