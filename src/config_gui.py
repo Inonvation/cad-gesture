@@ -233,13 +233,16 @@ class ConfigGUI:
         top_frame = ttk.Frame(content)
         top_frame.pack(fill=tk.X, pady=(0, 20))
 
-        # 圆盘预览区
-        preview_frame = ttk.Labelframe(top_frame, text=" 圆盘预览 ", padding=15)
+        # 圆盘预览区（无边框，背景融入窗口）
+        preview_frame = ttk.Frame(top_frame)
         preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # 提示文字
+        ttk.Label(preview_frame, text="圆盘预览",
+                  bootstyle="secondary",
+                  font=("Microsoft YaHei", 9, "bold")).pack(anchor=tk.W, pady=(0, 2))
         ttk.Label(preview_frame, text="点击扇区编辑 | 拖放预设命令到扇区",
-                  bootstyle="secondary").pack(anchor=tk.W, pady=(0, 10))
+                  bootstyle="secondary").pack(anchor=tk.W, pady=(0, 8))
 
         self.preview_size = 420
         self.preview_canvas = tk.Canvas(
