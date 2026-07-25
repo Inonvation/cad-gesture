@@ -85,7 +85,12 @@ class ConfigGUI:
             minsize=(1000, 700)
         )
         # 防止窗口切换/最小化时闪黑（Windows 特有问题）
+        # 设置所有层级的背景色，确保重绘时不会露出黑色
         self.root.configure(bg="#222222")
+        self.root.option_add("*background", "#222222")
+        self.root.option_add("*foreground", "#ffffff")
+        self.root.update_idletasks()
+        self._fix_window_flicker()
 
         # 标记是否有未保存的修改
         self._has_changes = False
@@ -97,6 +102,39 @@ class ConfigGUI:
         # 绑定快捷键
         self.root.bind("<Control-s>", lambda e: self._save())
         self.root.bind("<Escape>", lambda e: self._cancel_drag())
+
+    def _fix_window_flicker(self):
+        """修复 Windows 窗口切换/最小化时闪黑问题
+        
+        原理：用 ctypes 设置窗口类背景刷为深色，这样 Windows 在重绘窗口时
+        会用深色填充而不是默认的黑色/白色，避免闪烁。
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            # 获取窗口句柄
+            hwnd = self.root.winfo_id()
+            while True:
+                parent = ctypes.windll.user32.GetParent(hwnd)
+                if parent == 0:
+                    break
+                hwnd = parent
+
+            # 创建深色画刷 (#222222 = RGB(34, 34, 34))
+            dark_color = ctypes.windll.gdi32.CreateSolidBrush(
+                ctypes.c_uint32(0x00222222)  # COLORREF 格式: 0x00BBGGRR
+            )
+
+            # 设置窗口类背景刷 (GCLP_HBRBACKGROUND = -10)
+            GCLP_HBRBACKGROUND = -10
+            ctypes.windll.user32.SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, dark_color)
+
+            # 强制重绘窗口
+            ctypes.windll.user32.InvalidateRect(hwnd, None, True)
+            ctypes.windll.user32.UpdateWindow(hwnd)
+        except Exception as e:
+            print(f"[ConfigGUI] 无法设置窗口背景刷: {e}")
 
     def _setup_styles(self):
         """设置样式 - ttkbootstrap darkly 主题自动处理大部分样式"""
