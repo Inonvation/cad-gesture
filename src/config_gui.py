@@ -498,9 +498,9 @@ class ConfigGUI:
         n = self.config.get("settings", {}).get("sector_count", 8)
         self._preview_n = n
 
-        # 绘制外层扇区
+        # 绘制外层扇区（与 radial_menu.py 保持一致）
         for i in range(n):
-            start_angle = i * 360 / n - 90 - 360 / (2 * n)
+            start_angle = i * 360 / n - 90 + 360 / (2 * n)
             extent = 360 / n
             is_selected = self._selected_sector == ("outer", i)
             is_hovered = self._hovered_sector == ("outer", i)
@@ -525,9 +525,9 @@ class ConfigGUI:
 
             # 外层标签
             mid_angle = math.radians(i * 360 / n - 90)
-            label_r = (inner_r + outer_r) / 2
+            label_r = (inner_r + outer_r) / 2 + (outer_r - inner_r) * 0.25
             lx = cx + label_r * math.cos(mid_angle)
-            ly = cy + label_r * math.sin(mid_angle)
+            ly = cy - label_r * math.sin(mid_angle)
 
             cfg = profile.get("outer_sectors", {}).get(str(i), {})
             label = cfg.get("label", "")
@@ -536,9 +536,9 @@ class ConfigGUI:
                 self.preview_canvas.create_text(lx, ly, text=label, fill=text_fill,
                                                 font=("Microsoft YaHei", 9), anchor=tk.CENTER)
 
-        # 绘制内层扇区
+        # 绘制内层扇区（与 radial_menu.py 保持一致）
         for i in range(n):
-            start_angle = i * 360 / n - 90 - 360 / (2 * n)
+            start_angle = i * 360 / n - 90 + 360 / (2 * n)
             extent = 360 / n
             is_selected = self._selected_sector == ("inner", i)
             is_hovered = self._hovered_sector == ("inner", i)
@@ -565,7 +565,7 @@ class ConfigGUI:
             mid_angle = math.radians(i * 360 / n - 90)
             label_r = (dead_r + inner_r) / 2
             lx = cx + label_r * math.cos(mid_angle)
-            ly = cy + label_r * math.sin(mid_angle)
+            ly = cy - label_r * math.sin(mid_angle)
 
             cfg = profile.get("sectors", {}).get(str(i), {})
             label = cfg.get("label", "")
