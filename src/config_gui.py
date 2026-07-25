@@ -7,35 +7,23 @@ import tkinter as tk
 from tkinter import messagebox
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from typing import Dict, Any, Optional, Callable, List, Tuple
+from typing import Dict, Any, Optional, Callable, Tuple
 
 from src.config_manager import (
-    load_config, save_config, get_active_profile,
-    get_profile_names, set_active_profile, _default_config,
+    load_config, save_config, get_profile_names, _default_config,
     get_preset_commands
 )
 from src.gesture_engine import calc_sector
 
 
-# ========== 配色方案 - ttkbootstrap darkly 主题变量 ==========
-# 用于 Canvas 和手动配色区域
+# ========== 配色方案 - 仅保留 Canvas 绘制使用的颜色 ==========
 COLORS = {
     "bg": "#222222",
-    "sidebar_bg": "#2a2a2a",
-    "panel_bg": "#303030",
-    "card_bg": "#3c3c3c",
-    "accent": "#375a7f",
-    "accent_hover": "#4a7fb5",
-    "accent_dim": "#2e4d6e",
     "text": "#ffffff",
     "text_dim": "#999999",
-    "text_bright": "#ffffff",
+    "accent": "#375a7f",
+    "accent_dim": "#2e4d6e",
     "border": "#444444",
-    "success": "#00bc8c",
-    "warning": "#f39c12",
-    "danger": "#e74c3c",
-    "preset_bg": "#353535",
-    "preset_hover": "#454545",
     "inner_sector": "#3c6e91",
     "inner_sector_hover": "#4a8ab5",
     "inner_sector_hl": "#375a7f",
@@ -44,6 +32,10 @@ COLORS = {
     "outer_sector_hl": "#375a7f",
     "dead_zone": "#1a1a1a",
     "selected_border": "#4a7fb5",
+    "preset_bg": "#353535",
+    "preset_hover": "#454545",
+    "panel_bg": "#303030",
+    "card_bg": "#3c3c3c",
     "drag_proxy_bg": "#375a7f",
 }
 
@@ -57,8 +49,6 @@ class ConfigGUI:
         self.current_profile_name = self.config.get("settings", {}).get("active_profile", "AutoCAD-常用")
         self.preset_commands = get_preset_commands()
 
-        # 选中的预设命令
-        self._selected_preset: Optional[Dict[str, str]] = None
         # 当前选中的扇区 (layer, index)
         self._selected_sector: Optional[Tuple[str, int]] = None
         # 当前 hover 的扇区 (layer, index)
@@ -102,18 +92,12 @@ class ConfigGUI:
         # 绑定快捷键
         self.root.bind("<Control-s>", lambda e: self._save())
         self.root.bind("<Escape>", lambda e: self._cancel_drag())
+        # 关闭窗口时检查未保存修改
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _fix_window_flicker(self):
-        """修复 Windows 窗口切换/最小化时闪黑问题
-        
-        原理：用 ctypes 设置窗口类背景刷为深色，这样 Windows 在重绘窗口时
-        会用深色填充而不是默认的黑色/白色，避免闪烁。
-        """
+        """修复 Windows 窗口切换/最小化时闪黑问题"""
         try:
-            import ctypes
-            from ctypes import wintypes
-
-            # 获取窗口句柄
             hwnd = self.root.winfo_id()
             while True:
                 parent = ctypes.windll.user32.GetParent(hwnd)
@@ -121,16 +105,15 @@ class ConfigGUI:
                     break
                 hwnd = parent
 
-            # 创建深色画刷 (#222222 = RGB(34, 34, 34))
+            # 创建深色画刷 (#222222 = RGB(34,34,34))
             dark_color = ctypes.windll.gdi32.CreateSolidBrush(
-                ctypes.c_uint32(0x00222222)  # COLORREF 格式: 0x00BBGGRR
+                ctypes.c_uint32(0x00222222)  # COLORREF: 0x00BBGGRR
             )
+            # 释放旧画刷
+            old_brush = ctypes.windll.user32.SetClassLongPtrW(hwnd, -10, dark_color)
+            if old_brush:
+                ctypes.windll.gdi32.DeleteObject(old_brush)
 
-            # 设置窗口类背景刷 (GCLP_HBRBACKGROUND = -10)
-            GCLP_HBRBACKGROUND = -10
-            ctypes.windll.user32.SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, dark_color)
-
-            # 强制重绘窗口
             ctypes.windll.user32.InvalidateRect(hwnd, None, True)
             ctypes.windll.user32.UpdateWindow(hwnd)
         except Exception as e:
@@ -231,7 +214,7 @@ class ConfigGUI:
 
         # 上部：圆盘预览 + 详情编辑
         top_frame = ttk.Frame(content)
-        top_frame.pack(fill=tk.X, pady=(0, 20))
+        top_frame.pack(fill=tk.BOTH, expand=False, pady=(0, 20))
 
         # 圆盘预览区（无边框，背景融入窗口）
         preview_frame = ttk.Frame(top_frame)
@@ -464,7 +447,6 @@ class ConfigGUI:
         self.current_profile_name = profile_name
         self._selected_sector = None
         self._hovered_sector = None
-        self._selected_preset = None
         self._updating_detail = True
         self._update_detail_panel()
         self._updating_detail = False
@@ -532,8 +514,7 @@ class ConfigGUI:
             cfg = profile.get("outer_sectors", {}).get(str(i), {})
             label = cfg.get("label", "")
             if label:
-                text_fill = COLORS["text_bright"] if (is_selected or is_hovered) else COLORS["text"]
-                self.preview_canvas.create_text(lx, ly, text=label, fill=text_fill,
+                self.preview_canvas.create_text(lx, ly, text=label, fill=COLORS["text"],
                                                 font=("Microsoft YaHei", 9), anchor=tk.CENTER)
 
         # 绘制内层扇区（与 radial_menu.py 完全一致）
@@ -570,8 +551,7 @@ class ConfigGUI:
             cfg = profile.get("sectors", {}).get(str(i), {})
             label = cfg.get("label", "")
             if label:
-                text_fill = COLORS["text_bright"] if (is_selected or is_hovered) else COLORS["text"]
-                self.preview_canvas.create_text(lx, ly, text=label, fill=text_fill,
+                self.preview_canvas.create_text(lx, ly, text=label, fill=COLORS["text"],
                                                 font=("Microsoft YaHei", 8, "bold"), anchor=tk.CENTER)
 
         # 中心死区 — 显示当前选中扇区的信息
@@ -772,7 +752,7 @@ class ConfigGUI:
 
         label_text = preset_info.get("label", "")
         lbl = tk.Label(proxy, text=label_text, bg=COLORS["drag_proxy_bg"],
-                       fg=COLORS["text_bright"], font=("Microsoft YaHei", 10, "bold"),
+                       fg=COLORS["text"], font=("Microsoft YaHei", 10, "bold"),
                        padx=12, pady=6)
         lbl.pack()
 
@@ -800,15 +780,8 @@ class ConfigGUI:
         rel_x = event.x_root - canvas_x
         rel_y = event.y_root - canvas_y
 
-        # 用 canvasx/canvasy 转换（兼容 scrollregion）
         cx = canvas_widget.canvasx(rel_x)
         cy = canvas_widget.canvasy(rel_y)
-
-        # 调试：显示坐标到状态栏
-        self.status_label.config(
-            text=f"拖动: x_root={event.x_root} y_root={event.y_root} "
-                 f"canvas@=({canvas_x},{canvas_y}) rel=({rel_x},{rel_y}) "
-                 f"canvas=({cx:.0f},{cy:.0f})")
 
         # 检查是否在 canvas 范围内
         if 0 <= cx <= self.preview_size and 0 <= cy <= self.preview_size:
@@ -839,7 +812,6 @@ class ConfigGUI:
         rel_x = event.x_root - canvas_x
         rel_y = event.y_root - canvas_y
 
-        # 用 canvasx/canvasy 转换（兼容 scrollregion）
         cx = canvas_widget.canvasx(rel_x)
         cy = canvas_widget.canvasy(rel_y)
 
@@ -1134,6 +1106,19 @@ class ConfigGUI:
         self._refresh_profile_tree()
         self._load_profile(self.current_profile_name)
         self.status_label.config(text="已重置为默认配置")
+
+    def _on_close(self):
+        """关闭窗口时检查未保存修改"""
+        if self._has_changes:
+            result = messagebox.askyesnocancel("未保存的修改",
+                "有未保存的修改，是否保存？")
+            if result is True:  # 是 → 保存
+                self._save()
+            elif result is False:  # 否 → 不保存
+                self.root.destroy()
+            # 取消 → 什么都不做
+        else:
+            self.root.destroy()
 
     def run(self):
         """运行配置界面"""
