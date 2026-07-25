@@ -214,7 +214,7 @@ class ConfigGUI:
 
         # 上部：圆盘预览 + 详情编辑
         top_frame = ttk.Frame(content)
-        top_frame.pack(fill=tk.BOTH, expand=False, pady=(0, 20))
+        top_frame.pack(fill=tk.X, pady=(0, 20))
 
         # 圆盘预览区（无边框，背景融入窗口）
         preview_frame = ttk.Frame(top_frame)
