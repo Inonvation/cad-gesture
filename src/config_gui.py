@@ -84,6 +84,8 @@ class ConfigGUI:
             size=(1200, 800),
             minsize=(1000, 700)
         )
+        # 防止窗口切换/最小化时闪黑（Windows 特有问题）
+        self.root.configure(bg="#222222")
 
         # 标记是否有未保存的修改
         self._has_changes = False
@@ -456,7 +458,7 @@ class ConfigGUI:
 
         # 绘制外层扇区
         for i in range(n):
-            start_angle = i * 360 / n - 90 + 360 / (2 * n)
+            start_angle = i * 360 / n - 90 - 360 / (2 * n)
             extent = 360 / n
             is_selected = self._selected_sector == ("outer", i)
             is_hovered = self._hovered_sector == ("outer", i)
@@ -494,7 +496,7 @@ class ConfigGUI:
 
         # 绘制内层扇区
         for i in range(n):
-            start_angle = i * 360 / n - 90 + 360 / (2 * n)
+            start_angle = i * 360 / n - 90 - 360 / (2 * n)
             extent = 360 / n
             is_selected = self._selected_sector == ("inner", i)
             is_hovered = self._hovered_sector == ("inner", i)
