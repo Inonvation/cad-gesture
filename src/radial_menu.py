@@ -1,20 +1,22 @@
 """圆盘菜单模块 — Fluent 风格三层径向圆盘"""
 
 import math
+import time
 import tkinter as tk
 from typing import Dict, Any, Optional
 
 from src.gesture_engine import calc_sector
 from src.theme import get_menu_theme, MenuTheme
-from src.renderer import draw_ring, ring_state_normal
+from src.renderer import draw_ring, ring_state_normal, _fit_font
 
 
 class RadialMenu:
     """径向圆盘菜单——Fluent 风格三层扇形选择面板"""
 
-    def __init__(self, config: dict, parent=None):
+    def __init__(self, config: dict, parent=None, on_cancel=None):
         self.config = config
         self._parent = parent
+        self.on_cancel = on_cancel  # 菜单被 Esc/左键取消时回调（引擎复位手势状态）
         self._root: Optional[tk.Toplevel] = None
         self._canvas: Optional[tk.Canvas] = None
         self._visible: bool = False
@@ -25,6 +27,7 @@ class RadialMenu:
         self._in_extension_zone: bool = False
         self._profile: Optional[Dict[str, Any]] = None
         self._highlight_throttle_id: Optional[str] = None
+        self._shown_at: float = 0.0  # 本次显示时刻（幽灵菜单超时防护）
         self._theme: MenuTheme = get_menu_theme(
             config.get("settings", {}).get("menu_theme", "azure"))
 
@@ -46,8 +49,8 @@ class RadialMenu:
             self._root, width=self._size, height=self._size,
             bg=self._theme.menu_bg, highlightthickness=0)
         self._canvas.pack()
-        self._root.bind("<Escape>", lambda e: self.hide())
-        self._root.bind("<Button-1>", lambda e: self.hide())
+        self._root.bind("<Escape>", self._handle_cancel)
+        self._root.bind("<Button-1>", self._handle_cancel)
         self._root.focus_set()
 
     @property
@@ -83,16 +86,17 @@ class RadialMenu:
         self._root.attributes("-alpha", 0.0)
         self._root.deiconify()
         self._visible = True
+        self._shown_at = time.monotonic()
         self._fade_in(0)
 
     def _fade_in(self, step: int):
-        """淡入动画（加速呼出）"""
+        """淡入动画（快速呼出）"""
         if not self._visible:
             return
-        alpha = min(step / 7, 1.0)
+        alpha = min(step / 5, 1.0)
         self._root.attributes("-alpha", alpha)
-        if step < 7:
-            self._root.after(12, lambda: self._fade_in(step + 1))
+        if step < 5:
+            self._root.after(8, lambda: self._fade_in(step + 1))
 
     def hide(self):
         if self._root and self._visible:
@@ -101,12 +105,27 @@ class RadialMenu:
                 self._highlight_throttle_id = None
             self._root.withdraw()
             self._visible = False
+            self._shown_at = 0.0
+
+    def _handle_cancel(self, event=None):
+        """Esc / 左键取消：隐藏菜单并回传引擎复位手势状态，阻止松键补发命令"""
+        was_visible = self._visible
+        self.hide()
+        if was_visible and self.on_cancel:
+            self.on_cancel()
 
     def is_visible(self) -> bool:
         return self._visible
 
     def update_highlight(self, mouse_x: int, mouse_y: int):
         if not self._visible or self._canvas is None:
+            return
+        # 幽灵菜单防护：钩子被系统摘除等异常导致引擎状态失同步时，
+        # 菜单显示超过 15s 自动隐藏并复位引擎，避免残留圆盘挡住 CAD
+        if self._shown_at and time.monotonic() - self._shown_at > 15.0:
+            self.hide()
+            if self.on_cancel:
+                self.on_cancel()
             return
         dx, dy = mouse_x - self._center_x, mouse_y - self._center_y
         dist = math.sqrt(dx * dx + dy * dy)
@@ -195,33 +214,32 @@ class RadialMenu:
             cx + dead_r + 3, cy + dead_r + 3,
             outline=t.dead_zone_outline, width=1)
 
-        # 中心描述文字（鼠标拖出第二圈边界时显示第三圈扩展命令）
-        center_font = ("Microsoft YaHei", 10, "bold")
-        if self._in_extension_zone and self._highlighted_sector >= 0:
-            cfg = self._profile.get("extension_sectors", {}).get(
-                str(self._highlighted_sector), {})
-            label = cfg.get("label", "")
-            desc = cfg.get("description", "")
-            text = f"扩展 {label}\n{desc}" if label and desc else f"扩展 {desc or label}"
-            self._canvas.create_text(
-                cx, cy, text=text,
-                fill=t.extension.highlight, font=center_font)
-        elif self._highlighted_sector >= 0:
-            if self._highlighted_outer:
+        # 中心文字：只显示扇区命令名(label)，字号自动适配中心不超出
+        center_base = ("Microsoft YaHei", 12, "bold")
+        label = ""
+        if self._highlighted_sector >= 0:
+            if self._in_extension_zone:
+                cfg = self._profile.get("extension_sectors", {}).get(
+                    str(self._highlighted_sector), {})
+            elif self._highlighted_outer:
                 cfg = self._profile.get("outer_sectors", {}).get(
                     str(self._highlighted_sector), {})
+                if not cfg:
+                    cfg = self._profile.get("sectors", {}).get(
+                        str(self._highlighted_sector), {})
             else:
                 cfg = self._profile.get("sectors", {}).get(
                     str(self._highlighted_sector), {})
-            if self._highlighted_outer and not cfg:
-                cfg = self._profile.get("sectors", {}).get(
-                    str(self._highlighted_sector), {})
-            desc = cfg.get("description", "")
             label = cfg.get("label", "")
-            text = f"{label}\n{desc}" if label and desc else (desc or label)
-            self._canvas.create_text(
-                cx, cy, text=text,
-                fill=t.center_text, font=center_font)
+
+        if label:
+            max_w = dead_r * 2 * 0.85
+            font = _fit_font(label, center_base, max_w)
+            color = t.extension.highlight if self._in_extension_zone else t.center_text
+            self._canvas.create_text(cx, cy, text=label, fill=color, font=font)
+        else:
+            self._canvas.create_text(cx, cy, text="释放", fill=t.center_text,
+                                     font=("Microsoft YaHei", 10))
 
     def update_config(self, config: dict):
         self.config = config

@@ -1,5 +1,6 @@
 """手势引擎模块 - 窗口类型检测 + 双层圆盘支持"""
 
+import os
 import math
 import time
 import threading
@@ -64,7 +65,6 @@ class GestureEngine:
         self._menu_shown: bool = False
         self._in_extension_zone: bool = False
         self._window_type: str = "autocad"
-        self._trigger_distance: int = 10
         self._window_cache: Tuple[str, float] = ("", 0.0)
         self._lock = threading.Lock()
         self._hook = None
@@ -72,7 +72,12 @@ class GestureEngine:
         self._callback = None
         self._starting = False  # 防止 start() 重入
         self._hook_ready = threading.Event()  # 钩子安装完成信号
-        self._debug = True
+        # 调试日志默认关闭；环境变量 CAD_GESTURE_DEBUG=1 开启
+        self._debug = os.environ.get("CAD_GESTURE_DEBUG", "") in ("1", "true", "yes")
+        # 钩子线程内不直接写磁盘（低级钩子回调必须极快），日志先进内存队列，
+        # 由主线程定期 flush_logs() 落盘
+        self._pending_logs: list = []
+        self._pending_logs_lock = threading.Lock()
 
         # 设置 CallNextHookEx 参数类型（64位兼容）
         user32 = ctypes.windll.user32
@@ -86,6 +91,11 @@ class GestureEngine:
         return self.config.get("settings", {}).get("dead_zone_radius", 30)
 
     @property
+    def trigger_distance(self) -> int:
+        """弹出圆盘所需的拖动距离（px），独立于死区，可自定义"""
+        return self.config.get("settings", {}).get("trigger_distance", 15)
+
+    @property
     def ring_radius(self) -> int:
         return self.config.get("settings", {}).get("ring_radius", 100)
 
@@ -95,15 +105,40 @@ class GestureEngine:
 
     @property
     def hold_threshold_ms(self) -> int:
-        return self.config.get("settings", {}).get("hold_threshold_ms", 150)
+        return self.config.get("settings", {}).get("hold_threshold_ms", 100)
 
     @property
     def sector_count(self) -> int:
         return self.config.get("settings", {}).get("sector_count", 8)
 
     def _log(self, msg: str):
-        if self._debug:
-            get_logger().info(msg)
+        """记录调试日志。
+
+        低级钩子回调线程内不做磁盘 I/O（回调过慢会被系统摘除钩子），
+        日志先进内存队列，由主线程 flush_logs() 统一落盘。
+        """
+        if not self._debug:
+            return
+        if self._hook_thread is not None and threading.current_thread() is self._hook_thread:
+            with self._pending_logs_lock:
+                if len(self._pending_logs) < 500:
+                    self._pending_logs.append(msg)
+            return
+        get_logger().info(msg)
+
+    def flush_logs(self):
+        """将钩子线程累积的调试日志批量落盘（由主线程定期调用）"""
+        if not self._debug:
+            return
+        logs = None
+        with self._pending_logs_lock:
+            if self._pending_logs:
+                logs = self._pending_logs
+                self._pending_logs = []
+        if logs:
+            logger = get_logger()
+            for msg in logs:
+                logger.info(msg)
 
     def _detect_cad_window(self) -> str:
         now = time.monotonic()
@@ -138,7 +173,23 @@ class GestureEngine:
 
     def _hook_proc(self, nCode: int, wParam: wintypes.WPARAM,
                    lParam: wintypes.LPARAM) -> ctypes.c_ssize_t:
-        """低级鼠标钩子回调"""
+        """低级鼠标钩子回调（对外包装）
+
+        任何异常都不允许传播到 ctypes 回调机制：若异常逃逸，ctypes 会
+        返回默认值 0 而非 CallNextHookEx 的结果，导致整个鼠标钩子链断裂。
+        """
+        try:
+            return self._hook_proc_impl(nCode, wParam, lParam)
+        except Exception as e:
+            if self._debug:
+                self._log(f"钩子回调异常: {e}")
+            # 异常时也必须继续传递，保证钩子链不断
+            return ctypes.windll.user32.CallNextHookEx(
+                self._hook, nCode, wParam, lParam)
+
+    def _hook_proc_impl(self, nCode: int, wParam: wintypes.WPARAM,
+                        lParam: wintypes.LPARAM) -> ctypes.c_ssize_t:
+        """钩子回调主体逻辑"""
         if nCode != HC_ACTION:
             return ctypes.windll.user32.CallNextHookEx(
                 self._hook, nCode, wParam, lParam)
@@ -169,7 +220,7 @@ class GestureEngine:
                     dx, dy = x - self._press_pos[0], y - self._press_pos[1]
                     dist = math.sqrt(dx * dx + dy * dy)
                     held_ms = (time.monotonic() - self._press_time) * 1000
-                    if dist >= self._trigger_distance and held_ms >= self.hold_threshold_ms:
+                    if dist >= self.trigger_distance and held_ms >= self.hold_threshold_ms:
                         self._menu_shown = True
                         callback = self.on_menu_show
                         callback_args = (self._press_pos[0], self._press_pos[1],
@@ -189,25 +240,20 @@ class GestureEngine:
             with self._lock:
                 if self._is_pressed:
                     self._is_pressed = False
+                    dx, dy = x - self._press_pos[0], y - self._press_pos[1]
+                    dist = math.sqrt(dx * dx + dy * dy)
+                    held_ms = (time.monotonic() - self._press_time) * 1000
                     if self._menu_shown:
-                        dx, dy = x - self._press_pos[0], y - self._press_pos[1]
-                        dist = math.sqrt(dx * dx + dy * dy)
-                        if dist >= self.dead_zone:
-                            sec = calc_sector(dx, dy, self.sector_count)
-                            # 圈层判定：距离 > 第二圈半径 即算第三圈（扩展圈）
-                            if dist > self.outer_ring_radius:
-                                ring_type = "extension"
-                                layer = "扩展圈"
-                            elif dist > self.ring_radius:
-                                ring_type = "outer"
-                                layer = "外层"
-                            else:
-                                ring_type = "inner"
-                                layer = "内层"
-                            self._log(f"触发手势: {layer} 扇区{sec} (窗口={self._window_type})")
+                        # 长按弹菜单路径：拖出触发距离才结算
+                        if dist >= self.trigger_distance:
                             callback = self.on_gesture
-                            callback_args = (sec, ring_type, self._window_type)
-                        should_hide = True
+                            callback_args = self._resolve_gesture(dx, dy, dist)
+                    elif dist >= self.trigger_distance and held_ms >= self.hold_threshold_ms:
+                        # 快速甩动兜底：菜单来不及弹出（按住时长不足或移动后静止）
+                        # 但已拖出死区且按住够久，直接按当前方向触发，避免手势整条丢失
+                        callback = self.on_gesture
+                        callback_args = self._resolve_gesture(dx, dy, dist)
+                    should_hide = True
                     if self._in_extension_zone:
                         ext_hint_cb = self.on_extension_hint
                         ext_hint_args = (False,)
@@ -224,11 +270,32 @@ class GestureEngine:
         return ctypes.windll.user32.CallNextHookEx(
             self._hook, nCode, wParam, lParam)
 
-    def start(self):
-        """启动鼠标钩子"""
+    def _resolve_gesture(self, dx: int, dy: int, dist: float):
+        """根据拖动向量结算扇区与圈层（菜单路径与快速甩动路径共用）"""
+        sec = calc_sector(dx, dy, self.sector_count)
+        if dist > self.outer_ring_radius:
+            ring_type, layer = "extension", "扩展圈"
+        elif dist > self.ring_radius:
+            ring_type, layer = "outer", "外层"
+        else:
+            ring_type, layer = "inner", "内层"
+        self._log(f"触发手势: {layer} 扇区{sec} (窗口={self._window_type})")
+        return (sec, ring_type, self._window_type)
+
+    def cancel_gesture(self):
+        """菜单被取消（Esc/左键）时复位手势状态，阻止松键补发命令"""
         with self._lock:
-            if self._hook is not None or self._starting:
-                return
+            self._is_pressed = False
+            self._menu_shown = False
+            self._in_extension_zone = False
+
+    def start(self) -> bool:
+        """启动鼠标钩子，返回钩子是否安装成功"""
+        with self._lock:
+            if self._hook is not None:
+                return True
+            if self._starting:
+                return self._hook is not None
             self._starting = True
             self._hook_ready.clear()
 
@@ -242,6 +309,11 @@ class GestureEngine:
             self._log("钩子安装超时")
             with self._lock:
                 self._starting = False
+            return False
+        with self._lock:
+            ok = self._hook is not None
+            self._starting = False
+        return ok
 
     def _run_hook(self):
         """运行钩子消息循环"""

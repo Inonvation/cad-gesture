@@ -1,6 +1,7 @@
 ﻿"""GUI配置界面 — CustomTkinter 现代深色版"""
 
 import math
+import time
 import copy
 import json
 import ctypes
@@ -126,6 +127,25 @@ class _ToolTip:
         self._tip.geometry(f"+{x}+{y}")
 
 
+class _VSeparator(tk.Frame):
+    """垂直可拖拽分隔条"""
+
+    def __init__(self, master, on_drag, bg=BORDER, width=5):
+        super().__init__(master, width=width, bg=bg,
+                         cursor="sb_h_double_arrow", highlightthickness=0)
+        self._on_drag = on_drag
+        self._start_x = 0
+        self.bind("<Button-1>", self._press)
+        self.bind("<B1-Motion>", self._motion)
+        self.bind("<Double-Button-1>", lambda e: on_drag("reset"))
+
+    def _press(self, e):
+        self._start_x = e.x_root
+
+    def _motion(self, e):
+        self._on_drag(e.x_root - self._start_x)
+
+
 class ConfigGUI:
     """配置界面主类"""
 
@@ -160,6 +180,9 @@ class ConfigGUI:
         self._hover_after_id: Optional[str] = None
         # 自动保存标志
         self._updating_detail = False
+        # 编辑/搜索输入去抖 id
+        self._detail_debounce_id: Optional[str] = None
+        self._search_debounce_id: Optional[str] = None
         # profile 列表按钮引用
         self._profile_buttons: Dict[str, ctk.CTkButton] = {}
 
@@ -170,12 +193,13 @@ class ConfigGUI:
             self.root = ctk.CTk()
         self.root.title("CAD鼠标手势 - 设置")
         self.root.geometry("1180x780")
-        self.root.minsize(1000, 640)
+        self.root.minsize(1180, 760)
         self.root.configure(fg_color=BG)
         _enable_dark_titlebar(self.root)
 
         # 未保存修改标志
         self._has_changes = False
+        self._autosave_after = None
 
         self._create_widgets()
         self._fix_window_flicker()
@@ -186,6 +210,24 @@ class ConfigGUI:
         self.root.bind("<Control-f>", lambda e: self._focus_search())
         self.root.bind("<Escape>", lambda e: self._cancel_drag())
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _drag_sidebar(self, delta):
+        """拖拽左侧边栏宽度（160~320px，双击恢复默认 230）"""
+        if delta == "reset":
+            self._sep1_start_w = 230
+            self.sidebar.configure(width=230)
+            return
+        new = max(160, min(320, self._sep1_start_w + delta))
+        self.sidebar.configure(width=new)
+
+    def _drag_right(self, delta):
+        """拖拽右侧命令库宽度（220~420px，双击恢复默认 290）"""
+        if delta == "reset":
+            self._sep2_start_w = 290
+            self.right_panel.configure(width=290)
+            return
+        new = max(220, min(420, self._sep2_start_w - delta))
+        self.right_panel.configure(width=new)
 
     def _fix_window_flicker(self):
         """修复 Windows 窗口切换/最小化后恢复时闪黑问题（设置窗口背景刷）"""
@@ -216,16 +258,23 @@ class ConfigGUI:
         """三栏布局（左侧导航 + 中间预览编辑 + 右侧命令库）"""
         main_frame = ctk.CTkFrame(self.root, fg_color=BG, corner_radius=0)
         main_frame.pack(fill=tk.BOTH, expand=True)
-        main_frame.grid_columnconfigure(0, weight=0, minsize=210)
-        main_frame.grid_columnconfigure(1, weight=1, minsize=400)
-        main_frame.grid_columnconfigure(2, weight=0, minsize=270)
+        # 列：0=左侧边栏(可拖宽) 1=分隔条 2=中间主体(弹性) 3=分隔条 4=右侧命令库(可拖宽)
+        main_frame.grid_columnconfigure(0, weight=0, minsize=160)
+        main_frame.grid_columnconfigure(1, weight=0)
+        main_frame.grid_columnconfigure(2, weight=1, minsize=400)
+        main_frame.grid_columnconfigure(3, weight=0)
+        main_frame.grid_columnconfigure(4, weight=0, minsize=220)
         main_frame.grid_rowconfigure(0, weight=1)
 
         # ===== 左侧导航栏 =====
-        sidebar = ctk.CTkFrame(main_frame, width=230, fg_color=SIDEBAR,
-                               corner_radius=0)
-        sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 1))
-        sidebar.pack_propagate(False)
+        self.sidebar = ctk.CTkFrame(main_frame, width=230, fg_color=SIDEBAR,
+                                    corner_radius=0)
+        self.sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 1))
+        self.sidebar.pack_propagate(False)
+        sidebar = self.sidebar
+        self._sep1_start_w = 230
+        _VSeparator(main_frame, self._drag_sidebar).grid(
+            row=0, column=1, sticky="ns")
 
         ctk.CTkLabel(sidebar, text="配置方案", text_color=TEXT,
                      font=_FONT_TITLE, anchor="w").pack(
@@ -321,28 +370,70 @@ class ConfigGUI:
         cur_label = get_menu_theme(self._menu_theme_name).label
         self._theme_option.set(cur_label)
 
+        # 触发灵敏度设置
+        ctk.CTkLabel(sidebar, text="触发灵敏度", text_color=TEXT_DIM,
+                     font=("Microsoft YaHei", 10), anchor="w").pack(
+            anchor="w", padx=22, pady=(14, 2))
+
+        delay_row = ctk.CTkFrame(sidebar, fg_color=SIDEBAR, corner_radius=0)
+        delay_row.pack(fill=tk.X, padx=22)
+        ctk.CTkLabel(delay_row, text="长按延迟", text_color=TEXT,
+                     font=_FONT_SMALL, anchor="w").pack(side=tk.LEFT)
+        self._delay_value_label = ctk.CTkLabel(
+            delay_row, text="", text_color=ACCENT, font=_FONT_SMALL, anchor="e")
+        self._delay_value_label.pack(side=tk.RIGHT)
+        self._delay_slider = ctk.CTkSlider(
+            sidebar, from_=60, to=200, number_of_steps=14,
+            command=self._on_delay_change, height=16,
+            button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+            progress_color=ACCENT, fg_color=BORDER)
+        self._delay_slider.pack(fill=tk.X, padx=22, pady=(2, 6))
+        _ToolTip(self._delay_slider, "长按鼠标右键多久后响应拖动（越小越灵敏）")
+        _hold = self.config.get("settings", {}).get("hold_threshold_ms", 80)
+        self._delay_slider.set(_hold)
+        self._delay_value_label.configure(text=f"{_hold} ms")
+
+        dist_row = ctk.CTkFrame(sidebar, fg_color=SIDEBAR, corner_radius=0)
+        dist_row.pack(fill=tk.X, padx=22)
+        ctk.CTkLabel(dist_row, text="触发距离", text_color=TEXT,
+                     font=_FONT_SMALL, anchor="w").pack(side=tk.LEFT)
+        self._dist_value_label = ctk.CTkLabel(
+            dist_row, text="", text_color=ACCENT, font=_FONT_SMALL, anchor="e")
+        self._dist_value_label.pack(side=tk.RIGHT)
+        self._dist_slider = ctk.CTkSlider(
+            sidebar, from_=8, to=40, number_of_steps=16,
+            command=self._on_dist_change, height=16,
+            button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+            progress_color=ACCENT, fg_color=BORDER)
+        self._dist_slider.pack(fill=tk.X, padx=22, pady=(2, 6))
+        _ToolTip(self._dist_slider, "拖动多少像素后弹出圆盘（越小越灵敏）")
+        _td = self.config.get("settings", {}).get("trigger_distance", 15)
+        self._dist_slider.set(_td)
+        self._dist_value_label.configure(text=f"{_td} px")
+
         # ===== 中间内容区 =====
         center_frame = ctk.CTkFrame(main_frame, fg_color=BG, corner_radius=0)
-        center_frame.grid(row=0, column=1, sticky="nsew", padx=24, pady=20)
+        center_frame.grid(row=0, column=2, sticky="nsew", padx=24, pady=20)
         center_frame.grid_columnconfigure(0, weight=1)
         center_frame.grid_rowconfigure(1, weight=1)
 
         # 顶栏：当前方案 + 操作按钮
         top_bar = ctk.CTkFrame(center_frame, fg_color=BG, corner_radius=0)
         top_bar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        top_bar.grid_columnconfigure(0, weight=1)
         self.profile_badge = ctk.CTkLabel(top_bar, text="", text_color=TEXT,
                                           font=("Microsoft YaHei", 15, "bold"),
                                           anchor="w")
-        self.profile_badge.pack(side=tk.LEFT)
+        self.profile_badge.grid(row=0, column=0, sticky="w")
         self.target_badge = ctk.CTkLabel(top_bar, text="", text_color=TEXT_DIM,
                                          font=_FONT_SMALL, anchor="w")
-        self.target_badge.pack(side=tk.LEFT, padx=(10, 0), pady=(2, 0))
+        self.target_badge.grid(row=0, column=1, sticky="w", padx=(10, 0), pady=(2, 0))
 
-        # 右侧快捷操作
+        # 右侧快捷操作（固定列，窗口变窄时按钮组不会被挤出）
         top_actions = ctk.CTkFrame(top_bar, fg_color=BG, corner_radius=0)
-        top_actions.pack(side=tk.RIGHT)
+        top_actions.grid(row=0, column=2, sticky="e")
         self._btn_import = ctk.CTkButton(
-            top_actions, text="导入JSON", height=30, corner_radius=8,
+            top_actions, text="导入", height=30, corner_radius=8,
             fg_color=CARD, hover_color=PRESET_HOVER,
             border_width=1, border_color=BORDER_LIGHT,
             text_color=TEXT, font=_FONT_SMALL,
@@ -350,7 +441,7 @@ class ConfigGUI:
         self._btn_import.pack(side=tk.LEFT, padx=3)
         _ToolTip(self._btn_import, "从 JSON 文件合并配置到当前方案")
         self._btn_export = ctk.CTkButton(
-            top_actions, text="导出JSON", height=30, corner_radius=8,
+            top_actions, text="导出", height=30, corner_radius=8,
             fg_color=CARD, hover_color=PRESET_HOVER,
             border_width=1, border_color=BORDER_LIGHT,
             text_color=TEXT, font=_FONT_SMALL,
@@ -358,7 +449,7 @@ class ConfigGUI:
         self._btn_export.pack(side=tk.LEFT, padx=3)
         _ToolTip(self._btn_export, "将当前方案导出为 JSON 文件")
         self._btn_reset = ctk.CTkButton(
-            top_actions, text="重置默认", height=30, corner_radius=8,
+            top_actions, text="重置", height=30, corner_radius=8,
             fg_color=CARD, hover_color=PRESET_HOVER,
             border_width=1, border_color=BORDER_LIGHT,
             text_color=TEXT, font=_FONT_SMALL,
@@ -366,12 +457,12 @@ class ConfigGUI:
         self._btn_reset.pack(side=tk.LEFT, padx=3)
         _ToolTip(self._btn_reset, "恢复全部默认配置（会丢失自定义设置）")
         self._btn_save = ctk.CTkButton(
-            top_actions, text="保存 (Ctrl+S)", height=30, corner_radius=8,
+            top_actions, text="保存", height=30, corner_radius=8,
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
             text_color="#ffffff", font=_FONT_SMALL,
             command=self._save)
         self._btn_save.pack(side=tk.LEFT, padx=(9, 0))
-        _ToolTip(self._btn_save, "保存全部修改并关闭")
+        _ToolTip(self._btn_save, "保存全部修改并关闭 (Ctrl+S)")
 
         # 内容主体（预览 + 编辑），预览占满剩余空间
         body = ctk.CTkFrame(center_frame, fg_color=BG, corner_radius=0)
@@ -436,9 +527,10 @@ class ConfigGUI:
         # 编辑表单（Grid 布局，加大行距）
         form_frame = ctk.CTkFrame(card_inner, fg_color=CARD, corner_radius=0)
         form_frame.pack(fill=tk.X)
-        form_frame.grid_columnconfigure(1, weight=1)
-        form_frame.grid_columnconfigure(3, weight=2)
-        form_frame.grid_columnconfigure(5, weight=2)
+        form_frame.grid_columnconfigure(1, weight=1, minsize=110)
+        form_frame.grid_columnconfigure(2, minsize=100)
+        form_frame.grid_columnconfigure(3, weight=2, minsize=130)
+        form_frame.grid_columnconfigure(5, weight=2, minsize=130)
 
         # Row 0: 标签（统一左对齐，避免被拉伸后居中偏移）
         ctk.CTkLabel(form_frame, text="所在层", text_color=TEXT_DIM,
@@ -505,11 +597,16 @@ class ConfigGUI:
         self.detail_key_var.trace_add("write", self._on_detail_change)
         self.detail_desc_var.trace_add("write", self._on_detail_change)
 
+        self._sep2_start_w = 290
+        _VSeparator(main_frame, self._drag_right).grid(
+            row=0, column=3, sticky="ns")
+
         # ===== 右侧命令库 =====
-        right_panel = ctk.CTkFrame(main_frame, width=290, fg_color=PANEL,
-                                   corner_radius=0)
-        right_panel.grid(row=0, column=2, sticky="ns", pady=0)
-        right_panel.pack_propagate(False)
+        self.right_panel = ctk.CTkFrame(main_frame, width=290, fg_color=PANEL,
+                                        corner_radius=0)
+        self.right_panel.grid(row=0, column=4, sticky="ns", pady=0)
+        self.right_panel.pack_propagate(False)
+        right_panel = self.right_panel
 
         right_head = ctk.CTkFrame(right_panel, fg_color=PANEL, corner_radius=0)
         right_head.pack(fill=tk.X, padx=18, pady=(20, 10))
@@ -620,16 +717,31 @@ class ConfigGUI:
     # ========== 设置/保存 ==========
 
     def _set_changed(self):
-        """标记有未保存修改"""
+        """标记有未保存修改，并触发防抖自动保存"""
         self._has_changes = True
         if getattr(self, "_unsaved_label", None) is not None:
-            self._unsaved_label.configure(text="● 未保存修改")
+            self._unsaved_label.configure(text="● 保存中…")
+        self._schedule_autosave()
 
     def _clear_changed(self):
         """清除未保存标记"""
         self._has_changes = False
         if getattr(self, "_unsaved_label", None) is not None:
             self._unsaved_label.configure(text="")
+
+    def _schedule_autosave(self):
+        """防抖自动保存：改动后 500ms 写盘，避免频繁写"""
+        if getattr(self, "_autosave_after", None) is not None:
+            self.root.after_cancel(self._autosave_after)
+        self._autosave_after = self.root.after(500, self._do_autosave)
+
+    def _do_autosave(self):
+        """执行自动保存"""
+        self._autosave_after = None
+        self._collect_config()
+        save_config(self.config)
+        if getattr(self, "_unsaved_label", None) is not None:
+            self._unsaved_label.configure(text="✓ 已自动保存")
 
     def _on_setting_change(self):
         """设置改变"""
@@ -646,6 +758,20 @@ class ConfigGUI:
         self.config.setdefault("settings", {})["menu_theme"] = self._menu_theme_name
         self._set_changed()
         self._draw_preview()
+
+    def _on_delay_change(self, value):
+        """长按延迟滑块"""
+        ms = int(round(value))
+        self.config.setdefault("settings", {})["hold_threshold_ms"] = ms
+        self._delay_value_label.configure(text=f"{ms} ms")
+        self._set_changed()
+
+    def _on_dist_change(self, value):
+        """触发距离滑块"""
+        px = int(round(value))
+        self.config.setdefault("settings", {})["trigger_distance"] = px
+        self._dist_value_label.configure(text=f"{px} px")
+        self._set_changed()
 
     def _load_profile(self, profile_name: str):
         """加载 Profile"""
@@ -667,6 +793,8 @@ class ConfigGUI:
         self._draw_preview()
 
         display_name = profile.get("name", profile_name)
+        if len(display_name) > 12:
+            display_name = display_name[:12] + "…"
         target_label = {"autocad": "AutoCAD", "zwcad": "中望CAD"}.get(
             new_target, new_target.upper())
         self.profile_badge.configure(text=display_name)
@@ -676,10 +804,18 @@ class ConfigGUI:
     # ========== 圆盘绘制 ==========
 
     def _on_preview_resize(self, event):
-        """预览区大小变化时调整画布尺寸（自适应撑满可用空间）"""
+        """预览区大小变化时调整画布尺寸（防抖：停止缩放后再重绘，避免拖动窗口卡顿）"""
         if event.width <= 10 or event.height <= 10:
             return
-        new_size = min(event.width - 28, event.height - 28, 560)
+        if getattr(self, "_preview_resize_after", None) is not None:
+            self.root.after_cancel(self._preview_resize_after)
+        self._preview_resize_after = self.root.after(
+            80, lambda: self._apply_preview_resize(event.width, event.height))
+
+    def _apply_preview_resize(self, w: int, h: int):
+        """实际执行预览重绘"""
+        self._preview_resize_after = None
+        new_size = min(w - 28, h - 28, 620)
         new_size = max(new_size, 260)
         if abs(new_size - self.preview_size) > 8:
             self.preview_size = new_size
@@ -866,7 +1002,7 @@ class ConfigGUI:
         self.detail_desc_var.set(cfg.get("description", ""))
 
     def _on_detail_change(self, *args):
-        """编辑框内容变化时自动保存"""
+        """编辑框内容变化时自动保存（连续输入合并重绘）"""
         if self._updating_detail:
             return
         if self._selected_sector is None:
@@ -888,6 +1024,14 @@ class ConfigGUI:
         }
 
         self._set_changed()
+        # 连续输入合并为一次重绘，避免每敲一个字符全量重画圆盘
+        if self._detail_debounce_id is not None:
+            self.root.after_cancel(self._detail_debounce_id)
+        self._detail_debounce_id = self.root.after(150, self._flush_detail_preview)
+
+    def _flush_detail_preview(self):
+        """去抖后的预览重绘"""
+        self._detail_debounce_id = None
         self._draw_preview()
 
     def _clear_sector(self):
@@ -959,7 +1103,16 @@ class ConfigGUI:
 
         def do_copy():
             target_layer = target_var.get()
-            target_idx = int(idx_var.get())
+            try:
+                target_idx = int(idx_var.get())
+            except (ValueError, TypeError):
+                _dark_msgbox(self.root, "错误", "扇区编号必须是数字", "error")
+                return
+            sector_count = self.config.get("settings", {}).get("sector_count", 8)
+            if not (0 <= target_idx < sector_count):
+                _dark_msgbox(self.root, "错误",
+                             f"扇区编号需在 0~{sector_count - 1} 之间", "error")
+                return
             target_key = _layer_to_sectors_key(target_layer)
             target_sectors = profile.setdefault(target_key, {})
             target_sectors[str(target_idx)] = cfg.copy()
@@ -1013,7 +1166,20 @@ class ConfigGUI:
                 _dark_msgbox(self.root, "错误", "无效的配置文件格式", "error")
                 return
 
-            # 合并到当前 profile
+            # 先校验结构，再合并：避免坏数据污染内存配置后被保存
+            for key in ("sectors", "outer_sectors", "extension_sectors"):
+                if key in data:
+                    if not isinstance(data[key], dict):
+                        _dark_msgbox(self.root, "错误",
+                                     f"导入失败：{key} 格式无效（应为对象）", "error")
+                        return
+                    for v in data[key].values():
+                        if not isinstance(v, dict):
+                            _dark_msgbox(self.root, "错误",
+                                         f"导入失败：{key} 中存在无效的扇区数据", "error")
+                            return
+
+            # 校验通过后合并到当前 profile
             profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
             for key in ("sectors", "outer_sectors", "extension_sectors"):
                 if key in data:
@@ -1152,8 +1318,16 @@ class ConfigGUI:
     # ========== 预设命令库 ==========
 
     def _on_search_change(self):
-        """搜索框内容变化"""
-        self._populate_presets(self.search_var.get())
+        """搜索框内容变化（重建去抖，合并连续输入）"""
+        if self._search_debounce_id is not None:
+            self.root.after_cancel(self._search_debounce_id)
+        text = self.search_var.get()
+        self._search_debounce_id = self.root.after(180, lambda: self._apply_search(text))
+
+    def _apply_search(self, text: str):
+        """去抖后的命令库重建"""
+        self._search_debounce_id = None
+        self._populate_presets(text)
 
     def _populate_presets(self, filter_text: str = ""):
         """填充预设命令库"""
@@ -1162,7 +1336,7 @@ class ConfigGUI:
 
         filter_text = filter_text.lower().strip()
 
-        for category, commands in self.preset_commands.items():
+        for cat_index, (category, commands) in enumerate(self.preset_commands.items()):
             if filter_text:
                 filtered = {name: data for name, data in commands.items()
                            if filter_text in name.lower()
@@ -1179,7 +1353,8 @@ class ConfigGUI:
                                      corner_radius=10)
             cat_frame.pack(fill=tk.X, padx=2, pady=3)
 
-            is_expanded = bool(filter_text)
+            # 无搜索词时默认展开前 3 个常用类别，有搜索词时展开全部命中类
+            is_expanded = bool(filter_text) or cat_index < 3
             cat_state = {"expanded": is_expanded}
 
             # 分类标题（胶囊，可折叠）
@@ -1422,15 +1597,25 @@ class ConfigGUI:
         self.config["settings"]["auto_switch_profile"] = self.auto_switch_var.get()
         self.config["settings"]["open_config_on_start"] = self.open_config_var.get()
 
-    def _save(self):
-        """保存配置"""
+    def _save(self) -> bool:
+        """保存配置（非模态：成功仅状态栏提示，窗口保持可继续编辑）
+
+        Returns:
+            True 表示保存成功。
+        """
         self._collect_config()
-        save_config(self.config)
+        if getattr(self, "_autosave_after", None) is not None:
+            self.root.after_cancel(self._autosave_after)
+            self._autosave_after = None
+        if not save_config(self.config):
+            _dark_msgbox(self.root, "错误", "保存失败，请检查配置目录是否有写入权限", "error")
+            return False
         self._clear_changed()
-        _dark_msgbox(self.root, "成功", "配置已保存！", "info")
+        now = time.strftime("%H:%M:%S")
+        self.status_label.configure(text=f"已保存 {now}")
         if self.on_save:
             self.on_save()
-        self.root.destroy()
+        return True
 
     def _reset(self):
         """重置为默认配置"""
@@ -1446,16 +1631,14 @@ class ConfigGUI:
         self.status_label.configure(text="已重置为默认配置")
 
     def _on_close(self):
-        """关闭窗口时检查未保存修改"""
-        if self._has_changes:
-            result = _dark_yesnocancel(self.root, "未保存的修改",
-                "有未保存的修改，是否保存？")
-            if result is True:
-                self._save()
-            elif result is False:
-                self.root.destroy()
-        else:
-            self.root.destroy()
+        """关闭窗口：改动已自动保存，关闭前兜底落盘并通知主程序重载"""
+        if getattr(self, "_autosave_after", None) is not None:
+            self.root.after_cancel(self._autosave_after)
+            self._autosave_after = None
+            self._do_autosave()
+        if self.on_save:
+            self.on_save()
+        self.root.destroy()
 
     def run(self):
         """运行配置界面（嵌入模式由主程序 mainloop 驱动，不阻塞）"""

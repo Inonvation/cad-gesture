@@ -43,10 +43,13 @@ class CADGestureApp:
             on_menu_hide=self._queue_hide,
             on_extension_hint=self._queue_extension_hint
         )
+        # 菜单被 Esc/左键取消时复位引擎手势状态，阻止松键补发命令
+        self.menu.on_cancel = self.gesture_engine.cancel_gesture
 
         self._menu_center_x = 0
         self._menu_center_y = 0
         self._exit_poll_count = 0
+        self._quitting = False
 
         self._setup_tray()
         self._process_queue()
@@ -70,56 +73,85 @@ class CADGestureApp:
     def _process_queue(self):
         """处理事件队列（在主线程中执行）"""
         try:
-            while True:
-                event_type, data = self.event_queue.get_nowait()
-                if event_type == "show":
-                    x, y, window_type = data
-                    self._menu_center_x, self._menu_center_y = x, y
-                    self.profile = get_profile_for_window(self.config, window_type)
-                    if self.profile is None:
-                        self.profile = get_active_profile(self.config)
-                    self.menu.show(x, y, self.profile)
-                elif event_type == "hide":
-                    self.menu.hide()
-                elif event_type == "extension_hint":
-                    self.menu.set_extension_hint(data)
-                elif event_type == "gesture":
+            try:
+                while True:
+                    event_type, data = self.event_queue.get_nowait()
                     try:
-                        sector, ring_type, window_type = data
-                        profile = get_profile_for_window(self.config, window_type)
-                        if profile is None:
-                            profile = self.profile
-                        if ring_type == "extension":
-                            sectors_key = "extension_sectors"
-                        elif ring_type == "outer":
-                            sectors_key = "outer_sectors"
-                        else:
-                            sectors_key = "sectors"
-                        sector_cfg = profile.get(sectors_key, {}).get(str(sector), {})
-                        if ring_type in ("outer", "extension") and not sector_cfg:
-                            sector_cfg = profile.get("sectors", {}).get(str(sector), {})
-                        key = sector_cfg.get("key", "")
-                        desc = sector_cfg.get("description", "")
-                        target = profile.get("target", "autocad")
-                        if key:
-                            execute_with_cancel(key, desc, target, menu_was_shown=True)
+                        if event_type == "show":
+                            x, y, window_type = data
+                            self._menu_center_x, self._menu_center_y = x, y
+                            self.profile = get_profile_for_window(self.config, window_type)
+                            if self.profile is None:
+                                self.profile = get_active_profile(self.config)
+                            self.menu.show(x, y, self.profile)
+                        elif event_type == "hide":
+                            self.menu.hide()
+                        elif event_type == "extension_hint":
+                            self.menu.set_extension_hint(data)
+                        elif event_type == "gesture":
+                            try:
+                                sector, ring_type, window_type = data
+                                profile = get_profile_for_window(self.config, window_type)
+                                if profile is None:
+                                    profile = self.profile
+                                if ring_type == "extension":
+                                    sectors_key = "extension_sectors"
+                                elif ring_type == "outer":
+                                    sectors_key = "outer_sectors"
+                                else:
+                                    sectors_key = "sectors"
+                                sector_cfg = profile.get(sectors_key, {}).get(str(sector), {})
+                                if ring_type in ("outer", "extension") and not sector_cfg:
+                                    sector_cfg = profile.get("sectors", {}).get(str(sector), {})
+                                key = sector_cfg.get("key", "")
+                                desc = sector_cfg.get("description", "")
+                                target = profile.get("target", "autocad")
+                                if key:
+                                    execute_with_cancel(key, desc, target, menu_was_shown=True)
+                            except Exception as e:
+                                self.log.error("命令执行错误: %s", e, exc_info=True)
                     except Exception as e:
-                        self.log.error("命令执行错误: %s", e)
-        except queue.Empty:
-            pass
+                        self.log.error("事件处理错误 (%s): %s", event_type, e, exc_info=True)
+            except queue.Empty:
+                pass
+            except Exception as e:
+                # 队列迭代本身的意外错误（如数据损坏），记录后继续循环
+                self.log.error("事件队列异常: %s", e, exc_info=True)
 
-        # 仅在菜单可见时更新鼠标位置
-        if self.menu.is_visible():
-            pos = pyautogui.position()
-            self.menu.update_highlight(pos[0], pos[1])
+            # 仅在菜单可见时更新鼠标位置
+            if self.menu.is_visible():
+                try:
+                    pos = pyautogui.position()
+                    self.menu.update_highlight(pos[0], pos[1])
+                except Exception as e:
+                    self.log.error("鼠标位置更新失败: %s", e, exc_info=True)
 
-        # 低频检查：被新实例请求覆盖退出时优雅退出（卸载钩子、停托盘）
-        self._exit_poll_count += 1
-        if self._exit_poll_count % 32 == 0 and is_exit_requested():
-            self.log.info("收到新实例覆盖请求，正在退出当前实例")
-            self._quit()
-            return
-        self.root.after(16, self._process_queue)
+            # 钩子线程累积的调试日志统一落盘（钩子回调内零磁盘 I/O）
+            try:
+                self.gesture_engine.flush_logs()
+            except Exception as e:
+                self.log.error("日志落盘失败: %s", e)
+
+            # 低频检查：被新实例请求覆盖退出时优雅退出（卸载钩子、停托盘）
+            self._exit_poll_count += 1
+            if self._exit_poll_count % 32 == 0:
+                try:
+                    if is_exit_requested():
+                        self.log.info("收到新实例覆盖请求，正在退出当前实例")
+                        self._quit()
+                        return
+                except Exception as e:
+                    self.log.error("退出请求检查异常: %s", e, exc_info=True)
+        except Exception as e:
+            # 单帧兜底：任何未捕获异常只记日志，循环不断
+            self.log.error("主循环异常: %s", e, exc_info=True)
+        finally:
+            # 保证 after 链不死：即使上面出现异常也续接下一帧
+            if not self._quitting:
+                try:
+                    self.root.after(16, self._process_queue)
+                except Exception:
+                    pass
 
     def _create_tray_icon(self) -> Image.Image:
         """创建托盘图标 (8 方向径向圆盘)"""
@@ -214,13 +246,27 @@ class CADGestureApp:
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def _switch_profile(self, profile_name: str):
-        """切换Profile"""
-        set_active_profile(self.config, profile_name)
-        self.profile = get_active_profile(self.config)
-        self.gesture_engine.update_config(self.config)
-        self.menu.update_config(self.config)
-        display = self.config["profiles"].get(profile_name, {}).get("name", profile_name)
-        self.tray_icon.notify(f"已切换到: {display}")
+        """托盘菜单回调：投递主线程执行，避免跨线程操作 Tk 状态
+
+        与 _open_config 同理——pystray 菜单回调跑在独立 daemon 线程，
+        menu/gesture_engine 的 update_config 会触达 Tk 对象，必须回主线程。
+        """
+        self.root.after(0, lambda: self._switch_profile_impl(profile_name))
+
+    def _switch_profile_impl(self, profile_name: str):
+        """实际切换逻辑（主线程中执行）"""
+        try:
+            set_active_profile(self.config, profile_name)
+            self.profile = get_active_profile(self.config)
+            self.gesture_engine.update_config(self.config)
+            self.menu.update_config(self.config)
+            display = self.config["profiles"].get(profile_name, {}).get("name", profile_name)
+            try:
+                self.tray_icon.notify(f"已切换到: {display}")
+            except Exception:
+                pass
+        except Exception as e:
+            self.log.error("切换方案失败: %s", e, exc_info=True)
 
     def _open_config(self):
         """打开配置界面（在主线程挂载，避免多线程双 Tk 冲突导致卡死）"""
@@ -238,15 +284,44 @@ class CADGestureApp:
             on_save=on_config_save, master=self.root))
 
     def _quit(self):
-        """退出应用"""
-        self.gesture_engine.stop()
-        self.menu.destroy()
-        self.tray_icon.stop()
+        """退出应用
+
+        可能被托盘线程（pystray 回调）调用，Tkinter 非线程安全，
+        必须投递到主线程执行；_quitting 标志防止重复触发。
+        """
+        if self._quitting:
+            return
+        self._quitting = True
+        try:
+            self.root.after(0, self._quit_impl)
+        except Exception:
+            # root 可能已销毁，直接在主线程尝试
+            self._quit_impl()
+
+    def _quit_impl(self):
+        """实际退出逻辑（主线程中执行）"""
+        try:
+            self.gesture_engine.stop()
+        except Exception as e:
+            self.log.error("停止手势引擎失败: %s", e, exc_info=True)
+        try:
+            self.menu.destroy()
+        except Exception as e:
+            self.log.error("销毁菜单窗口失败: %s", e, exc_info=True)
+        try:
+            self.tray_icon.stop()
+        except Exception as e:
+            self.log.error("停止托盘失败: %s", e, exc_info=True)
         self.root.quit()
 
     def run(self):
         """运行应用"""
-        self.gesture_engine.start()
+        if not self.gesture_engine.start():
+            self.log.error("鼠标钩子安装失败，手势将不可用")
+            try:
+                self.tray_icon.notify("鼠标钩子安装失败，手势将不可用")
+            except Exception:
+                pass
         # 首次运行或配置了"启动时打开此界面"则自动打开配置
         if self._is_first_run or self.config.get("settings", {}).get("open_config_on_start", False):
             self.root.after(500, self._open_config)
