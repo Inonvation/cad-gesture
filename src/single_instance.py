@@ -20,6 +20,7 @@ _MUTEX_NAME = "CADGesture_SingleInstance"
 _EXIT_EVENT = "CADGesture_ExitRequest"
 _ERROR_ALREADY_EXISTS = 183
 _EVENT_ALL_ACCESS = 0x001F0003
+_MUTEX_ALL_ACCESS = 0x001F0001
 
 _held_mutex = None
 _held_exit_event = None
@@ -27,6 +28,8 @@ _held_exit_event = None
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _kernel32.CreateMutexW.restype = wintypes.HANDLE
 _kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+_kernel32.OpenMutexW.restype = wintypes.HANDLE
+_kernel32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
 _kernel32.CreateEventW.restype = wintypes.HANDLE
 _kernel32.CreateEventW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
 _kernel32.OpenEventW.restype = wintypes.HANDLE
@@ -38,23 +41,37 @@ _kernel32.WaitForSingleObject.restype = wintypes.DWORD
 _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
 
 
-def _mutex_exists() -> bool:
-    """判断互斥体是否已被其他进程持有"""
-    h = _kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    exists = ctypes.get_last_error() == _ERROR_ALREADY_EXISTS
-    if h:
-        _kernel32.CloseHandle(h)
-    return exists
+def _acquire() -> bool:
+    """尝试成为唯一实例。
 
+    采用"OpenMutexW 前置检测 + CreateMutexW 获取"两步：
+    - OpenMutexW 成功打开说明已有其他实例持有，直接返回失败；
+    - CreateMutexW 成功路径的 GetLastError 可能残留无关值（如进程启动
+      时遗留的 183），因此不依赖它做唯一判断，仅用作竞态兜底。
 
-def _acquire():
-    """本进程成为唯一实例：持有互斥体，并创建/持有退出事件"""
+    Returns:
+        True 表示本进程成功持有互斥体；False 表示已有其他实例在运行。
+    """
     global _held_mutex, _held_exit_event
+    # 前置检测：互斥体已存在 → 其他实例在运行
+    existing = _kernel32.OpenMutexW(_MUTEX_ALL_ACCESS, False, _MUTEX_NAME)
+    if existing:
+        _kernel32.CloseHandle(existing)
+        return False
+
     _held_mutex = _kernel32.CreateMutexW(None, False, _MUTEX_NAME)
-    # 创建并持有事件句柄，保证事件对象存活，使其他实例能通知到我们
+    if not _held_mutex:
+        return False
+    # 竞态兜底：OpenMutexW 之后、CreateMutexW 之前被其他进程抢先创建。
+    # 此时 CreateMutexW 确实会设置 ERROR_ALREADY_EXISTS，此判断可靠。
+    if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
+        _kernel32.CloseHandle(_held_mutex)
+        _held_mutex = None
+        return False
     _held_exit_event = _kernel32.CreateEventW(None, True, False, _EXIT_EVENT)
     if _held_exit_event:
         _kernel32.ResetEvent(_held_exit_event)
+    return True
 
 
 def ensure_single_instance(wait_timeout: float = 15.0) -> bool:
@@ -63,18 +80,16 @@ def ensure_single_instance(wait_timeout: float = 15.0) -> bool:
     若已有实例在运行，则请求其优雅退出并等待其释放互斥体（覆盖更新）。
     返回 True 表示本进程应继续运行；False 表示应退出。
     """
-    if not _mutex_exists():
-        _acquire()
+    if _acquire():
         return True
 
     # 已有旧实例 → 通知其退出并等待
     request_old_exit()
     deadline = time.time() + wait_timeout
     while time.time() < deadline:
-        if not _mutex_exists():
-            _acquire()
-            return True
         time.sleep(0.2)
+        if _acquire():
+            return True
     return False
 
 
@@ -99,7 +114,11 @@ def is_exit_requested() -> bool:
     if not ev:
         return False
     try:
-        return _kernel32.WaitForSingleObject(ev, 0) == 0
+        signaled = _kernel32.WaitForSingleObject(ev, 0) == 0
+        if signaled and not close_after:
+            # 复位手动重置事件，避免同一退出请求被主循环重复处理
+            _kernel32.ResetEvent(ev)
+        return signaled
     finally:
         if close_after:
             _kernel32.CloseHandle(ev)

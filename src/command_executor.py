@@ -1,6 +1,7 @@
 """命令执行模块 - 高速 COM 发送，最小延迟"""
 
 import ctypes
+import ctypes.wintypes as wintypes
 import time
 import threading
 import pythoncom
@@ -34,9 +35,20 @@ _cache_lock = threading.Lock()
 
 
 def _switch_to_english_ime():
-    """通过 PostMessage 让 CAD 窗口切换到英文输入法"""
+    """通过 PostMessage 让 CAD 窗口切换到英文输入法
+
+    必须显式声明 restype/argtypes：GetForegroundWindow 返回 64 位 HWND、
+    LoadKeyboardLayoutW 返回 64 位 HKL，默认 c_int 会截断高 32 位，
+    导致 PostMessage 发到错误窗口或无效 HKL，输入法切换静默失败。
+    """
     try:
         user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.LoadKeyboardLayoutW.restype = wintypes.HANDLE
+        user32.LoadKeyboardLayoutW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
+        user32.PostMessageW.argtypes = [
+            wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+        ]
         en_hkl = user32.LoadKeyboardLayoutW("00000409", 0x00000001)
         hwnd = user32.GetForegroundWindow()
         user32.PostMessageW(hwnd, 0x0050, 0, en_hkl)
