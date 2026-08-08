@@ -114,6 +114,13 @@ a = Analysis(
     noarchive=False,
 )
 
+# ========== 排除误收集的系统 API set DLL ==========
+# PATH 中若装有 JDK 等，PyInstaller 会误收集 api-ms-win-core-*.dll / ext-ms-*.dll。
+# 这些是 Windows 运行时解析的 API set，无需打包，排除可显著减小体积。
+import re as _re
+a.binaries = [b for b in a.binaries
+              if not _re.search(r'(api-ms-win-|ext-ms-)', b[0].lower())]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # ========== onefile 单文件打包 ==========
