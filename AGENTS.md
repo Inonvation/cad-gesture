@@ -82,7 +82,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 cd F:\cad-gesture
 Get-Process CADGesture -ErrorAction SilentlyContinue | Stop-Process -Force
 & "<USER>\AppData\Local\Programs\Python\Python312\python.exe" -m PyInstaller cad_gesture.spec --clean --noconfirm
-Copy-Item config\config.json dist\config\config.json -Force
+Copy-Item config\config.example.json dist\config\config.example.json -Force  # 发版用模板；本地自测可复制 config.json
 dist\CADGesture.exe
 ```
 
@@ -105,6 +105,16 @@ dist\CADGesture.exe
 | 打包成功但 exe 启动闪退 | 缺隐式导入/DLL/customtkinter | 先 `python main.py` 确认源码没问题 |
 | `ModuleNotFoundError: customtkinter` | 装到了别的 Python | 用 Python312 的 pip 装 `requirements.txt` |
 | `pywintypes` DLL not found | pywin32 DLL 路径错误 | 确认 spec 的 `pywin32_system32/` 路径 |
+
+## 发版流程（打 tag 发布 GitHub Release）
+
+1. 更新 `version.txt` 版本号（4 处：`filevers`/`prodvers`/`FileVersion`/`ProductVersion`）
+2. 打包 exe：Python312 `-m PyInstaller cad_gesture.spec --clean --noconfirm`（UPX 已在用户 PATH）
+3. 提交 version.txt，打 annotated tag：`git tag -a vX.Y.Z -m "vX.Y.Z"`
+4. `git push origin master --tags`
+5. **创建 Release 前，必须先向用户展示待发布内容（版本号、exe 路径/体积、Release notes、附件清单）并等待用户确认**，确认后再执行下一步
+6. `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..." dist/CADGesture.exe config/config.example.json`
+   - 附件用 exe + `config.example.json`（模板），**绝不打包用户私有 `config/config.json`**
 
 ## 关键技术细节
 
