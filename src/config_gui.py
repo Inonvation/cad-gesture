@@ -1,102 +1,194 @@
-"""GUI配置界面 - ttkbootstrap 深色主题配置编辑器"""
+﻿"""GUI配置界面 — CustomTkinter 现代深色版"""
 
 import math
 import copy
+import json
 import ctypes
 import tkinter as tk
-from tkinter import messagebox
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
+from tkinter import filedialog
 from typing import Dict, Any, Optional, Callable, Tuple
+
+import customtkinter as ctk
 
 from src.config_manager import (
     load_config, save_config, get_profile_names, _default_config,
     get_preset_commands
 )
 from src.gesture_engine import calc_sector
+from src.theme import get_menu_theme, MENU_THEMES
+from src.renderer import draw_ring, ring_state_preview
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
+# ========== 配色（深色分层 + 天蓝霓虹） ==========
+BG = "#0d1017"
+CARD = "#161b23"
+PANEL = "#12161d"
+SIDEBAR = "#0f1319"
+BORDER = "#232a34"
+BORDER_LIGHT = "#2c3542"
+TEXT = "#e6e9ef"
+TEXT_SECONDARY = "#a8b2bf"
+TEXT_DIM = "#7b8494"
+ACCENT = "#38bdf8"
+ACCENT_HOVER = "#0ea5e9"
+ACCENT_DIM = "#0369a1"
+PRESET_BG = "#1b212b"
+PRESET_HOVER = "#252d39"
+DRAG_PROXY_BG = "#38bdf8"
+WARN = "#f0b429"
+DANGER = "#f87171"
+
+_FONT = ("Microsoft YaHei", 12)
+_FONT_SMALL = ("Microsoft YaHei", 11)
+_FONT_TITLE = ("Microsoft YaHei", 16, "bold")
 
 
-# ========== 配色方案 - 仅保留 Canvas 绘制使用的颜色 ==========
-COLORS = {
-    "bg": "#222222",
-    "text": "#ffffff",
-    "text_dim": "#999999",
-    "accent": "#375a7f",
-    "accent_dim": "#2e4d6e",
-    "border": "#444444",
-    "inner_sector": "#3c6e91",
-    "inner_sector_hover": "#4a8ab5",
-    "inner_sector_hl": "#375a7f",
-    "outer_sector": "#2e4d6e",
-    "outer_sector_hover": "#3c6e91",
-    "outer_sector_hl": "#375a7f",
-    "dead_zone": "#1a1a1a",
-    "selected_border": "#4a7fb5",
-    "preset_bg": "#353535",
-    "preset_hover": "#454545",
-    "panel_bg": "#303030",
-    "card_bg": "#3c3c3c",
-    "drag_proxy_bg": "#375a7f",
-}
+def _enable_dark_titlebar(win: "ctk.CTk"):
+    """让系统标题栏跟随深色主题（Windows 10 1809+）"""
+    try:
+        hwnd = win.winfo_id()
+        while True:
+            parent = ctypes.windll.user32.GetParent(hwnd)
+            if parent == 0:
+                break
+            hwnd = parent
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        val = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(hwnd), DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(val), ctypes.sizeof(val))
+    except Exception:
+        pass
+
+
+def _layer_to_sectors_key(layer: str) -> str:
+    if layer == "outer":
+        return "outer_sectors"
+    elif layer == "extension":
+        return "extension_sectors"
+    return "sectors"
+
+
+def _layer_display_name(layer: str) -> str:
+    if layer == "outer":
+        return "外层"
+    elif layer == "extension":
+        return "扩展圈"
+    return "内层"
+
+
+class _ToolTip:
+    """轻量 hover 提示框"""
+
+    def __init__(self, widget, text, delay=450):
+        self.widget = widget
+        self.text = text
+        self._delay = delay
+        self._after = None
+        self._tip = None
+        widget.bind("<Enter>", self._on_enter, add="+")
+        widget.bind("<Leave>", self._on_leave, add="+")
+        widget.bind("<Button-1>", self._on_leave, add="+")
+
+    def _on_enter(self, e):
+        self._cancel()
+        self._after = self.widget.after(self._delay, self._show)
+
+    def _on_leave(self, e):
+        self._cancel()
+        self._hide()
+
+    def _cancel(self):
+        if self._after is not None:
+            self.widget.after_cancel(self._after)
+            self._after = None
+
+    def _hide(self):
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+
+    def _show(self):
+        self._after = None
+        if self._tip is not None or not self.widget.winfo_exists():
+            return
+        x = self.widget.winfo_rootx()
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self._tip = tk.Toplevel(self.widget)
+        self._tip.overrideredirect(True)
+        self._tip.attributes("-topmost", True)
+        self._tip.configure(bg="#232a35")
+        tk.Label(self._tip, text=self.text, bg="#232a35", fg="#d5dbe3",
+                 font=("Microsoft YaHei", 10), padx=12, pady=8,
+                 justify="left", wraplength=300).pack()
+        self._tip.geometry(f"+{x}+{y}")
 
 
 class ConfigGUI:
     """配置界面主类"""
 
-    def __init__(self, on_save: Optional[Callable[[], None]] = None):
+    def __init__(self, on_save: Optional[Callable[[], None]] = None,
+                 master: Optional[ctk.CTk] = None):
         self.on_save = on_save
+        self._embedded = master is not None
         self.config = load_config()
         self.current_profile_name = self.config.get("settings", {}).get("active_profile", "AutoCAD-常用")
-        self.preset_commands = get_preset_commands()
+        self._current_target = "autocad"
+        self.preset_commands = get_preset_commands(self._current_target)
+        self._menu_theme_name = self.config.get("settings", {}).get("menu_theme", "azure")
 
-        # 当前选中的扇区 (layer, index)
+        # 选中/hover 状态
         self._selected_sector: Optional[Tuple[str, int]] = None
-        # 当前 hover 的扇区 (layer, index)
         self._hovered_sector: Optional[Tuple[str, int]] = None
         # 预览圆盘参数
         self._preview_cx = 0
         self._preview_cy = 0
         self._preview_inner_r = 100
         self._preview_outer_r = 180
+        self._preview_ext_r = 240
         self._preview_dead_r = 30
         self._preview_n = 8
         # 拖放状态
         self._drag_proxy: Optional[tk.Toplevel] = None
         self._drag_preset: Optional[Dict[str, str]] = None
+        self._drag_pending: Optional[Dict[str, str]] = None
+        self._drag_start_x: int = 0
+        self._drag_start_y: int = 0
         # hover 节流
         self._hover_after_id: Optional[str] = None
-        # 自动保存标志（防止 trace 回调循环）
+        # 自动保存标志
         self._updating_detail = False
+        # profile 列表按钮引用
+        self._profile_buttons: Dict[str, ctk.CTkButton] = {}
 
-        self.root = ttk.Window(
-            title="CAD鼠标手势 - 设置",
-            themename="darkly",
-            size=(1200, 800),
-            minsize=(1000, 700)
-        )
-        # 防止窗口切换/最小化时闪黑（Windows 特有问题）
-        # 设置所有层级的背景色，确保重绘时不会露出黑色
-        self.root.configure(bg="#222222")
-        self.root.option_add("*background", "#222222")
-        self.root.option_add("*foreground", "#ffffff")
-        self.root.update_idletasks()
-        self._fix_window_flicker()
+        # 创建主窗口（嵌入主程序 root 时用 Toplevel，避免多线程双 Tk 冲突）
+        if self._embedded:
+            self.root = ctk.CTkToplevel(master)
+        else:
+            self.root = ctk.CTk()
+        self.root.title("CAD鼠标手势 - 设置")
+        self.root.geometry("1180x780")
+        self.root.minsize(1000, 640)
+        self.root.configure(fg_color=BG)
+        _enable_dark_titlebar(self.root)
 
-        # 标记是否有未保存的修改
+        # 未保存修改标志
         self._has_changes = False
 
-        self._setup_styles()
         self._create_widgets()
+        self._fix_window_flicker()
         self._load_profile(self.current_profile_name)
 
-        # 绑定快捷键
+        # 快捷键
         self.root.bind("<Control-s>", lambda e: self._save())
+        self.root.bind("<Control-f>", lambda e: self._focus_search())
         self.root.bind("<Escape>", lambda e: self._cancel_drag())
-        # 关闭窗口时检查未保存修改
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _fix_window_flicker(self):
-        """修复 Windows 窗口切换/最小化时闪黑问题"""
+        """修复 Windows 窗口切换/最小化后恢复时闪黑问题（设置窗口背景刷）"""
         try:
             hwnd = self.root.winfo_id()
             while True:
@@ -105,12 +197,11 @@ class ConfigGUI:
                     break
                 hwnd = parent
 
-            # 创建深色画刷 (#222222 = RGB(34,34,34))
-            dark_color = ctypes.windll.gdi32.CreateSolidBrush(
-                ctypes.c_uint32(0x00222222)  # COLORREF: 0x00BBGGRR
-            )
-            # 释放旧画刷
-            old_brush = ctypes.windll.user32.SetClassLongPtrW(hwnd, -10, dark_color)
+            bg_hex = BG.lstrip("#")
+            bg_int = int(bg_hex[4:6] + bg_hex[2:4] + bg_hex[0:2], 16)
+            dark_brush = ctypes.windll.gdi32.CreateSolidBrush(
+                ctypes.c_uint32(bg_int))
+            old_brush = ctypes.windll.user32.SetClassLongPtrW(hwnd, -10, dark_brush)
             if old_brush:
                 ctypes.windll.gdi32.DeleteObject(old_brush)
 
@@ -119,284 +210,366 @@ class ConfigGUI:
         except Exception as e:
             print(f"[ConfigGUI] 无法设置窗口背景刷: {e}")
 
-    def _setup_styles(self):
-        """设置样式 - ttkbootstrap darkly 主题自动处理大部分样式"""
-        # ttkbootstrap darkly 主题已提供深色样式
-        # 仅需微调特殊组件
-        style = self.root.style
-        
-        # Treeview 行高
-        style.configure("Treeview", rowheight=36, font=("Microsoft YaHei", 10))
-        style.configure("Treeview.Heading", font=("Microsoft YaHei", 9, "bold"))
+    # ========== 界面搭建 ==========
 
     def _create_widgets(self):
-        """创建界面组件"""
-        # 主容器
-        main_frame = ttk.Frame(self.root)
+        """三栏布局（左侧导航 + 中间预览编辑 + 右侧命令库）"""
+        main_frame = ctk.CTkFrame(self.root, fg_color=BG, corner_radius=0)
         main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.grid_columnconfigure(0, weight=0, minsize=210)
+        main_frame.grid_columnconfigure(1, weight=1, minsize=400)
+        main_frame.grid_columnconfigure(2, weight=0, minsize=270)
+        main_frame.grid_rowconfigure(0, weight=1)
 
-        # ===== 左侧：Profile 导航 =====
-        sidebar = ttk.Frame(main_frame, width=240)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        # ===== 左侧导航栏 =====
+        sidebar = ctk.CTkFrame(main_frame, width=230, fg_color=SIDEBAR,
+                               corner_radius=0)
+        sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 1))
         sidebar.pack_propagate(False)
 
-        # Logo/标题
-        header_frame = ttk.Frame(sidebar)
-        header_frame.pack(fill=tk.X, padx=20, pady=(25, 20))
+        ctk.CTkLabel(sidebar, text="配置方案", text_color=TEXT,
+                     font=_FONT_TITLE, anchor="w").pack(
+            anchor="w", padx=22, pady=(22, 4))
+        ctk.CTkLabel(sidebar, text="选择一个方案进行编辑",
+                     text_color=TEXT_DIM, font=("Microsoft YaHei", 10),
+                     anchor="w").pack(anchor="w", padx=22, pady=(0, 12))
 
-        ttk.Label(header_frame, text="CAD 手势",
-                  font=("Microsoft YaHei", 13, "bold")).pack(anchor=tk.W)
-        ttk.Label(header_frame, text="配置管理器",
-                  bootstyle="secondary").pack(anchor=tk.W, pady=(3, 0))
-
-        # 分隔线
-        ttk.Separator(sidebar).pack(fill=tk.X, padx=20, pady=10)
-
-        # Profile 列表标题
-        ttk.Label(sidebar, text="配置方案",
-                  bootstyle="primary",
-                  font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(0, 10))
-
-        # Profile 列表
-        list_frame = ttk.Frame(sidebar)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 10))
-
-        self.profile_tree = ttk.Treeview(list_frame, show="tree", selectmode="browse")
-        tree_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.profile_tree.yview)
-        self.profile_tree.configure(yscrollcommand=tree_scroll.set)
-        self.profile_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.profile_tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        # Profile 列表（可滚动）
+        list_frame = ctk.CTkScrollableFrame(
+            sidebar, fg_color=SIDEBAR, scrollbar_button_color=PANEL,
+            scrollbar_button_hover_color=BORDER_LIGHT)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 10))
+        self._list_frame = list_frame
 
         # Profile 操作按钮
-        btn_frame = ttk.Frame(sidebar)
-        btn_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
+        btn_grid = ctk.CTkFrame(sidebar, fg_color=SIDEBAR, corner_radius=0)
+        btn_grid.pack(fill=tk.X, padx=14, pady=(0, 14))
+        btn_grid.grid_columnconfigure(0, weight=1)
+        btn_grid.grid_columnconfigure(1, weight=1)
 
-        btn_row1 = ttk.Frame(btn_frame)
-        btn_row1.pack(fill=tk.X, pady=3)
-        ttk.Button(btn_row1, text="新增", bootstyle="outline",
-                   command=self._add_profile).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 3))
-        ttk.Button(btn_row1, text="复制", bootstyle="outline",
-                   command=self._copy_profile).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3, 0))
+        self._btn_add = ctk.CTkButton(
+            btn_grid, text="＋ 新增", height=32, corner_radius=8,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            text_color="#ffffff", font=_FONT_SMALL,
+            command=self._add_profile)
+        self._btn_add.grid(row=0, column=0, sticky="ew", padx=(0, 5), pady=3)
+        _ToolTip(self._btn_add, "新建一个配置方案")
+        self._btn_copy = ctk.CTkButton(
+            btn_grid, text="复制", height=32, corner_radius=8,
+            fg_color=CARD, hover_color=PRESET_HOVER,
+            border_width=1, border_color=BORDER_LIGHT,
+            text_color=TEXT, font=_FONT_SMALL,
+            command=self._copy_profile)
+        self._btn_copy.grid(row=0, column=1, sticky="ew", padx=(5, 0), pady=3)
+        _ToolTip(self._btn_copy, "复制当前方案为副本")
+        self._btn_rename = ctk.CTkButton(
+            btn_grid, text="重命名", height=32, corner_radius=8,
+            fg_color=CARD, hover_color=PRESET_HOVER,
+            border_width=1, border_color=BORDER_LIGHT,
+            text_color=TEXT, font=_FONT_SMALL,
+            command=self._rename_profile)
+        self._btn_rename.grid(row=1, column=0, sticky="ew", padx=(0, 5), pady=3)
+        _ToolTip(self._btn_rename, "重命名当前方案")
+        self._btn_del = ctk.CTkButton(
+            btn_grid, text="删除", height=32, corner_radius=8,
+            fg_color=CARD, hover_color="#3a2430",
+            border_width=1, border_color="#4a2a35",
+            text_color=DANGER, font=_FONT_SMALL,
+            command=self._delete_profile)
+        self._btn_del.grid(row=1, column=1, sticky="ew", padx=(5, 0), pady=3)
+        _ToolTip(self._btn_del, "删除当前方案（至少保留一个）")
 
-        btn_row2 = ttk.Frame(btn_frame)
-        btn_row2.pack(fill=tk.X, pady=3)
-        ttk.Button(btn_row2, text="重命名", bootstyle="outline",
-                   command=self._rename_profile).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 3))
-        ttk.Button(btn_row2, text="删除", bootstyle="outline danger",
-                   command=self._delete_profile).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(3, 0))
+        # 分隔线 + 设置选项
+        tk.Frame(sidebar, bg=BORDER, height=1).pack(fill=tk.X, padx=20, pady=8)
 
-        # 分隔线
-        ttk.Separator(sidebar).pack(fill=tk.X, padx=20, pady=10)
-
-        # 全局设置区
-        ttk.Label(sidebar, text="设置",
-                  bootstyle="primary",
-                  font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, padx=20, pady=(0, 10))
-
-        # 启动时打开配置
         self.open_config_var = tk.BooleanVar(
-            value=self.config.get("settings", {}).get("open_config_on_start", True))
-        ttk.Checkbutton(sidebar, text="启动时打开此界面",
-                        variable=self.open_config_var,
-                        command=self._on_setting_change).pack(anchor=tk.W, padx=25, pady=4)
+            value=self.config.get("settings", {}).get("open_config_on_start", False))
+        self._chk_open = ctk.CTkCheckBox(
+            sidebar, text="启动时打开此界面", variable=self.open_config_var,
+            command=self._on_setting_change, text_color=TEXT,
+            fg_color=ACCENT, hover_color=ACCENT_DIM,
+            checkmark_color="#ffffff", border_color=BORDER_LIGHT,
+            corner_radius=6, font=_FONT_SMALL)
+        self._chk_open.pack(anchor="w", padx=22, pady=4)
+        _ToolTip(self._chk_open, "程序启动时自动弹出本配置界面")
 
-        # 自动切换Profile
         self.auto_switch_var = tk.BooleanVar(
             value=self.config.get("settings", {}).get("auto_switch_profile", True))
-        ttk.Checkbutton(sidebar, text="根据 CAD 窗口自动切换",
-                        variable=self.auto_switch_var,
-                        command=self._on_setting_change).pack(anchor=tk.W, padx=25, pady=4)
+        self._chk_auto = ctk.CTkCheckBox(
+            sidebar, text="根据 CAD 窗口自动切换", variable=self.auto_switch_var,
+            command=self._on_setting_change, text_color=TEXT,
+            fg_color=ACCENT, hover_color=ACCENT_DIM,
+            checkmark_color="#ffffff", border_color=BORDER_LIGHT,
+            corner_radius=6, font=_FONT_SMALL)
+        self._chk_auto.pack(anchor="w", padx=22, pady=4)
+        _ToolTip(self._chk_auto, "前台窗口为 AutoCAD 或中望 CAD 时自动切换对应方案")
 
-        # ===== 右侧：内容区域 =====
-        content = ttk.Frame(main_frame)
-        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=20, pady=20)
+        # 圆盘外观主题
+        ctk.CTkLabel(sidebar, text="圆盘外观", text_color=TEXT_DIM,
+                     font=("Microsoft YaHei", 10), anchor="w").pack(
+            anchor="w", padx=22, pady=(12, 4))
+        theme_labels = [t.label for t in MENU_THEMES.values()]
+        self._theme_option = ctk.CTkOptionMenu(
+            sidebar, values=theme_labels, height=32, corner_radius=8,
+            fg_color=CARD, button_color=SIDEBAR,
+            button_hover_color=PRESET_HOVER,
+            dropdown_fg_color=CARD, dropdown_hover_color=PRESET_HOVER,
+            dropdown_text_color=TEXT, text_color=TEXT, font=_FONT_SMALL,
+            command=self._on_theme_change)
+        self._theme_option.pack(fill=tk.X, padx=22, pady=(0, 6))
+        _ToolTip(self._theme_option, "切换圆盘菜单的配色风格")
+        cur_label = get_menu_theme(self._menu_theme_name).label
+        self._theme_option.set(cur_label)
 
-        # 上部：圆盘预览 + 详情编辑
-        top_frame = ttk.Frame(content)
-        top_frame.pack(fill=tk.X, pady=(0, 20))
+        # ===== 中间内容区 =====
+        center_frame = ctk.CTkFrame(main_frame, fg_color=BG, corner_radius=0)
+        center_frame.grid(row=0, column=1, sticky="nsew", padx=24, pady=20)
+        center_frame.grid_columnconfigure(0, weight=1)
+        center_frame.grid_rowconfigure(1, weight=1)
 
-        # 圆盘预览区（无边框，背景融入窗口）
-        preview_frame = ttk.Frame(top_frame)
-        preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 顶栏：当前方案 + 操作按钮
+        top_bar = ctk.CTkFrame(center_frame, fg_color=BG, corner_radius=0)
+        top_bar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.profile_badge = ctk.CTkLabel(top_bar, text="", text_color=TEXT,
+                                          font=("Microsoft YaHei", 15, "bold"),
+                                          anchor="w")
+        self.profile_badge.pack(side=tk.LEFT)
+        self.target_badge = ctk.CTkLabel(top_bar, text="", text_color=TEXT_DIM,
+                                         font=_FONT_SMALL, anchor="w")
+        self.target_badge.pack(side=tk.LEFT, padx=(10, 0), pady=(2, 0))
 
-        # 提示文字
-        ttk.Label(preview_frame, text="圆盘预览",
-                  bootstyle="secondary",
-                  font=("Microsoft YaHei", 9, "bold")).pack(anchor=tk.W, pady=(0, 2))
-        ttk.Label(preview_frame, text="点击扇区编辑 | 拖放预设命令到扇区",
-                  bootstyle="secondary").pack(anchor=tk.W, pady=(0, 8))
+        # 右侧快捷操作
+        top_actions = ctk.CTkFrame(top_bar, fg_color=BG, corner_radius=0)
+        top_actions.pack(side=tk.RIGHT)
+        self._btn_import = ctk.CTkButton(
+            top_actions, text="导入JSON", height=30, corner_radius=8,
+            fg_color=CARD, hover_color=PRESET_HOVER,
+            border_width=1, border_color=BORDER_LIGHT,
+            text_color=TEXT, font=_FONT_SMALL,
+            command=self._import_profile)
+        self._btn_import.pack(side=tk.LEFT, padx=3)
+        _ToolTip(self._btn_import, "从 JSON 文件合并配置到当前方案")
+        self._btn_export = ctk.CTkButton(
+            top_actions, text="导出JSON", height=30, corner_radius=8,
+            fg_color=CARD, hover_color=PRESET_HOVER,
+            border_width=1, border_color=BORDER_LIGHT,
+            text_color=TEXT, font=_FONT_SMALL,
+            command=self._export_profile)
+        self._btn_export.pack(side=tk.LEFT, padx=3)
+        _ToolTip(self._btn_export, "将当前方案导出为 JSON 文件")
+        self._btn_reset = ctk.CTkButton(
+            top_actions, text="重置默认", height=30, corner_radius=8,
+            fg_color=CARD, hover_color=PRESET_HOVER,
+            border_width=1, border_color=BORDER_LIGHT,
+            text_color=TEXT, font=_FONT_SMALL,
+            command=self._reset)
+        self._btn_reset.pack(side=tk.LEFT, padx=3)
+        _ToolTip(self._btn_reset, "恢复全部默认配置（会丢失自定义设置）")
+        self._btn_save = ctk.CTkButton(
+            top_actions, text="保存 (Ctrl+S)", height=30, corner_radius=8,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            text_color="#ffffff", font=_FONT_SMALL,
+            command=self._save)
+        self._btn_save.pack(side=tk.LEFT, padx=(9, 0))
+        _ToolTip(self._btn_save, "保存全部修改并关闭")
 
-        self.preview_size = 420
+        # 内容主体（预览 + 编辑），预览占满剩余空间
+        body = ctk.CTkFrame(center_frame, fg_color=BG, corner_radius=0)
+        body.grid(row=1, column=0, sticky="nsew")
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(0, weight=1)
+
+        # 圆盘预览区（卡片，撑满主体）
+        preview_card = ctk.CTkFrame(body, fg_color=CARD,
+                                    corner_radius=14, border_width=1,
+                                    border_color=BORDER)
+        preview_card.grid(row=0, column=0, sticky="nsew", pady=(0, 14))
+        preview_card.grid_rowconfigure(1, weight=1)
+        preview_card.grid_columnconfigure(0, weight=1)
+
+        preview_head = ctk.CTkFrame(preview_card, fg_color=CARD, corner_radius=0)
+        preview_head.grid(row=0, column=0, sticky="ew", padx=18, pady=(12, 0))
+        preview_head.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(preview_head, text="圆盘预览", text_color=TEXT,
+                     font=("Microsoft YaHei", 13, "bold"),
+                     anchor="w").grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(preview_head, text="点击选择 · 双击快速编辑 · 从右侧拖入命令",
+                     text_color=TEXT_DIM, font=("Microsoft YaHei", 11),
+                     anchor="e").grid(row=0, column=1, sticky="e", pady=(2, 0))
+
+        preview_inner = ctk.CTkFrame(preview_card, fg_color=CARD, corner_radius=14)
+        preview_inner.grid(row=1, column=0, sticky="nsew", padx=20, pady=14)
+        preview_inner.grid_rowconfigure(0, weight=1)
+        preview_inner.grid_columnconfigure(0, weight=1)
+
+        ext_r = self.config.get("settings", {}).get("ext_ring_radius", 240)
+        self.preview_size = max(min(ext_r * 2 + 40, 420), 320)
+        self._needs_preview_resize = False
         self.preview_canvas = tk.Canvas(
-            preview_frame, width=self.preview_size, height=self.preview_size,
-            bg=COLORS["bg"], highlightthickness=0, borderwidth=0)
-        self.preview_canvas.pack(expand=True)
+            preview_inner, width=self.preview_size, height=self.preview_size,
+            bg=CARD, highlightthickness=0, borderwidth=0)
+        self.preview_canvas.grid(row=0, column=0)
         self.preview_canvas.bind("<Button-1>", self._on_canvas_click)
         self.preview_canvas.bind("<Double-Button-1>", self._on_canvas_double_click)
         self.preview_canvas.bind("<Motion>", self._on_canvas_motion)
         self.preview_canvas.bind("<Leave>", self._on_canvas_leave)
+        preview_inner.bind("<Configure>", self._on_preview_resize)
 
-        # 右侧：扇区详情编辑
-        detail_frame = ttk.Labelframe(top_frame, text=" 扇区编辑 ", padding=20, width=320)
-        detail_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(20, 0))
-        detail_frame.pack_propagate(False)
+        # 扇区编辑卡片（紧凑，置于预览下方）
+        sector_card = ctk.CTkFrame(body, fg_color=CARD,
+                                   corner_radius=14, border_width=1,
+                                   border_color=BORDER)
+        sector_card.grid(row=1, column=0, sticky="ew", pady=(0, 4))
+        card_inner = ctk.CTkFrame(sector_card, fg_color=CARD, corner_radius=14)
+        card_inner.pack(fill=tk.X, padx=24, pady=18)
 
-        # 当前选中提示
-        self.selected_info = ttk.Label(detail_frame, text="点击左侧圆盘选择扇区",
-                                        bootstyle="secondary", wraplength=280)
-        self.selected_info.pack(anchor=tk.W, pady=(0, 20))
+        sector_head = ctk.CTkFrame(card_inner, fg_color=CARD, corner_radius=0)
+        sector_head.pack(fill=tk.X, pady=(0, 14))
+        ctk.CTkLabel(sector_head, text="扇区编辑", text_color=ACCENT,
+                     font=("Microsoft YaHei", 13, "bold"),
+                     anchor="w").pack(side=tk.LEFT)
+        self.selected_info = ctk.CTkLabel(
+            sector_head, text="点击圆盘选择扇区", text_color=TEXT_DIM,
+            font=("Microsoft YaHei", 11), anchor="e")
+        self.selected_info.pack(side=tk.RIGHT)
 
-        # 编辑表单
-        form_frame = ttk.Frame(detail_frame)
+        # 编辑表单（Grid 布局，加大行距）
+        form_frame = ctk.CTkFrame(card_inner, fg_color=CARD, corner_radius=0)
         form_frame.pack(fill=tk.X)
+        form_frame.grid_columnconfigure(1, weight=1)
+        form_frame.grid_columnconfigure(3, weight=2)
+        form_frame.grid_columnconfigure(5, weight=2)
 
-        # 扇区层
-        ttk.Label(form_frame, text="所在层",
-                  bootstyle="info",
-                  font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
-        self.layer_label = ttk.Label(form_frame, text="未选择",
-                                      bootstyle="primary",
-                                      font=("Microsoft YaHei", 10, "bold"))
-        self.layer_label.pack(anchor=tk.W, pady=(0, 15))
+        # Row 0: 标签（统一左对齐，避免被拉伸后居中偏移）
+        ctk.CTkLabel(form_frame, text="所在层", text_color=TEXT_DIM,
+                     font=_FONT_SMALL, anchor="w").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ctk.CTkLabel(form_frame, text="显示名称", text_color=TEXT_DIM,
+                     font=_FONT_SMALL, anchor="w").grid(row=0, column=1, sticky="w", padx=(0, 8), pady=(0, 8))
+        ctk.CTkLabel(form_frame, text="快捷键", text_color=TEXT_DIM,
+                     font=_FONT_SMALL, anchor="w").grid(row=0, column=2, sticky="w", padx=(0, 8), pady=(0, 8))
+        ctk.CTkLabel(form_frame, text="CAD 命令", text_color=TEXT_DIM,
+                     font=_FONT_SMALL, anchor="w").grid(row=0, column=3, sticky="w", padx=(0, 8), pady=(0, 8))
 
-        # 标签
-        ttk.Label(form_frame, text="显示名称",
-                  bootstyle="info",
-                  font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
+        # Row 1: 输入（加高，与按钮对齐）
+        self.layer_label = ctk.CTkLabel(form_frame, text="未选择",
+                                        text_color=ACCENT,
+                                        font=("Microsoft YaHei", 12, "bold"))
+        self.layer_label.grid(row=1, column=0, sticky="w", padx=(0, 8))
+
         self.detail_label_var = tk.StringVar()
-        self.detail_label_entry = ttk.Entry(form_frame, textvariable=self.detail_label_var,
-                                font=("Microsoft YaHei", 11))
-        self.detail_label_entry.pack(fill=tk.X, pady=(0, 15))
+        self.detail_label_entry = ctk.CTkEntry(
+            form_frame, textvariable=self.detail_label_var, height=40,
+            corner_radius=8, fg_color=PANEL, border_color=BORDER,
+            text_color=TEXT, font=_FONT_SMALL,
+            placeholder_text="扇区名称，如: 直线")
+        self.detail_label_entry.grid(row=1, column=1, sticky="ew", padx=(0, 8))
 
-        # 快捷键
-        ttk.Label(form_frame, text="快捷键",
-                  bootstyle="info",
-                  font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         self.detail_key_var = tk.StringVar()
-        self.detail_key_entry = ttk.Entry(form_frame, textvariable=self.detail_key_var,
-                              font=("Microsoft YaHei", 11))
-        self.detail_key_entry.pack(fill=tk.X, pady=(0, 15))
+        self.detail_key_entry = ctk.CTkEntry(
+            form_frame, textvariable=self.detail_key_var, height=40,
+            corner_radius=8, fg_color=PANEL, border_color=BORDER,
+            text_color=TEXT, font=_FONT_SMALL,
+            placeholder_text="如: l")
+        self.detail_key_entry.grid(row=1, column=2, sticky="ew", padx=(0, 8))
 
-        # CAD命令
-        ttk.Label(form_frame, text="CAD 命令",
-                  bootstyle="info",
-                  font=("Microsoft YaHei", 10, "bold")).pack(anchor=tk.W, pady=(0, 5))
         self.detail_desc_var = tk.StringVar()
-        self.detail_desc_entry = ttk.Entry(form_frame, textvariable=self.detail_desc_var,
-                               font=("Microsoft YaHei", 11))
-        self.detail_desc_entry.pack(fill=tk.X, pady=(0, 20))
+        self.detail_desc_entry = ctk.CTkEntry(
+            form_frame, textvariable=self.detail_desc_var, height=40,
+            corner_radius=8, fg_color=PANEL, border_color=BORDER,
+            text_color=TEXT, font=_FONT_SMALL,
+            placeholder_text="CAD 命令名，如: LINE")
+        self.detail_desc_entry.grid(row=1, column=3, sticky="ew", padx=(0, 14))
 
-        # 自动保存：监听变量变化
+        # 清空 / 复制按钮
+        btn_col = ctk.CTkFrame(form_frame, fg_color=CARD, corner_radius=0)
+        btn_col.grid(row=0, column=4, rowspan=2, sticky="nsew")
+        self._btn_clear = ctk.CTkButton(
+            btn_col, text="清空", height=36, corner_radius=8,
+            fg_color=CARD, hover_color=PRESET_HOVER,
+            border_width=1, border_color=BORDER_LIGHT,
+            text_color=TEXT, font=_FONT_SMALL,
+            command=self._clear_sector)
+        self._btn_clear.pack(side=tk.LEFT, padx=(0, 8))
+        _ToolTip(self._btn_clear, "清空当前选中扇区的配置")
+        self._btn_copyto = ctk.CTkButton(
+            btn_col, text="复制到…", height=36, corner_radius=8,
+            fg_color=CARD, hover_color=PRESET_HOVER,
+            border_width=1, border_color=BORDER_LIGHT,
+            text_color=TEXT, font=_FONT_SMALL,
+            command=self._copy_sector_to)
+        self._btn_copyto.pack(side=tk.LEFT)
+        _ToolTip(self._btn_copyto, "将当前扇区配置复制到其他扇区")
+
+        # 自动保存
         self.detail_label_var.trace_add("write", self._on_detail_change)
         self.detail_key_var.trace_add("write", self._on_detail_change)
         self.detail_desc_var.trace_add("write", self._on_detail_change)
 
-        # 操作按钮
-        btn_frame_detail = ttk.Frame(detail_frame)
-        btn_frame_detail.pack(fill=tk.X, pady=(0, 10))
+        # ===== 右侧命令库 =====
+        right_panel = ctk.CTkFrame(main_frame, width=290, fg_color=PANEL,
+                                   corner_radius=0)
+        right_panel.grid(row=0, column=2, sticky="ns", pady=0)
+        right_panel.pack_propagate(False)
 
-        ttk.Button(btn_frame_detail, text="清空扇区", bootstyle="outline danger",
-                   command=self._clear_sector).pack(fill=tk.X)
-
-        # 下部：预设命令库
-        preset_frame = ttk.Labelframe(content, text=" 预设命令库 ", padding=15)
-        preset_frame.pack(fill=tk.BOTH, expand=True)
+        right_head = ctk.CTkFrame(right_panel, fg_color=PANEL, corner_radius=0)
+        right_head.pack(fill=tk.X, padx=18, pady=(20, 10))
+        ctk.CTkLabel(right_head, text="命令库", text_color=ACCENT,
+                     font=_FONT_TITLE, anchor="w").pack(side=tk.LEFT)
+        ctk.CTkLabel(right_head, text="Ctrl+F", text_color=TEXT_DIM,
+                     font=("Microsoft YaHei", 10), anchor="e").pack(
+            side=tk.RIGHT, pady=(6, 0))
 
         # 搜索框
-        search_frame = ttk.Frame(preset_frame)
-        search_frame.pack(fill=tk.X, pady=(0, 10))
-
         self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", self._on_search_change)
-        search_entry = ttk.Entry(search_frame, textvariable=self.search_var,
-                                 font=("Microsoft YaHei", 10))
-        search_entry.pack(fill=tk.X)
-        self._add_placeholder(search_entry, "搜索命令名称或快捷键...")
+        self.search_var.trace_add("write", lambda *a: self._on_search_change())
+        self._search_entry = ctk.CTkEntry(
+            right_panel, textvariable=self.search_var, height=38,
+            corner_radius=8, placeholder_text="搜索命令…",
+            placeholder_text_color=TEXT_DIM,
+            fg_color=SIDEBAR, border_color=BORDER,
+            text_color=TEXT, font=_FONT_SMALL)
+        self._search_entry.pack(fill=tk.X, padx=18, pady=(0, 12))
 
-        # 预设命令滚动区域（只在本区域绑定滚轮）
-        preset_canvas = tk.Canvas(preset_frame, bg=COLORS["panel_bg"],
-                                  highlightthickness=0, height=200)
-        self._preset_canvas = preset_canvas
-        preset_scroll = ttk.Scrollbar(preset_frame, orient=tk.VERTICAL,
-                                       command=preset_canvas.yview)
-        self.preset_container = ttk.Frame(preset_canvas)
+        # 命令滚动区域
+        preset_scroll = ctk.CTkScrollableFrame(
+            right_panel, fg_color=PANEL, scrollbar_button_color=SIDEBAR,
+            scrollbar_button_hover_color=BORDER_LIGHT)
+        preset_scroll.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 12))
+        self.preset_container = preset_scroll
 
-        self.preset_container.bind(
-            "<Configure>",
-            lambda e: preset_canvas.configure(scrollregion=preset_canvas.bbox("all"))
-        )
-        preset_canvas.create_window((0, 0), window=self.preset_container, anchor="nw")
-        preset_canvas.configure(yscrollcommand=preset_scroll.set)
-
-        preset_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        preset_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        # 只在预设区域绑定滚轮
-        preset_canvas.bind("<MouseWheel>",
-                           lambda e: preset_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
-        self.preset_container.bind("<MouseWheel>",
-                                    lambda e: preset_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+        # ===== 底部状态栏 =====
+        status_bar = ctk.CTkFrame(main_frame, fg_color=SIDEBAR,
+                                  corner_radius=0, height=36)
+        status_bar.grid(row=1, column=0, columnspan=3, sticky="ew")
+        status_bar.grid_propagate(False)
+        self.status_label = ctk.CTkLabel(
+            status_bar, text="就绪", text_color=TEXT_DIM,
+            font=("Microsoft YaHei", 10), anchor="w")
+        self.status_label.pack(side=tk.LEFT, padx=16)
+        self._unsaved_label = ctk.CTkLabel(
+            status_bar, text="", text_color=WARN,
+            font=("Microsoft YaHei", 10, "bold"), anchor="e")
+        self._unsaved_label.pack(side=tk.RIGHT, padx=16)
 
         self._populate_presets()
+        self._refresh_profile_list()
 
-        # ===== 底部：状态栏 =====
-        bottom_frame = ttk.Frame(content)
-        bottom_frame.pack(fill=tk.X, pady=(20, 0))
+    def _focus_search(self):
+        """Ctrl+F 聚焦搜索框"""
+        self._search_entry.focus_set()
+        self._search_entry.select_range(0, tk.END)
 
-        # 左侧：状态提示
-        self.status_label = ttk.Label(bottom_frame, text="点击圆盘扇区可直接编辑命令配置",
-                                       bootstyle="secondary")
-        self.status_label.pack(side=tk.LEFT)
+    # ========== Profile 列表 ==========
 
-        # 右侧：操作按钮
-        action_frame = ttk.Frame(bottom_frame)
-        action_frame.pack(side=tk.RIGHT)
+    def _refresh_profile_list(self):
+        """刷新 Profile 列表（分组 + 按钮）"""
+        for w in self._list_frame.winfo_children():
+            w.destroy()
+        self._profile_buttons.clear()
 
-        ttk.Button(action_frame, text="重置默认", bootstyle="outline danger",
-                   command=self._reset).pack(side=tk.LEFT, padx=(0, 15))
-
-        self.save_btn = ttk.Button(action_frame, text="保存并关闭 (Ctrl+S)", bootstyle="success",
-                                    command=self._save)
-        self.save_btn.pack(side=tk.LEFT)
-
-        # 初始化 Profile 树
-        self._refresh_profile_tree()
-
-    def _add_placeholder(self, entry, placeholder):
-        """添加输入框占位符"""
-        def on_focus_in(event):
-            if entry.get() == placeholder:
-                entry.delete(0, tk.END)
-                entry.configure(foreground=COLORS["text"])
-
-        def on_focus_out(event):
-            if not entry.get():
-                entry.insert(0, placeholder)
-                entry.configure(foreground=COLORS["text_dim"])
-
-        entry.insert(0, placeholder)
-        entry.configure(foreground=COLORS["text_dim"])
-        entry.bind("<FocusIn>", on_focus_in)
-        entry.bind("<FocusOut>", on_focus_out)
-
-    def _on_setting_change(self):
-        """设置改变"""
-        self._has_changes = True
-        self.config.setdefault("settings", {})["open_config_on_start"] = self.open_config_var.get()
-        self.config["settings"]["auto_switch_profile"] = self.auto_switch_var.get()
-
-    # ========== Profile 树管理 ==========
-
-    def _refresh_profile_tree(self):
-        """刷新 Profile 树"""
-        self.profile_tree.delete(*self.profile_tree.get_children())
-
-        # 按 CAD 软件分组
         autocad_profiles = []
         zwcad_profiles = []
         other_profiles = []
-
         for name, profile in self.config.get("profiles", {}).items():
             target = profile.get("target", "")
             display = profile.get("name", name)
@@ -407,172 +580,191 @@ class ConfigGUI:
             else:
                 other_profiles.append((name, display))
 
-        if autocad_profiles:
-            autocad_node = self.profile_tree.insert("", tk.END, text="AutoCAD", open=True)
-            for name, display in autocad_profiles:
-                self.profile_tree.insert(autocad_node, tk.END, text=display, values=(name,))
+        def add_group(title, items):
+            if not items:
+                return
+            head = ctk.CTkFrame(self._list_frame, fg_color=SIDEBAR, corner_radius=0)
+            head.pack(fill=tk.X, padx=2, pady=(10, 2))
+            ctk.CTkFrame(head, width=3, height=13, fg_color=ACCENT,
+                         corner_radius=2).pack(side=tk.LEFT, padx=(4, 7), pady=2)
+            ctk.CTkLabel(head, text=title, text_color=ACCENT,
+                         font=("Microsoft YaHei", 11, "bold"),
+                         anchor="w").pack(side=tk.LEFT)
+            for name, display in items:
+                btn = ctk.CTkButton(
+                    self._list_frame, text=display, anchor="w",
+                    height=32, corner_radius=8, font=_FONT_SMALL,
+                    fg_color=SIDEBAR, hover_color=PRESET_HOVER,
+                    text_color=TEXT_SECONDARY,
+                    command=lambda n=name: self._select_profile(n))
+                btn.pack(fill=tk.X, pady=1)
+                self._profile_buttons[name] = btn
 
-        if zwcad_profiles:
-            zwcad_node = self.profile_tree.insert("", tk.END, text="中望CAD", open=True)
-            for name, display in zwcad_profiles:
-                self.profile_tree.insert(zwcad_node, tk.END, text=display, values=(name,))
+        add_group("AutoCAD", autocad_profiles)
+        add_group("中望CAD", zwcad_profiles)
+        add_group("其他", other_profiles)
+        self._highlight_profile(self.current_profile_name)
 
-        if other_profiles:
-            other_node = self.profile_tree.insert("", tk.END, text="其他", open=True)
-            for name, display in other_profiles:
-                self.profile_tree.insert(other_node, tk.END, text=display, values=(name,))
+    def _highlight_profile(self, name: str):
+        for n, btn in self._profile_buttons.items():
+            if n == name:
+                btn.configure(fg_color=ACCENT_DIM, text_color="#ffffff",
+                              hover_color=ACCENT_DIM)
+            else:
+                btn.configure(fg_color=SIDEBAR, text_color=TEXT_SECONDARY,
+                              hover_color=PRESET_HOVER)
 
-        # 选中当前活跃 profile
-        for parent in self.profile_tree.get_children():
-            for child in self.profile_tree.get_children(parent):
-                values = self.profile_tree.item(child, "values")
-                if values and values[0] == self.current_profile_name:
-                    self.profile_tree.selection_set(child)
-                    self.profile_tree.see(child)
-                    break
+    def _select_profile(self, profile_name: str):
+        self._load_profile(profile_name)
 
-    def _on_tree_select(self, event):
-        """Profile 树选择事件"""
-        selection = self.profile_tree.selection()
-        if not selection:
-            return
-        item = self.profile_tree.item(selection[0])
-        values = item.get("values", [])
-        if values:
-            profile_name = values[0]
-            self._load_profile(profile_name)
+    # ========== 设置/保存 ==========
+
+    def _set_changed(self):
+        """标记有未保存修改"""
+        self._has_changes = True
+        if getattr(self, "_unsaved_label", None) is not None:
+            self._unsaved_label.configure(text="● 未保存修改")
+
+    def _clear_changed(self):
+        """清除未保存标记"""
+        self._has_changes = False
+        if getattr(self, "_unsaved_label", None) is not None:
+            self._unsaved_label.configure(text="")
+
+    def _on_setting_change(self):
+        """设置改变"""
+        self._set_changed()
+        self.config.setdefault("settings", {})["open_config_on_start"] = self.open_config_var.get()
+        self.config["settings"]["auto_switch_profile"] = self.auto_switch_var.get()
+
+    def _on_theme_change(self, label: str):
+        """切换圆盘外观主题"""
+        for t in MENU_THEMES.values():
+            if t.label == label:
+                self._menu_theme_name = t.name
+                break
+        self.config.setdefault("settings", {})["menu_theme"] = self._menu_theme_name
+        self._set_changed()
+        self._draw_preview()
 
     def _load_profile(self, profile_name: str):
         """加载 Profile"""
         self.current_profile_name = profile_name
         self._selected_sector = None
         self._hovered_sector = None
+        self._highlight_profile(profile_name)
+
+        profile = self.config.get("profiles", {}).get(profile_name, {})
+        new_target = profile.get("target", "autocad")
+        if new_target != self._current_target:
+            self._current_target = new_target
+            self.preset_commands = get_preset_commands(new_target)
+            self._populate_presets()
+
         self._updating_detail = True
         self._update_detail_panel()
         self._updating_detail = False
         self._draw_preview()
 
-        # 获取 Profile 显示名
-        profile = self.config.get("profiles", {}).get(profile_name, {})
         display_name = profile.get("name", profile_name)
-        self.status_label.config(text=f"当前方案: {display_name}")
+        target_label = {"autocad": "AutoCAD", "zwcad": "中望CAD"}.get(
+            new_target, new_target.upper())
+        self.profile_badge.configure(text=display_name)
+        self.target_badge.configure(text=target_label)
+        self.status_label.configure(text=f"已加载方案「{display_name}」")
 
     # ========== 圆盘绘制 ==========
 
+    def _on_preview_resize(self, event):
+        """预览区大小变化时调整画布尺寸（自适应撑满可用空间）"""
+        if event.width <= 10 or event.height <= 10:
+            return
+        new_size = min(event.width - 28, event.height - 28, 560)
+        new_size = max(new_size, 260)
+        if abs(new_size - self.preview_size) > 8:
+            self.preview_size = new_size
+            self.preview_canvas.config(width=new_size, height=new_size)
+            self._draw_preview()
+
     def _draw_preview(self):
-        """绘制圆盘预览"""
+        """绘制圆盘预览 - 使用共享渲染器"""
         self.preview_canvas.delete("all")
 
         cx = self.preview_size // 2
         cy = self.preview_size // 2
-        # 使用配置文件中的半径，保持与实际运行一致
         inner_r = self.config.get("settings", {}).get("ring_radius", 100)
         outer_r = self.config.get("settings", {}).get("outer_ring_radius", 180)
+        ext_r = self.config.get("settings", {}).get("ext_ring_radius", 240)
         dead_r = self.config.get("settings", {}).get("dead_zone_radius", 30)
 
         self._preview_cx = cx
         self._preview_cy = cy
         self._preview_inner_r = inner_r
         self._preview_outer_r = outer_r
+        self._preview_ext_r = ext_r
         self._preview_dead_r = dead_r
 
         profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
         n = self.config.get("settings", {}).get("sector_count", 8)
         self._preview_n = n
+        t = get_menu_theme(self._menu_theme_name)
 
-        # 绘制外层扇区（与 radial_menu.py 完全一致）
-        for i in range(n):
-            start_angle = i * 360 / n - 90 - 360 / (2 * n)
-            extent = 360 / n
-            is_selected = self._selected_sector == ("outer", i)
-            is_hovered = self._hovered_sector == ("outer", i)
+        # 扩展圈阴影
+        self.preview_canvas.create_oval(
+            cx - ext_r - 3, cy - ext_r - 3,
+            cx + ext_r + 3, cy + ext_r + 3,
+            fill="#14181f", outline="")
 
-            if is_selected:
-                fill_color = COLORS["outer_sector_hl"]
-                outline_color = COLORS["selected_border"]
-                outline_width = 2
-            elif is_hovered:
-                fill_color = COLORS["outer_sector_hover"]
-                outline_color = COLORS["accent_dim"]
-                outline_width = 1
-            else:
-                fill_color = COLORS["outer_sector"]
-                outline_color = COLORS["border"]
-                outline_width = 1
+        # 扩展圈（预览保留三圈，便于编辑扩展命令）
+        draw_ring(self.preview_canvas, cx, cy, outer_r, ext_r, n,
+                  profile.get("extension_sectors", {}),
+                  lambda i, cfg: ring_state_preview(
+                      t.extension, bool(cfg.get("label")),
+                      self._selected_sector == ("extension", i),
+                      self._hovered_sector == ("extension", i),
+                      t.border, t.accent_dim),
+                  label_offset=0.5)
 
-            self.preview_canvas.create_arc(
-                cx - outer_r, cy - outer_r, cx + outer_r, cy + outer_r,
-                start=start_angle, extent=extent, fill=fill_color,
-                outline=outline_color, width=outline_width)
+        # 外层
+        draw_ring(self.preview_canvas, cx, cy, inner_r, outer_r, n,
+                  profile.get("outer_sectors", {}),
+                  lambda i, cfg: ring_state_preview(
+                      t.outer, bool(cfg.get("label")),
+                      self._selected_sector == ("outer", i),
+                      self._hovered_sector == ("outer", i),
+                      t.border, t.accent_dim),
+                  label_offset=0.5)
 
-            # 外层标签
-            mid_angle = math.radians(i * 360 / n - 90)
-            label_r = (inner_r + outer_r) / 2 + (outer_r - inner_r) * 0.25
-            lx = cx + label_r * math.cos(mid_angle)
-            ly = cy - label_r * math.sin(mid_angle)
+        # 内层
+        draw_ring(self.preview_canvas, cx, cy, dead_r, inner_r, n,
+                  profile.get("sectors", {}),
+                  lambda i, cfg: ring_state_preview(
+                      t.inner, bool(cfg.get("label")),
+                      self._selected_sector == ("inner", i),
+                      self._hovered_sector == ("inner", i),
+                      t.border, t.accent_dim),
+                  label_offset=0.5)
 
-            cfg = profile.get("outer_sectors", {}).get(str(i), {})
-            label = cfg.get("label", "")
-            if label:
-                self.preview_canvas.create_text(lx, ly, text=label, fill=COLORS["text"],
-                                                font=("Microsoft YaHei", 9), anchor=tk.CENTER)
-
-        # 绘制内层扇区（与 radial_menu.py 完全一致）
-        for i in range(n):
-            start_angle = i * 360 / n - 90 - 360 / (2 * n)
-            extent = 360 / n
-            is_selected = self._selected_sector == ("inner", i)
-            is_hovered = self._hovered_sector == ("inner", i)
-
-            if is_selected:
-                fill_color = COLORS["inner_sector_hl"]
-                outline_color = COLORS["selected_border"]
-                outline_width = 2
-            elif is_hovered:
-                fill_color = COLORS["inner_sector_hover"]
-                outline_color = COLORS["accent_dim"]
-                outline_width = 1
-            else:
-                fill_color = COLORS["inner_sector"]
-                outline_color = COLORS["border"]
-                outline_width = 1
-
-            self.preview_canvas.create_arc(
-                cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r,
-                start=start_angle, extent=extent, fill=fill_color,
-                outline=outline_color, width=outline_width)
-
-            # 内层标签
-            mid_angle = math.radians(i * 360 / n - 90)
-            label_r = (dead_r + inner_r) / 2
-            lx = cx + label_r * math.cos(mid_angle)
-            ly = cy - label_r * math.sin(mid_angle)
-
-            cfg = profile.get("sectors", {}).get(str(i), {})
-            label = cfg.get("label", "")
-            if label:
-                self.preview_canvas.create_text(lx, ly, text=label, fill=COLORS["text"],
-                                                font=("Microsoft YaHei", 8, "bold"), anchor=tk.CENTER)
-
-        # 中心死区 — 显示当前选中扇区的信息
+        # 中心死区
         self.preview_canvas.create_oval(
             cx - dead_r, cy - dead_r, cx + dead_r, cy + dead_r,
-            fill=COLORS["dead_zone"], outline=COLORS["border"], width=1)
+            fill=t.dead_zone, outline=t.border, width=1)
 
+        # 中心文字
         if self._selected_sector:
             layer, idx = self._selected_sector
-            sectors_key = "outer_sectors" if layer == "outer" else "sectors"
+            sectors_key = _layer_to_sectors_key(layer)
             cfg = profile.get(sectors_key, {}).get(str(idx), {})
-            center_text = cfg.get("label", "")
-            if not center_text:
-                center_text = f"扇区{idx}"
+            label = cfg.get("label", "")
+            layer_prefix = "扩展 " if layer == "extension" else ""
+            center_text = f"{layer_prefix}{label}" if label else f"{layer_prefix}扇区{idx}"
         else:
             center_text = "释放"
-        self.preview_canvas.create_text(cx, cy, text=center_text, fill=COLORS["text_dim"],
-                                        font=("Microsoft YaHei", 8), anchor=tk.CENTER)
+        self.preview_canvas.create_text(cx, cy, text=center_text, fill=t.center_text,
+                                        font=("Microsoft YaHei", 10), anchor=tk.CENTER)
 
     def _calc_sector_at(self, canvas_x: int, canvas_y: int) -> Optional[Tuple[str, int]]:
-        """计算 canvas 坐标所在的扇区，返回 (layer, index) 或 None"""
+        """计算 canvas 坐标所在的扇区"""
         cx, cy = self._preview_cx, self._preview_cy
         dx, dy = canvas_x - cx, canvas_y - cy
         dist = math.sqrt(dx * dx + dy * dy)
@@ -586,14 +778,15 @@ class ConfigGUI:
             return ("inner", sector)
         elif dist < self._preview_outer_r:
             return ("outer", sector)
+        elif dist < self._preview_ext_r:
+            return ("extension", sector)
         return None
 
     def _on_canvas_motion(self, event):
-        """圆盘 hover 事件（节流到 16ms）"""
-        # 立即捕获坐标（event 对象可能被后续事件覆盖）
+        """圆盘 hover 事件（节流 16ms）"""
         ex, ey = event.x, event.y
         if self._hover_after_id is not None:
-            return  # 已有待处理的更新
+            return
 
         def update():
             self._hover_after_id = None
@@ -602,7 +795,6 @@ class ConfigGUI:
             if new_hover != self._hovered_sector:
                 self._hovered_sector = new_hover
                 self._draw_preview()
-                # 更新光标
                 if new_hover:
                     self.preview_canvas.config(cursor="hand2")
                 else:
@@ -634,11 +826,12 @@ class ConfigGUI:
         self._updating_detail = False
         self._draw_preview()
 
-        layer_name = "外层" if sector[0] == "outer" else "内层"
-        self.status_label.config(text=f"已选择{layer_name}扇区 {sector[1]}，可编辑或拖放预设命令")
+        layer_name = _layer_display_name(sector[0])
+        self.status_label.configure(
+            text=f"已选择{layer_name}扇区 {sector[1]}，可编辑或拖放预设命令")
 
     def _on_canvas_double_click(self, event):
-        """双击圆盘扇区 → 聚焦到编辑面板"""
+        """双击 → 聚焦编辑面板"""
         x, y = self.preview_canvas.canvasx(event.x), self.preview_canvas.canvasy(event.y)
         sector = self._calc_sector_at(x, y)
         if sector:
@@ -652,20 +845,20 @@ class ConfigGUI:
     def _update_detail_panel(self):
         """更新详情面板"""
         if self._selected_sector is None:
-            self.layer_label.config(text="未选择")
+            self.layer_label.configure(text="未选择")
             self.detail_label_var.set("")
             self.detail_key_var.set("")
             self.detail_desc_var.set("")
-            self.selected_info.config(text="点击左侧圆盘选择扇区")
+            self.selected_info.configure(text="点击圆盘选择扇区")
             return
 
         layer, idx = self._selected_sector
-        layer_name = "外层" if layer == "outer" else "内层"
-        self.layer_label.config(text=f"{layer_name} - 扇区 {idx}")
-        self.selected_info.config(text=f"正在编辑: {layer_name}扇区 {idx}")
+        layer_name = _layer_display_name(layer)
+        self.layer_label.configure(text=f"{layer_name} · 扇区 {idx}")
+        self.selected_info.configure(text=f"正在编辑: {layer_name}扇区 {idx}")
 
         profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
-        sectors_key = "outer_sectors" if layer == "outer" else "sectors"
+        sectors_key = _layer_to_sectors_key(layer)
         cfg = profile.get(sectors_key, {}).get(str(idx), {})
 
         self.detail_label_var.set(cfg.get("label", ""))
@@ -673,7 +866,7 @@ class ConfigGUI:
         self.detail_desc_var.set(cfg.get("description", ""))
 
     def _on_detail_change(self, *args):
-        """编辑框内容变化时自动保存到内存"""
+        """编辑框内容变化时自动保存"""
         if self._updating_detail:
             return
         if self._selected_sector is None:
@@ -681,7 +874,7 @@ class ConfigGUI:
 
         layer, idx = self._selected_sector
         profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
-        sectors_key = "outer_sectors" if layer == "outer" else "sectors"
+        sectors_key = _layer_to_sectors_key(layer)
         sectors = profile.setdefault(sectors_key, {})
 
         label_val = self.detail_label_var.get().strip()
@@ -694,45 +887,158 @@ class ConfigGUI:
             "description": desc_val
         }
 
-        self._has_changes = True
+        self._set_changed()
         self._draw_preview()
 
     def _clear_sector(self):
         """清空扇区"""
         if self._selected_sector is None:
-            messagebox.showwarning("提示", "请先点击圆盘选择一个扇区")
+            _dark_msgbox(self.root, "提示", "请先在圆盘上点击选择一个扇区", "warning")
             return
 
         layer, idx = self._selected_sector
         profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
-        sectors_key = "outer_sectors" if layer == "outer" else "sectors"
+        sectors_key = _layer_to_sectors_key(layer)
         sectors = profile.get(sectors_key, {})
 
         if str(idx) in sectors:
             del sectors[str(idx)]
-            self._has_changes = True
+            self._set_changed()
             self._updating_detail = True
             self._update_detail_panel()
             self._updating_detail = False
             self._draw_preview()
-            self.status_label.config(text=f"已清空扇区 {idx}")
+            self.status_label.configure(text=f"已清空扇区 {idx}")
+
+    def _copy_sector_to(self):
+        """复制当前扇区配置到其他位置"""
+        if self._selected_sector is None:
+            _dark_msgbox(self.root, "提示", "请先在圆盘上点击选择一个扇区", "warning")
+            return
+
+        layer, idx = self._selected_sector
+        profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
+        sectors_key = _layer_to_sectors_key(layer)
+        cfg = profile.get(sectors_key, {}).get(str(idx), {})
+        if not cfg:
+            _dark_msgbox(self.root, "提示", "当前扇区为空，无需复制", "info")
+            return
+
+        # 弹出对话框选择目标扇区
+        dialog = _DarkDialog(self.root, "复制到...", "选择目标位置：",
+                             kind="question", buttons=(), width=340)
+        win = dialog.top
+        for w in win.winfo_children():
+            w.destroy()
+        win.geometry("340x300")
+
+        body = ctk.CTkFrame(win, fg_color=BG, corner_radius=0)
+        body.pack(fill=tk.BOTH, expand=True, padx=22, pady=16)
+
+        ctk.CTkLabel(body, text=f"将「{cfg.get('label', '')}」复制到:",
+                     text_color=TEXT, font=_FONT).pack(pady=(4, 10))
+
+        target_var = tk.StringVar(value="inner")
+        for val, name in (("inner", "内层"), ("outer", "外层"),
+                          ("extension", "扩展圈")):
+            ctk.CTkRadioButton(body, text=name, value=val,
+                               variable=target_var, text_color=TEXT,
+                               fg_color=ACCENT, hover_color=ACCENT_DIM,
+                               border_color=BORDER_LIGHT, font=_FONT_SMALL
+                               ).pack(anchor="w", padx=16, pady=2)
+
+        idx_var = tk.StringVar(value=str(idx))
+        ctk.CTkLabel(body, text="目标扇区编号:", text_color=TEXT_DIM,
+                     font=_FONT_SMALL).pack(pady=(8, 4))
+        ctk.CTkEntry(body, textvariable=idx_var, width=80, height=32,
+                     corner_radius=8, fg_color=PANEL, border_color=BORDER,
+                     text_color=TEXT).pack()
+
+        btn_row = ctk.CTkFrame(body, fg_color=BG, corner_radius=0)
+        btn_row.pack(pady=(14, 4))
+
+        def do_copy():
+            target_layer = target_var.get()
+            target_idx = int(idx_var.get())
+            target_key = _layer_to_sectors_key(target_layer)
+            target_sectors = profile.setdefault(target_key, {})
+            target_sectors[str(target_idx)] = cfg.copy()
+            self._set_changed()
+            self._draw_preview()
+            win.destroy()
+            layer_name = _layer_display_name(target_layer)
+            self.status_label.configure(text=f"已复制到{layer_name}扇区 {target_idx}")
+
+        ctk.CTkButton(btn_row, text="复制", height=30, corner_radius=8,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      text_color="#ffffff", font=_FONT_SMALL,
+                      command=do_copy).pack(side=tk.LEFT, padx=6)
+        ctk.CTkButton(btn_row, text="取消", height=30, corner_radius=8,
+                      fg_color=CARD, hover_color=PRESET_HOVER,
+                      border_width=1, border_color=BORDER_LIGHT,
+                      text_color=TEXT, font=_FONT_SMALL,
+                      command=win.destroy).pack(side=tk.LEFT, padx=6)
+
+        dialog.top.wait_window()
+
+    def _export_profile(self):
+        """导出当前 Profile 为 JSON 文件"""
+        profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
+        if not profile:
+            _dark_msgbox(self.root, "提示", "没有可导出的配置", "warning")
+            return
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON 文件", "*.json")],
+            initialfile=f"{self.current_profile_name}.json"
+        )
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(profile, f, ensure_ascii=False, indent=2)
+            self.status_label.configure(text=f"已导出到: {path}")
+
+    def _import_profile(self):
+        """从 JSON 文件导入 Profile"""
+        path = filedialog.askopenfilename(
+            filetypes=[("JSON 文件", "*.json")]
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                _dark_msgbox(self.root, "错误", "无效的配置文件格式", "error")
+                return
+
+            # 合并到当前 profile
+            profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
+            for key in ("sectors", "outer_sectors", "extension_sectors"):
+                if key in data:
+                    profile[key] = data[key]
+            self._set_changed()
+            self._draw_preview()
+            self._update_detail_panel()
+            self.status_label.configure(text=f"已从 {path} 导入配置")
+        except Exception as e:
+            _dark_msgbox(self.root, "错误", f"导入失败: {e}", "error")
 
     # ========== 拖放系统 ==========
 
     def _start_drag(self, preset_info: Dict[str, str], event):
-        """开始拖放：创建半透明代理窗口"""
+        """开始拖放"""
         self._drag_preset = preset_info
 
-        # 创建拖动代理
         proxy = tk.Toplevel(self.root)
         proxy.overrideredirect(True)
         proxy.attributes("-topmost", True)
-        proxy.attributes("-alpha", 0.8)
-        proxy.configure(bg=COLORS["drag_proxy_bg"])
+        proxy.attributes("-alpha", 0.85)
+        proxy.configure(bg=DRAG_PROXY_BG)
 
-        # Windows: 让代理窗口穿透鼠标事件（不拦截 canvas hover）
+        # Windows: 让代理窗口穿透鼠标事件
         try:
-            # 向上遍历找到真正的顶层窗口 HWND
             hwnd = proxy.winfo_id()
             while True:
                 parent = ctypes.windll.user32.GetParent(hwnd)
@@ -751,39 +1057,33 @@ class ConfigGUI:
             pass
 
         label_text = preset_info.get("label", "")
-        lbl = tk.Label(proxy, text=label_text, bg=COLORS["drag_proxy_bg"],
-                       fg=COLORS["text"], font=("Microsoft YaHei", 10, "bold"),
-                       padx=12, pady=6)
+        lbl = tk.Label(proxy, text=label_text, bg=DRAG_PROXY_BG,
+                       fg="#ffffff", font=("Microsoft YaHei", 10, "bold"),
+                       padx=14, pady=8)
         lbl.pack()
 
-        # 获取屏幕坐标（偏移 40px 避免代理挡住光标）
         screen_x = event.x_root
         screen_y = event.y_root
         proxy.geometry(f"+{screen_x + 10}+{screen_y + 10}")
 
         self._drag_proxy = proxy
-
-        # 绑定全局拖动和释放（用 bind_all 确保跨 widget 捕获）
         self.root.bind_all("<B1-Motion>", self._on_drag_motion)
         self.root.bind_all("<ButtonRelease-1>", self._on_drag_release)
 
     def _on_drag_motion(self, event):
-        """拖动中：更新代理位置，检测圆盘 hover"""
+        """拖动中"""
         if not self._drag_proxy:
             return
         self._drag_proxy.geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
 
-        # 检测是否在圆盘上方
         canvas_widget = self.preview_canvas
         canvas_x = canvas_widget.winfo_rootx()
         canvas_y = canvas_widget.winfo_rooty()
         rel_x = event.x_root - canvas_x
         rel_y = event.y_root - canvas_y
-
         cx = canvas_widget.canvasx(rel_x)
         cy = canvas_widget.canvasy(rel_y)
 
-        # 检查是否在 canvas 范围内
         if 0 <= cx <= self.preview_size and 0 <= cy <= self.preview_size:
             new_hover = self._calc_sector_at(cx, cy)
             if new_hover != self._hovered_sector:
@@ -795,49 +1095,45 @@ class ConfigGUI:
                 self._draw_preview()
 
     def _on_drag_release(self, event):
-        """释放：检测是否在圆盘扇区内，应用命令"""
-        # 解绑全局事件
+        """释放"""
         self.root.unbind_all("<B1-Motion>")
         self.root.unbind_all("<ButtonRelease-1>")
 
-        # 销毁代理
         if self._drag_proxy:
             self._drag_proxy.destroy()
             self._drag_proxy = None
 
-        # 检测释放位置
         canvas_widget = self.preview_canvas
         canvas_x = canvas_widget.winfo_rootx()
         canvas_y = canvas_widget.winfo_rooty()
         rel_x = event.x_root - canvas_x
         rel_y = event.y_root - canvas_y
-
         cx = canvas_widget.canvasx(rel_x)
         cy = canvas_widget.canvasy(rel_y)
 
-        # 检查是否在 canvas 范围内
         if 0 <= cx <= self.preview_size and 0 <= cy <= self.preview_size:
             sector = self._calc_sector_at(cx, cy)
             if sector and self._drag_preset:
-                # 应用命令到扇区
                 layer, idx = sector
                 profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
-                sectors_key = "outer_sectors" if layer == "outer" else "sectors"
+                sectors_key = _layer_to_sectors_key(layer)
                 sectors = profile.setdefault(sectors_key, {})
                 sectors[str(idx)] = self._drag_preset.copy()
 
                 self._selected_sector = sector
-                self._has_changes = True
+                self._set_changed()
                 self._updating_detail = True
                 self._update_detail_panel()
                 self._updating_detail = False
                 self._draw_preview()
 
                 label = self._drag_preset.get("label", "")
-                layer_name = "外层" if layer == "outer" else "内层"
-                self.status_label.config(text=f"已将「{label}」放置到{layer_name}扇区 {idx}")
+                layer_name = _layer_display_name(layer)
+                self.status_label.configure(
+                    text=f"已将「{label}」放置到{layer_name}扇区 {idx}")
 
         self._drag_preset = None
+        self._drag_pending = None
         self._hovered_sector = None
         self._draw_preview()
 
@@ -849,20 +1145,24 @@ class ConfigGUI:
         self.root.unbind_all("<B1-Motion>")
         self.root.unbind_all("<ButtonRelease-1>")
         self._drag_preset = None
+        self._drag_pending = None
         self._hovered_sector = None
         self._draw_preview()
 
     # ========== 预设命令库 ==========
 
+    def _on_search_change(self):
+        """搜索框内容变化"""
+        self._populate_presets(self.search_var.get())
+
     def _populate_presets(self, filter_text: str = ""):
-        """填充预设命令库（垂直布局，可折叠）"""
+        """填充预设命令库"""
         for widget in self.preset_container.winfo_children():
             widget.destroy()
 
         filter_text = filter_text.lower().strip()
 
         for category, commands in self.preset_commands.items():
-            # 过滤命令
             if filter_text:
                 filtered = {name: data for name, data in commands.items()
                            if filter_text in name.lower()
@@ -875,105 +1175,143 @@ class ConfigGUI:
                 filtered = commands
 
             # 分类容器
-            cat_frame = tk.Frame(self.preset_container, bg=COLORS["card_bg"])
-            cat_frame.pack(fill=tk.X, padx=3, pady=3)
+            cat_frame = ctk.CTkFrame(self.preset_container, fg_color=PANEL,
+                                     corner_radius=10)
+            cat_frame.pack(fill=tk.X, padx=2, pady=3)
 
-            # 分类标题（可折叠）
-            is_expanded = not bool(filter_text)  # 搜索时全部展开
+            is_expanded = bool(filter_text)
             cat_state = {"expanded": is_expanded}
 
-            header = tk.Frame(cat_frame, bg=COLORS["card_bg"], cursor="hand2")
-            header.pack(fill=tk.X)
-
-            arrow_text = "\u25bc" if is_expanded else "\u25b6"
-            arrow_lbl = tk.Label(header, text=arrow_text, bg=COLORS["card_bg"],
-                                 fg=COLORS["text_dim"], font=("Microsoft YaHei", 8),
-                                 width=2)
-            arrow_lbl.pack(side=tk.LEFT, padx=(8, 0))
-
-            count = len(filtered)
-            title_lbl = tk.Label(header, text=f"{category} ({count})", bg=COLORS["card_bg"],
-                                 fg=COLORS["accent"], font=("Microsoft YaHei", 9, "bold"),
-                                 padx=6, pady=6)
-            title_lbl.pack(side=tk.LEFT)
+            # 分类标题（胶囊，可折叠）
+            header = ctk.CTkButton(
+                cat_frame, text=f"{'▾' if is_expanded else '▸'} {category} ({len(filtered)})",
+                height=28, corner_radius=8, anchor="w",
+                fg_color=PANEL, hover_color=SIDEBAR,
+                text_color=TEXT, font=("Microsoft YaHei", 11, "bold"))
+            header.pack(fill=tk.X, padx=4, pady=2)
 
             # 命令容器
-            cmd_container = tk.Frame(cat_frame, bg=COLORS["panel_bg"])
-
+            cmd_container = ctk.CTkFrame(cat_frame, fg_color=PANEL, corner_radius=8)
             if is_expanded:
-                cmd_container.pack(fill=tk.X)
+                cmd_container.pack(fill=tk.X, padx=4, pady=(0, 4))
 
-            # 命令网格（4列）
-            col = 0
-            row_frame = None
             for name, cmd_data in filtered.items():
-                if col == 0:
-                    row_frame = tk.Frame(cmd_container, bg=COLORS["panel_bg"])
-                    row_frame.pack(fill=tk.X, padx=3, pady=1)
+                self._create_preset_button(cmd_container, name, cmd_data)
 
-                self._create_preset_button_grid(row_frame, name, cmd_data)
-                col = (col + 1) % 4
-
-            # 折叠/展开切换
-            def toggle_container(cf=cmd_container, state=cat_state, al=arrow_lbl):
+            def toggle_container(cf=cmd_container, state=cat_state, h=header,
+                                 cat=category, fl=filtered):
                 if state["expanded"]:
                     cf.pack_forget()
                     state["expanded"] = False
-                    al.config(text="\u25b6")
+                    h.configure(text=f"▸ {cat} ({len(fl)})")
                 else:
-                    cf.pack(fill=tk.X)
+                    cf.pack(fill=tk.X, padx=4, pady=(0, 4))
                     state["expanded"] = True
-                    al.config(text="\u25bc")
+                    h.configure(text=f"▾ {cat} ({len(fl)})")
 
-            for w in [header, arrow_lbl, title_lbl]:
-                w.bind("<Button-1>", lambda e: toggle_container())
+            header.configure(command=toggle_container)
 
-    def _create_preset_button_grid(self, parent, name, cmd_data):
-        """创建网格布局的预设命令按钮"""
+    def _create_preset_button(self, parent, name, cmd_data):
+        """创建预设命令按钮（点击应用 + 拖放 + hover tooltip）"""
         label_text = cmd_data.get("label", name)
         key_text = cmd_data.get("key", "")
         desc_text = cmd_data.get("description", "")
 
-        btn = tk.Frame(parent, bg=COLORS["preset_bg"], cursor="hand2", padx=6, pady=4)
-        btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2, pady=2)
+        btn = ctk.CTkFrame(parent, fg_color=PRESET_BG, corner_radius=8,
+                           border_width=1, border_color=BORDER)
+        btn.pack(fill=tk.X, padx=2, pady=2)
 
-        # 显示标签 + 快捷键
         display = label_text
         if key_text:
-            display += f" ({key_text})"
+            display += f"  ({key_text})"
 
-        lbl = tk.Label(btn, text=display, bg=COLORS["preset_bg"],
-                       fg=COLORS["text"], font=("Microsoft YaHei", 8),
-                       anchor=tk.W, width=14)
-        lbl.pack(fill=tk.X)
+        lbl = tk.Label(btn, text=display, bg=PRESET_BG, fg=TEXT,
+                       font=("Microsoft YaHei", 11), anchor="w",
+                       padx=12, pady=6)
+        lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        desc_lbl = None
+        if desc_text:
+            desc_lbl = tk.Label(btn, text=desc_text, bg=PRESET_BG, fg=TEXT_DIM,
+                                font=("Microsoft YaHei", 10), anchor="e", padx=10)
+            desc_lbl.pack(side=tk.RIGHT)
 
         preset_info = {"label": label_text, "key": key_text, "description": desc_text}
 
         def on_press(e, pi=preset_info):
-            self._start_drag(pi, e)
+            self._drag_start_x = e.x
+            self._drag_start_y = e.y
+            self._drag_pending = pi
 
-        def on_enter(e, f=btn, l=lbl):
-            f.config(bg=COLORS["preset_hover"])
-            l.config(bg=COLORS["preset_hover"])
+        def on_motion(e, pi=preset_info):
+            if self._drag_pending:
+                dx = abs(e.x - self._drag_start_x)
+                dy = abs(e.y - self._drag_start_y)
+                if dx > 5 or dy > 5:
+                    self._start_drag(self._drag_pending, e)
+                    self._drag_pending = None
 
-        def on_leave(e, f=btn, l=lbl):
-            f.config(bg=COLORS["preset_bg"])
-            l.config(bg=COLORS["preset_bg"])
+        def on_release(e):
+            if self._drag_pending:
+                self._apply_preset_to_selected(self._drag_pending)
+                self._drag_pending = None
 
-        for w in [btn, lbl]:
+        def on_enter(e):
+            btn.configure(fg_color=PRESET_HOVER, border_color=BORDER_LIGHT)
+            lbl.configure(bg=PRESET_HOVER)
+            if desc_lbl is not None:
+                desc_lbl.configure(bg=PRESET_HOVER)
+
+        def on_leave(e):
+            btn.configure(fg_color=PRESET_BG, border_color=BORDER)
+            lbl.configure(bg=PRESET_BG)
+            if desc_lbl is not None:
+                desc_lbl.configure(bg=PRESET_BG)
+
+        btn.configure(cursor="hand2")
+        bind_widgets = [btn, lbl]
+        if desc_lbl is not None:
+            bind_widgets.append(desc_lbl)
+        for w in bind_widgets:
             w.bind("<Button-1>", on_press)
+            w.bind("<B1-Motion>", on_motion)
+            w.bind("<ButtonRelease-1>", on_release)
             w.bind("<Enter>", on_enter)
             w.bind("<Leave>", on_leave)
 
-    def _on_search_change(self, *args):
-        """搜索框内容变化时过滤预设命令"""
-        if not hasattr(self, "preset_container"):
+        # tooltip 提示
+        tip_lines = [f"命令: {label_text}"]
+        if key_text:
+            tip_lines.append(f"快捷键: {key_text}")
+        if desc_text:
+            tip_lines.append(f"CAD 命令: {desc_text}")
+        tip_lines.append("单击: 应用到当前选中扇区")
+        tip_lines.append("拖动: 放到圆盘指定扇区")
+        _ToolTip(btn, "\n".join(tip_lines))
+
+    def _apply_preset_to_selected(self, preset_info: Dict[str, str]):
+        """将预设命令应用到当前选中的扇区"""
+        if self._selected_sector is None:
+            self.status_label.configure(
+                text="请先在左侧圆盘上点击选择一个扇区，再应用命令")
             return
-        val = self.search_var.get()
-        if val == "搜索命令名称或快捷键...":
-            self._populate_presets("")
-        else:
-            self._populate_presets(val)
+
+        layer, idx = self._selected_sector
+        profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
+        sectors_key = _layer_to_sectors_key(layer)
+        sectors = profile.setdefault(sectors_key, {})
+        sectors[str(idx)] = preset_info.copy()
+
+        self._set_changed()
+        self._updating_detail = True
+        self._update_detail_panel()
+        self._updating_detail = False
+        self._draw_preview()
+
+        label = preset_info.get("label", "")
+        layer_name = _layer_display_name(layer)
+        self.status_label.configure(
+            text=f"已将「{label}」应用到{layer_name}扇区 {idx}")
 
     # ========== Profile 操作 ==========
 
@@ -986,7 +1324,7 @@ class ConfigGUI:
             return
 
         if name in self.config.get("profiles", {}):
-            messagebox.showerror("错误", f"方案「{name}」已存在")
+            _dark_msgbox(self.root, "错误", f"方案「{name}」已存在", "error")
             return
 
         target = self._ask_target()
@@ -1001,8 +1339,8 @@ class ConfigGUI:
             "sectors": sectors, "outer_sectors": {}
         }
 
-        self._has_changes = True
-        self._refresh_profile_tree()
+        self._set_changed()
+        self._refresh_profile_list()
         self._load_profile(name)
 
     def _copy_profile(self):
@@ -1015,7 +1353,7 @@ class ConfigGUI:
             return
 
         if name in self.config.get("profiles", {}):
-            messagebox.showerror("错误", f"方案「{name}」已存在")
+            _dark_msgbox(self.root, "错误", f"方案「{name}」已存在", "error")
             return
 
         current = self.config.get("profiles", {}).get(self.current_profile_name, {})
@@ -1023,18 +1361,18 @@ class ConfigGUI:
         new_profile["name"] = name
         self.config["profiles"][name] = new_profile
 
-        self._has_changes = True
-        self._refresh_profile_tree()
+        self._set_changed()
+        self._refresh_profile_list()
         self._load_profile(name)
 
     def _delete_profile(self):
         """删除当前 Profile"""
         profile_names = get_profile_names(self.config)
         if len(profile_names) <= 1:
-            messagebox.showerror("错误", "至少保留一个配置方案")
+            _dark_msgbox(self.root, "错误", "至少保留一个配置方案", "error")
             return
 
-        if not messagebox.askyesno("确认", f"确定要删除「{self.current_profile_name}」吗?"):
+        if not _dark_yesno(self.root, "确认", f"确定要删除「{self.current_profile_name}」吗?"):
             return
 
         del self.config["profiles"][self.current_profile_name]
@@ -1042,8 +1380,8 @@ class ConfigGUI:
         self.current_profile_name = remaining[0]
         self.config["settings"]["active_profile"] = self.current_profile_name
 
-        self._has_changes = True
-        self._refresh_profile_tree()
+        self._set_changed()
+        self._refresh_profile_list()
         self._load_profile(self.current_profile_name)
 
     def _rename_profile(self):
@@ -1056,7 +1394,7 @@ class ConfigGUI:
             return
 
         if new_name in self.config.get("profiles", {}):
-            messagebox.showerror("错误", f"方案「{new_name}」已存在")
+            _dark_msgbox(self.root, "错误", f"方案「{new_name}」已存在", "error")
             return
 
         profile = self.config["profiles"].pop(self.current_profile_name)
@@ -1067,8 +1405,8 @@ class ConfigGUI:
             self.config["settings"]["active_profile"] = new_name
 
         self.current_profile_name = new_name
-        self._has_changes = True
-        self._refresh_profile_tree()
+        self._set_changed()
+        self._refresh_profile_list()
 
     def _ask_target(self) -> Optional[str]:
         """询问 Profile 目标软件"""
@@ -1088,44 +1426,147 @@ class ConfigGUI:
         """保存配置"""
         self._collect_config()
         save_config(self.config)
-        self._has_changes = False
-        messagebox.showinfo("成功", "配置已保存！")
+        self._clear_changed()
+        _dark_msgbox(self.root, "成功", "配置已保存！", "info")
         if self.on_save:
             self.on_save()
         self.root.destroy()
 
     def _reset(self):
         """重置为默认配置"""
-        if not messagebox.askyesno("确认", "确定要重置所有配置为默认值吗?\n\n这将丢失所有自定义设置。"):
+        if not _dark_yesno(self.root, "确认", "确定要重置所有配置为默认值吗?\n\n这将丢失所有自定义设置。"):
             return
         self.config = _default_config()
         self.current_profile_name = "AutoCAD-常用"
         self.open_config_var.set(True)
         self.auto_switch_var.set(True)
-        self._has_changes = True
-        self._refresh_profile_tree()
+        self._set_changed()
+        self._refresh_profile_list()
         self._load_profile(self.current_profile_name)
-        self.status_label.config(text="已重置为默认配置")
+        self.status_label.configure(text="已重置为默认配置")
 
     def _on_close(self):
         """关闭窗口时检查未保存修改"""
         if self._has_changes:
-            result = messagebox.askyesnocancel("未保存的修改",
+            result = _dark_yesnocancel(self.root, "未保存的修改",
                 "有未保存的修改，是否保存？")
-            if result is True:  # 是 → 保存
+            if result is True:
                 self._save()
-            elif result is False:  # 否 → 不保存
+            elif result is False:
                 self.root.destroy()
-            # 取消 → 什么都不做
         else:
             self.root.destroy()
 
     def run(self):
-        """运行配置界面"""
+        """运行配置界面（嵌入模式由主程序 mainloop 驱动，不阻塞）"""
+        if self._embedded:
+            return
         self.root.mainloop()
 
 
-# ========== 辅助类 ==========
+# ========== 对话框 ==========
+
+
+class _DarkDialog:
+    """深色风格对话框（CTkToplevel）"""
+
+    ICON = {"info": "ℹ", "warning": "⚠", "error": "✕", "question": "?"}
+    ICON_COLOR = {"info": ACCENT, "warning": WARN,
+                  "error": DANGER, "question": ACCENT}
+
+    def __init__(self, parent, title, message, kind="info",
+                 buttons=("确定",), default_index=0, cancel_index=None,
+                 width=440):
+        self.result = None
+        self._cancel_index = cancel_index
+        self._default_index = default_index
+
+        self.top = ctk.CTkToplevel(parent)
+        self.top.title(title)
+        self.top.configure(fg_color=BG)
+        self.top.resizable(False, False)
+        self.top.transient(parent)
+        self.top.grab_set()
+        _enable_dark_titlebar(self.top)
+
+        parent.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        height = 172 + (message.count("\n")) * 6
+        self.top.geometry(f"{width}x{height}+{px + (pw - width) // 2}"
+                          f"+{py + (ph - height) // 2}")
+
+        top_row = ctk.CTkFrame(self.top, fg_color=BG, corner_radius=0)
+        top_row.pack(fill=tk.X, padx=26, pady=(26, 10))
+        ctk.CTkLabel(top_row, text=self.ICON.get(kind, "ℹ"),
+                     text_color=self.ICON_COLOR.get(kind, ACCENT),
+                     font=("Segoe UI Emoji", 18, "bold")).pack(
+            side=tk.LEFT, padx=(0, 14))
+        ctk.CTkLabel(top_row, text=message, text_color=TEXT,
+                     font=_FONT, justify="left", anchor="w",
+                     wraplength=width - 90).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+
+        btn_frame = ctk.CTkFrame(self.top, fg_color=BG, corner_radius=0)
+        btn_frame.pack(fill=tk.X, padx=26, pady=(6, 18))
+        for i, label in enumerate(buttons):
+            ctk.CTkButton(btn_frame, text=label,
+                          fg_color=ACCENT if i == default_index else CARD,
+                          hover_color=(ACCENT_HOVER if i == default_index
+                                       else PRESET_HOVER),
+                          border_width=0 if i == default_index else 1,
+                          border_color=BORDER_LIGHT if i != default_index else "#000000",
+                          text_color="#ffffff" if i == default_index else TEXT,
+                          height=30, corner_radius=8, font=_FONT_SMALL,
+                          command=lambda i=i: self._choose(i)
+                          ).pack(side=tk.RIGHT, padx=(6, 0))
+
+        self.top.bind("<Escape>", lambda e: self._on_cancel())
+        self.top.bind("<Return>", lambda e: self._choose(self._default_index))
+        self.top.protocol("WM_DELETE_WINDOW", self._on_cancel)
+
+    def _choose(self, index):
+        self.result = index
+        self.top.destroy()
+
+    def _on_cancel(self):
+        if self._cancel_index is not None:
+            self._choose(self._cancel_index)
+        else:
+            self._choose(self._default_index)
+
+    def show(self):
+        self.top.wait_window()
+        return self.result
+
+
+def _dark_msgbox(parent, title, message, kind="info"):
+    """信息/警告/错误提示框，返回 None"""
+    dlg = _DarkDialog(parent, title, message, kind=kind,
+                      buttons=("确定",), default_index=0, cancel_index=0)
+    dlg.show()
+
+
+def _dark_yesno(parent, title, message, default=False):
+    """是/否确认框，返回 bool"""
+    dlg = _DarkDialog(parent, title, message, kind="question",
+                      buttons=("否", "是"), default_index=1 if default else 0,
+                      cancel_index=0)
+    idx = dlg.show()
+    return idx == 1
+
+
+def _dark_yesnocancel(parent, title, message):
+    """是/否/取消框，返回 True / False / None"""
+    dlg = _DarkDialog(parent, title, message, kind="question",
+                      buttons=("取消", "否", "是"), default_index=2,
+                      cancel_index=0)
+    idx = dlg.show()
+    if idx == 2:
+        return True
+    if idx == 1:
+        return False
+    return None
 
 
 class _InputDialog:
@@ -1134,29 +1575,39 @@ class _InputDialog:
     def __init__(self, parent, title, prompt, initial=""):
         self.result = None
 
-        self.top = ttk.Toplevel(parent)
+        self.top = ctk.CTkToplevel(parent)
         self.top.title(title)
-        self.top.geometry("420x180")
+        self.top.configure(fg_color=BG)
         self.top.resizable(False, False)
         self.top.transient(parent)
         self.top.grab_set()
+        _enable_dark_titlebar(self.top)
+        self.top.geometry("420x220")
 
-        ttk.Label(self.top, text=prompt,
-                  font=("Microsoft YaHei", 11)).pack(pady=(25, 10))
+        body = ctk.CTkFrame(self.top, fg_color=BG, corner_radius=0)
+        body.pack(fill=tk.BOTH, expand=True, padx=26, pady=(26, 18))
 
-        self.entry = ttk.Entry(self.top, width=38, font=("Microsoft YaHei", 11))
-        self.entry.pack(pady=5)
+        ctk.CTkLabel(body, text=prompt, text_color=TEXT,
+                     font=_FONT).pack(pady=(0, 14))
+
+        self.entry = ctk.CTkEntry(body, height=36, corner_radius=8,
+                                  fg_color=PANEL, border_color=BORDER,
+                                  text_color=TEXT, font=_FONT)
+        self.entry.pack(fill=tk.X)
         self.entry.insert(0, initial)
-        self.entry.select_range(0, tk.END)
         self.entry.focus_set()
 
-        btn_frame = ttk.Frame(self.top)
-        btn_frame.pack(pady=20)
-
-        ttk.Button(btn_frame, text="确定", bootstyle="primary",
-                   command=self._ok).pack(side=tk.LEFT, padx=10)
-        ttk.Button(btn_frame, text="取消", bootstyle="outline",
-                   command=self._cancel).pack(side=tk.LEFT, padx=10)
+        btn_frame = ctk.CTkFrame(body, fg_color=BG, corner_radius=0)
+        btn_frame.pack(pady=(18, 0))
+        ctk.CTkButton(btn_frame, text="确定", height=30, corner_radius=8,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      text_color="#ffffff", font=_FONT_SMALL,
+                      command=self._ok).pack(side=tk.LEFT, padx=10)
+        ctk.CTkButton(btn_frame, text="取消", height=30, corner_radius=8,
+                      fg_color=CARD, hover_color=PRESET_HOVER,
+                      border_width=1, border_color=BORDER_LIGHT,
+                      text_color=TEXT, font=_FONT_SMALL,
+                      command=self._cancel).pack(side=tk.LEFT, padx=10)
 
         self.top.bind("<Return>", lambda e: self._ok())
         self.top.bind("<Escape>", lambda e: self._cancel())
@@ -1175,28 +1626,39 @@ class _TargetDialog:
     def __init__(self, parent):
         self.result = None
 
-        self.top = ttk.Toplevel(parent)
+        self.top = ctk.CTkToplevel(parent)
         self.top.title("选择目标软件")
-        self.top.geometry("380x200")
+        self.top.configure(fg_color=BG)
         self.top.resizable(False, False)
         self.top.transient(parent)
         self.top.grab_set()
+        _enable_dark_titlebar(self.top)
+        self.top.geometry("380x230")
 
-        ttk.Label(self.top, text="选择配置方案适用的 CAD 软件:",
-                  font=("Microsoft YaHei", 11)).pack(pady=(25, 15))
+        body = ctk.CTkFrame(self.top, fg_color=BG, corner_radius=0)
+        body.pack(fill=tk.BOTH, expand=True, padx=26, pady=(26, 16))
 
-        btn_frame = ttk.Frame(self.top)
-        btn_frame.pack(pady=10)
+        ctk.CTkLabel(body, text="选择配置方案适用的 CAD 软件:",
+                     text_color=TEXT, font=_FONT).pack(pady=(0, 16))
 
-        ttk.Button(btn_frame, text="AutoCAD", bootstyle="primary",
-                   width=15,
-                   command=lambda: self._select("autocad")).pack(side=tk.LEFT, padx=15)
-        ttk.Button(btn_frame, text="中望CAD", bootstyle="info",
-                   width=15,
-                   command=lambda: self._select("zwcad")).pack(side=tk.LEFT, padx=15)
+        btn_frame = ctk.CTkFrame(body, fg_color=BG, corner_radius=0)
+        btn_frame.pack(pady=(0, 8))
+        ctk.CTkButton(btn_frame, text="AutoCAD", height=32, corner_radius=8,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      text_color="#ffffff", font=_FONT_SMALL,
+                      command=lambda: self._select("autocad")
+                      ).pack(side=tk.LEFT, padx=15)
+        ctk.CTkButton(btn_frame, text="中望CAD", height=32, corner_radius=8,
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                      text_color="#ffffff", font=_FONT_SMALL,
+                      command=lambda: self._select("zwcad")
+                      ).pack(side=tk.LEFT, padx=15)
 
-        ttk.Button(self.top, text="取消", bootstyle="outline",
-                   command=self._cancel).pack(pady=15)
+        ctk.CTkButton(body, text="取消", height=30, corner_radius=8,
+                      fg_color=CARD, hover_color=PRESET_HOVER,
+                      border_width=1, border_color=BORDER_LIGHT,
+                      text_color=TEXT, font=_FONT_SMALL,
+                      command=self._cancel).pack(pady=(8, 0))
 
         self.top.bind("<Escape>", lambda e: self._cancel())
 
@@ -1208,7 +1670,8 @@ class _TargetDialog:
         self.top.destroy()
 
 
-def open_config_gui(on_save: Optional[Callable[[], None]] = None):
-    """打开配置界面"""
-    gui = ConfigGUI(on_save=on_save)
+def open_config_gui(on_save: Optional[Callable[[], None]] = None,
+                    master: Optional[ctk.CTk] = None):
+    """打开配置界面（master 提供时嵌入主程序主线程，否则独立窗口）"""
+    gui = ConfigGUI(on_save=on_save, master=master)
     gui.run()

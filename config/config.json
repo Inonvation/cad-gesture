@@ -1,0 +1,1189 @@
+{
+  "settings": {
+    "hold_threshold_ms": 150,
+    "dead_zone_radius": 30,
+    "ring_radius": 100,
+    "outer_ring_radius": 180,
+    "sector_count": 8,
+    "active_profile": "ZWCAD-绘图",
+    "start_minimized": false,
+    "tray_icon": true,
+    "auto_switch_profile": true,
+    "open_config_on_start": true,
+    "ext_ring_radius": 240,
+    "version": 1,
+    "menu_theme": "azure"
+  },
+  "profiles": {
+    "AutoCAD-常用": {
+      "name": "常用",
+      "target": "autocad",
+      "sectors": {
+        "0": {
+          "label": "直线",
+          "key": "l",
+          "description": "LINE"
+        },
+        "1": {
+          "label": "偏移",
+          "key": "o",
+          "description": "OFFSET"
+        },
+        "2": {
+          "label": "复制",
+          "key": "co",
+          "description": "COPY"
+        },
+        "3": {
+          "label": "镜像",
+          "key": "mi",
+          "description": "MIRROR"
+        },
+        "4": {
+          "label": "删除",
+          "key": "e",
+          "description": "ERASE"
+        },
+        "5": {
+          "label": "修剪",
+          "key": "tr",
+          "description": "TRIM"
+        },
+        "6": {
+          "label": "移动",
+          "key": "m",
+          "description": "MOVE"
+        },
+        "7": {
+          "label": "圆",
+          "key": "c",
+          "description": "CIRCLE"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "圆弧",
+          "key": "a",
+          "description": "ARC"
+        },
+        "1": {
+          "label": "矩形",
+          "key": "rec",
+          "description": "RECTANG"
+        },
+        "2": {
+          "label": "延伸",
+          "key": "ex",
+          "description": "EXTEND"
+        },
+        "3": {
+          "label": "旋转",
+          "key": "ro",
+          "description": "ROTATE"
+        },
+        "4": {
+          "label": "缩放",
+          "key": "sc",
+          "description": "SCALE"
+        },
+        "5": {
+          "label": "圆角",
+          "key": "f",
+          "description": "FILLET"
+        },
+        "6": {
+          "label": "分解",
+          "key": "x",
+          "description": "EXPLODE"
+        },
+        "7": {
+          "label": "多段线",
+          "key": "pl",
+          "description": "PLINE"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "构造线",
+          "key": "xl",
+          "description": "XLINE"
+        },
+        "1": {
+          "label": "射线",
+          "key": "ray",
+          "description": "RAY"
+        },
+        "2": {
+          "label": "边界",
+          "key": "bo",
+          "description": "BOUNDARY"
+        },
+        "3": {
+          "label": "面域",
+          "key": "reg",
+          "description": "REGION"
+        },
+        "4": {
+          "label": "正交",
+          "key": "f8",
+          "description": "ORTHO"
+        },
+        "5": {
+          "label": "极轴",
+          "key": "f10",
+          "description": "POLAR"
+        },
+        "6": {
+          "label": "对象捕捉",
+          "key": "f3",
+          "description": "OSNAP"
+        },
+        "7": {
+          "label": "栅格",
+          "key": "f7",
+          "description": "GRID"
+        }
+      }
+    },
+    "AutoCAD-编辑": {
+      "name": "编辑",
+      "target": "autocad",
+      "sectors": {
+        "0": {
+          "label": "撤销",
+          "key": "ctrl+z",
+          "description": "U"
+        },
+        "1": {
+          "label": "重做",
+          "key": "ctrl+y",
+          "description": "REDO"
+        },
+        "2": {
+          "label": "粘贴",
+          "key": "ctrl+v",
+          "description": "PASTECLIP"
+        },
+        "3": {
+          "label": "剪切",
+          "key": "ctrl+x",
+          "description": "CUTCLIP"
+        },
+        "4": {
+          "label": "复制",
+          "key": "ctrl+c",
+          "description": "COPYCLIP"
+        },
+        "5": {
+          "label": "全选",
+          "key": "ctrl+a",
+          "description": "AI_SELALL"
+        },
+        "6": {
+          "label": "保存",
+          "key": "ctrl+s",
+          "description": "QSAVE"
+        },
+        "7": {
+          "label": "打开",
+          "key": "ctrl+o",
+          "description": "OPEN"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "新建",
+          "key": "ctrl+n",
+          "description": "NEW"
+        },
+        "1": {
+          "label": "打印",
+          "key": "ctrl+p",
+          "description": "PRINT"
+        },
+        "2": {
+          "label": "特性匹配",
+          "key": "ma",
+          "description": "MATCHPROP"
+        },
+        "3": {
+          "label": "特性",
+          "key": "pr",
+          "description": "PROPERTIES"
+        },
+        "4": {
+          "label": "清理",
+          "key": "pu",
+          "description": "PURGE"
+        },
+        "5": {
+          "label": "基点复制",
+          "key": "ctrl+shift+c",
+          "description": "COPYBASE"
+        },
+        "6": {
+          "label": "粘贴为块",
+          "key": "ctrl+shift+v",
+          "description": "PASTEBLOCK"
+        },
+        "7": {
+          "label": "另存为",
+          "key": "ctrl+shift+s",
+          "description": "SAVEAS"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "文字样式",
+          "key": "st",
+          "description": "STYLE"
+        },
+        "1": {
+          "label": "表格样式",
+          "key": "ts",
+          "description": "TABLESTYLE"
+        },
+        "2": {
+          "label": "线型",
+          "key": "lt",
+          "description": "LINETYPE"
+        },
+        "3": {
+          "label": "线宽",
+          "key": "lw",
+          "description": "LWEIGHT"
+        },
+        "4": {
+          "label": "单位",
+          "key": "un",
+          "description": "UNITS"
+        },
+        "5": {
+          "label": "重命名",
+          "key": "ren",
+          "description": "RENAME"
+        },
+        "6": {
+          "label": "草图设置",
+          "key": "ds",
+          "description": "DSETTINGS"
+        },
+        "7": {
+          "label": "选项",
+          "key": "op",
+          "description": "OPTIONS"
+        }
+      }
+    },
+    "AutoCAD-绘图": {
+      "name": "绘图",
+      "target": "autocad",
+      "sectors": {
+        "0": {
+          "label": "矩形",
+          "key": "rec",
+          "description": "RECTANG"
+        },
+        "1": {
+          "label": "圆",
+          "key": "c",
+          "description": "CIRCLE"
+        },
+        "2": {
+          "label": "构造线",
+          "key": "xl",
+          "description": "XLINE"
+        },
+        "3": {
+          "label": "圆弧",
+          "key": "a",
+          "description": "ARC"
+        },
+        "4": {
+          "label": "多段线",
+          "key": "pl",
+          "description": "PLINE"
+        },
+        "5": {
+          "label": "样条",
+          "key": "spl",
+          "description": "SPLINE"
+        },
+        "6": {
+          "label": "椭圆",
+          "key": "el",
+          "description": "ELLIPSE"
+        },
+        "7": {
+          "label": "填充",
+          "key": "h",
+          "description": "BHATCH"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "矩形",
+          "key": "rec",
+          "description": "RECTANG"
+        },
+        "1": {
+          "label": "样条",
+          "key": "spl",
+          "description": "SPLINE"
+        },
+        "2": {
+          "label": "插入块",
+          "key": "i",
+          "description": "INSERT"
+        },
+        "3": {
+          "label": "正多边形",
+          "key": "pol",
+          "description": "POLYGON"
+        },
+        "4": {
+          "label": "圆环",
+          "key": "do",
+          "description": "DONUT"
+        },
+        "5": {
+          "label": "多线",
+          "key": "ml",
+          "description": "MLINE"
+        },
+        "6": {
+          "label": "点",
+          "key": "po",
+          "description": "POINT"
+        },
+        "7": {
+          "label": "表格",
+          "key": "tb",
+          "description": "TABLE"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "点",
+          "key": "po",
+          "description": "POINT"
+        },
+        "1": {
+          "label": "圆环",
+          "key": "do",
+          "description": "DONUT"
+        },
+        "2": {
+          "label": "正多边形",
+          "key": "pol",
+          "description": "POLYGON"
+        },
+        "3": {
+          "label": "构造线",
+          "key": "xl",
+          "description": "XLINE"
+        },
+        "4": {
+          "label": "射线",
+          "key": "ray",
+          "description": "RAY"
+        },
+        "5": {
+          "label": "多线",
+          "key": "ml",
+          "description": "MLINE"
+        },
+        "6": {
+          "label": "边界",
+          "key": "bo",
+          "description": "BOUNDARY"
+        },
+        "7": {
+          "label": "面域",
+          "key": "reg",
+          "description": "REGION"
+        }
+      }
+    },
+    "AutoCAD-标注": {
+      "name": "标注",
+      "target": "autocad",
+      "sectors": {
+        "0": {
+          "label": "标注样式",
+          "key": "d",
+          "description": "DDIM"
+        },
+        "1": {
+          "label": "线性标注",
+          "key": "dli",
+          "description": "DIMLINEAR"
+        },
+        "2": {
+          "label": "对齐标注",
+          "key": "dal",
+          "description": "DIMALIGNED"
+        },
+        "3": {
+          "label": "半径标注",
+          "key": "dra",
+          "description": "DIMRADIUS"
+        },
+        "4": {
+          "label": "直径标注",
+          "key": "ddi",
+          "description": "DIMDIAMETER"
+        },
+        "5": {
+          "label": "角度标注",
+          "key": "dan",
+          "description": "DIMANGULAR"
+        },
+        "6": {
+          "label": "连续标注",
+          "key": "dco",
+          "description": "DIMCONTINUE"
+        },
+        "7": {
+          "label": "基线标注",
+          "key": "dba",
+          "description": "DIMBASELINE"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "快速引线",
+          "key": "le",
+          "description": "QLEADER"
+        },
+        "1": {
+          "label": "圆心标记",
+          "key": "dce",
+          "description": "DIMCENTER"
+        },
+        "2": {
+          "label": "坐标标注",
+          "key": "dor",
+          "description": "DIMORDINATE"
+        },
+        "3": {
+          "label": "编辑标注",
+          "key": "ded",
+          "description": "DIMEDIT"
+        },
+        "4": {
+          "label": "特性匹配",
+          "key": "ma",
+          "description": "MATCHPROP"
+        },
+        "5": {
+          "label": "特性",
+          "key": "pr",
+          "description": "PROPERTIES"
+        },
+        "6": {
+          "label": "文字编辑",
+          "key": "ed",
+          "description": "TEXTEDIT"
+        },
+        "7": {
+          "label": "图层",
+          "key": "la",
+          "description": "LAYER"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "快速引线",
+          "key": "le",
+          "description": "QLEADER"
+        },
+        "1": {
+          "label": "圆心标记",
+          "key": "dce",
+          "description": "DIMCENTER"
+        },
+        "2": {
+          "label": "坐标标注",
+          "key": "dor",
+          "description": "DIMORDINATE"
+        },
+        "3": {
+          "label": "编辑标注",
+          "key": "ded",
+          "description": "DIMEDIT"
+        },
+        "4": {
+          "label": "文字样式",
+          "key": "st",
+          "description": "STYLE"
+        },
+        "5": {
+          "label": "图层",
+          "key": "la",
+          "description": "LAYER"
+        },
+        "6": {
+          "label": "文字编辑",
+          "key": "ed",
+          "description": "TEXTEDIT"
+        },
+        "7": {
+          "label": "选项",
+          "key": "op",
+          "description": "OPTIONS"
+        }
+      }
+    },
+    "AutoCAD-视图": {
+      "name": "视图",
+      "target": "autocad",
+      "sectors": {
+        "0": {
+          "label": "缩放",
+          "key": "z",
+          "description": "ZOOM"
+        },
+        "1": {
+          "label": "平移",
+          "key": "p",
+          "description": "PAN"
+        },
+        "2": {
+          "label": "正交",
+          "key": "f8",
+          "description": "ORTHO"
+        },
+        "3": {
+          "label": "对象捕捉",
+          "key": "f3",
+          "description": "OSNAP"
+        },
+        "4": {
+          "label": "栅格",
+          "key": "f7",
+          "description": "GRID"
+        },
+        "5": {
+          "label": "极轴",
+          "key": "f10",
+          "description": "POLAR"
+        },
+        "6": {
+          "label": "距离测量",
+          "key": "di",
+          "description": "DIST"
+        },
+        "7": {
+          "label": "重生成",
+          "key": "re",
+          "description": "REGEN"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "列表",
+          "key": "li",
+          "description": "LIST"
+        },
+        "1": {
+          "label": "单位",
+          "key": "un",
+          "description": "UNITS"
+        },
+        "2": {
+          "label": "选项",
+          "key": "op",
+          "description": "OPTIONS"
+        },
+        "3": {
+          "label": "草图设置",
+          "key": "ds",
+          "description": "DSETTINGS"
+        },
+        "4": {
+          "label": "清理",
+          "key": "pu",
+          "description": "PURGE"
+        },
+        "5": {
+          "label": "重命名",
+          "key": "ren",
+          "description": "RENAME"
+        },
+        "6": {
+          "label": "进入视口",
+          "key": "ms",
+          "description": "MSPACE"
+        },
+        "7": {
+          "label": "退出视口",
+          "key": "ps",
+          "description": "PSPACE"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "视图",
+          "key": "v",
+          "description": "VIEW"
+        },
+        "1": {
+          "label": "视觉样式",
+          "key": "vscurrent",
+          "description": "VSCURRENT"
+        },
+        "2": {
+          "label": "UCS",
+          "key": "ucs",
+          "description": "UCS"
+        },
+        "3": {
+          "label": "计划视图",
+          "key": "plan",
+          "description": "PLAN"
+        },
+        "4": {
+          "label": "全屏显示",
+          "key": "ctrl+0",
+          "description": "CLEANSCREENON"
+        },
+        "5": {
+          "label": "前一个视图",
+          "key": "",
+          "description": ""
+        },
+        "6": {
+          "label": "实时平移",
+          "key": "p",
+          "description": "PAN"
+        },
+        "7": {
+          "label": "实时缩放",
+          "key": "z",
+          "description": "ZOOM"
+        }
+      }
+    },
+    "ZWCAD-常用": {
+      "name": "常用",
+      "target": "zwcad",
+      "sectors": {
+        "0": {
+          "label": "直线",
+          "key": "l",
+          "description": "LINE"
+        },
+        "1": {
+          "label": "偏移",
+          "key": "o",
+          "description": "OFFSET"
+        },
+        "2": {
+          "label": "复制",
+          "key": "co",
+          "description": "COPY"
+        },
+        "3": {
+          "label": "镜像",
+          "key": "mi",
+          "description": "MIRROR"
+        },
+        "4": {
+          "label": "删除",
+          "key": "e",
+          "description": "ERASE"
+        },
+        "5": {
+          "label": "修剪",
+          "key": "tr",
+          "description": "TRIM"
+        },
+        "6": {
+          "label": "移动",
+          "key": "m",
+          "description": "MOVE"
+        },
+        "7": {
+          "label": "圆",
+          "key": "c",
+          "description": "CIRCLE"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "圆弧",
+          "key": "a",
+          "description": "ARC"
+        },
+        "1": {
+          "label": "矩形",
+          "key": "rec",
+          "description": "RECTANG"
+        },
+        "2": {
+          "label": "延伸",
+          "key": "ex",
+          "description": "EXTEND"
+        },
+        "3": {
+          "label": "旋转",
+          "key": "ro",
+          "description": "ROTATE"
+        },
+        "4": {
+          "label": "缩放",
+          "key": "sc",
+          "description": "SCALE"
+        },
+        "5": {
+          "label": "圆角",
+          "key": "f",
+          "description": "FILLET"
+        },
+        "6": {
+          "label": "分解",
+          "key": "x",
+          "description": "EXPLODE"
+        },
+        "7": {
+          "label": "多段线",
+          "key": "pl",
+          "description": "PLINE"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "智能画线",
+          "key": "ss",
+          "description": "ZWMINTELLIGENTLINE"
+        },
+        "1": {
+          "label": "对称画线",
+          "key": "dc",
+          "description": "ZWMMIRRORLINE"
+        },
+        "2": {
+          "label": "中心线",
+          "key": "zx",
+          "description": "ZWMCENTERLINE"
+        },
+        "3": {
+          "label": "垂线",
+          "key": "cz",
+          "description": "ZWMVERTICALLINE"
+        },
+        "4": {
+          "label": "切线",
+          "key": "qx",
+          "description": "ZWMTANGENTLINE"
+        },
+        "5": {
+          "label": "管道线",
+          "key": "gd",
+          "description": "ZWMPIPELINE"
+        },
+        "6": {
+          "label": "构造线",
+          "key": "xl",
+          "description": "XLINE"
+        },
+        "7": {
+          "label": "表格",
+          "key": "tb",
+          "description": "TABLE"
+        }
+      }
+    },
+    "ZWCAD-编辑": {
+      "name": "编辑",
+      "target": "zwcad",
+      "sectors": {
+        "0": {
+          "label": "撤销",
+          "key": "ctrl+z",
+          "description": "U"
+        },
+        "1": {
+          "label": "重做",
+          "key": "ctrl+y",
+          "description": "REDO"
+        },
+        "2": {
+          "label": "粘贴",
+          "key": "ctrl+v",
+          "description": "PASTECLIP"
+        },
+        "3": {
+          "label": "剪切",
+          "key": "ctrl+x",
+          "description": "CUTCLIP"
+        },
+        "4": {
+          "label": "复制",
+          "key": "ctrl+c",
+          "description": "COPYCLIP"
+        },
+        "5": {
+          "label": "全选",
+          "key": "ctrl+a",
+          "description": "AI_SELALL"
+        },
+        "6": {
+          "label": "保存",
+          "key": "ctrl+s",
+          "description": "QSAVE"
+        },
+        "7": {
+          "label": "打开",
+          "key": "ctrl+o",
+          "description": "OPEN"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "新建",
+          "key": "ctrl+n",
+          "description": "NEW"
+        },
+        "1": {
+          "label": "打印",
+          "key": "ctrl+p",
+          "description": "PRINT"
+        },
+        "2": {
+          "label": "特性匹配",
+          "key": "ma",
+          "description": "MATCHPROP"
+        },
+        "3": {
+          "label": "特性",
+          "key": "pr",
+          "description": "PROPERTIES"
+        },
+        "4": {
+          "label": "清理",
+          "key": "pu",
+          "description": "PURGE"
+        },
+        "5": {
+          "label": "基点复制",
+          "key": "ctrl+shift+c",
+          "description": "COPYBASE"
+        },
+        "6": {
+          "label": "粘贴为块",
+          "key": "ctrl+shift+v",
+          "description": "PASTEBLOCK"
+        },
+        "7": {
+          "label": "另存为",
+          "key": "ctrl+shift+s",
+          "description": "SAVEAS"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "文字样式",
+          "key": "st",
+          "description": "STYLE"
+        },
+        "1": {
+          "label": "表格样式",
+          "key": "ts",
+          "description": "TABLESTYLE"
+        },
+        "2": {
+          "label": "线型",
+          "key": "lt",
+          "description": "LINETYPE"
+        },
+        "3": {
+          "label": "线宽",
+          "key": "lw",
+          "description": "LWEIGHT"
+        },
+        "4": {
+          "label": "单位",
+          "key": "un",
+          "description": "UNITS"
+        },
+        "5": {
+          "label": "重命名",
+          "key": "ren",
+          "description": "RENAME"
+        },
+        "6": {
+          "label": "草图设置",
+          "key": "ds",
+          "description": "DSETTINGS"
+        },
+        "7": {
+          "label": "选项",
+          "key": "op",
+          "description": "OPTIONS"
+        }
+      }
+    },
+    "ZWCAD-绘图": {
+      "name": "绘图",
+      "target": "zwcad",
+      "sectors": {
+        "0": {
+          "label": "圆弧",
+          "key": "a",
+          "description": "ARC"
+        },
+        "1": {
+          "label": "圆",
+          "key": "c",
+          "description": "CIRCLE"
+        },
+        "2": {
+          "label": "矩形",
+          "key": "rec",
+          "description": "RECTANG"
+        },
+        "3": {
+          "label": "圆弧",
+          "key": "a",
+          "description": "ARC"
+        },
+        "4": {
+          "label": "多段线",
+          "key": "pl",
+          "description": "PLINE"
+        },
+        "5": {
+          "label": "样条",
+          "key": "spl",
+          "description": "SPLINE"
+        },
+        "6": {
+          "label": "椭圆",
+          "key": "el",
+          "description": "ELLIPSE"
+        },
+        "7": {
+          "label": "填充",
+          "key": "h",
+          "description": "BHATCH"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "智能画线",
+          "key": "ss",
+          "description": "ZWMINTELLIGENTLINE"
+        },
+        "1": {
+          "label": "对称画线",
+          "key": "dc",
+          "description": "ZWMMIRRORLINE"
+        },
+        "2": {
+          "label": "中心线",
+          "key": "zx",
+          "description": "ZWMCENTERLINE"
+        },
+        "3": {
+          "label": "构造线",
+          "key": "xl",
+          "description": "XLINE"
+        },
+        "4": {
+          "label": "块",
+          "key": "b",
+          "description": "BLOCK"
+        },
+        "5": {
+          "label": "插入块",
+          "key": "i",
+          "description": "INSERT"
+        },
+        "6": {
+          "label": "正多边形",
+          "key": "pol",
+          "description": "POLYGON"
+        },
+        "7": {
+          "label": "表格",
+          "key": "tb",
+          "description": "TABLE"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "智能画线",
+          "key": "ss",
+          "description": "ZWMINTELLIGENTLINE"
+        },
+        "1": {
+          "label": "对称画线",
+          "key": "dc",
+          "description": "ZWMMIRRORLINE"
+        },
+        "2": {
+          "label": "中心线",
+          "key": "zx",
+          "description": "ZWMCENTERLINE"
+        },
+        "3": {
+          "label": "并行线",
+          "key": "px",
+          "description": "ZWMPARALLELLINE"
+        },
+        "4": {
+          "label": "垂线",
+          "key": "cz",
+          "description": "ZWMVERTICALLINE"
+        },
+        "5": {
+          "label": "切线",
+          "key": "qx",
+          "description": "ZWMTANGENTLINE"
+        },
+        "6": {
+          "label": "管道线",
+          "key": "gd",
+          "description": "ZWMPIPELINE"
+        },
+        "7": {
+          "label": "构造线",
+          "key": "xl",
+          "description": "XLINE"
+        }
+      }
+    },
+    "ZWCAD-机械": {
+      "name": "机械",
+      "target": "zwcad",
+      "sectors": {
+        "0": {
+          "label": "智能标注",
+          "key": "d",
+          "description": "ZWMPOWERDIM"
+        },
+        "1": {
+          "label": "粗糙度",
+          "key": "cc",
+          "description": "ZWMSURFSYM"
+        },
+        "2": {
+          "label": "形位公差",
+          "key": "xw",
+          "description": "ZWMFCFRAME"
+        },
+        "3": {
+          "label": "基准标注",
+          "key": "jz",
+          "description": "ZWMDATUMID"
+        },
+        "4": {
+          "label": "序号",
+          "key": "xh",
+          "description": "ZWMBALLOON"
+        },
+        "5": {
+          "label": "明细表",
+          "key": "mx",
+          "description": "ZWMPARTLIST"
+        },
+        "6": {
+          "label": "图框设置",
+          "key": "tf",
+          "description": "ZWMFRAMEINIT"
+        },
+        "7": {
+          "label": "技术要求",
+          "key": "tj",
+          "description": "ZWMTECHREQUEST"
+        }
+      },
+      "outer_sectors": {
+        "0": {
+          "label": "焊接符号",
+          "key": "hj",
+          "description": "ZWMWELDING"
+        },
+        "1": {
+          "label": "锥斜度",
+          "key": "xd",
+          "description": "ZWMtapersym"
+        },
+        "2": {
+          "label": "文字标注",
+          "key": "wz",
+          "description": "ZWMDIMTEXT"
+        },
+        "3": {
+          "label": "超级符号",
+          "key": "fh",
+          "description": "ZWM_SYMOUT"
+        },
+        "4": {
+          "label": "计算面积",
+          "key": "aa",
+          "description": "ZWMAREA"
+        },
+        "5": {
+          "label": "超级编辑",
+          "key": "v",
+          "description": "ZWMSUPEREDIT"
+        },
+        "6": {
+          "label": "层变换",
+          "key": "ty",
+          "description": "ZWMCHGLAYER"
+        },
+        "7": {
+          "label": "标高符号",
+          "key": "bgf",
+          "description": "ZWMELEVSYM"
+        }
+      },
+      "extension_sectors": {
+        "0": {
+          "label": "焊接符号",
+          "key": "hj",
+          "description": "ZWMWELDING"
+        },
+        "1": {
+          "label": "锥斜度",
+          "key": "xd",
+          "description": "ZWMtapersym"
+        },
+        "2": {
+          "label": "标高符号",
+          "key": "bgf",
+          "description": "ZWMELEVSYM"
+        },
+        "3": {
+          "label": "圆孔标记",
+          "key": "bj",
+          "description": "ZWMCRCLMARK"
+        },
+        "4": {
+          "label": "中心孔标注",
+          "key": "zxk",
+          "description": "ZWMCENTERHOLE"
+        },
+        "5": {
+          "label": "折断符号",
+          "key": "zd",
+          "description": "ZWMBREAKSYMBOL"
+        },
+        "6": {
+          "label": "截断线",
+          "key": "jdx",
+          "description": "ZWMSECTIONSYMBOL"
+        },
+        "7": {
+          "label": "图框设置",
+          "key": "tf",
+          "description": "ZWMFRAMEINIT"
+        }
+      }
+    }
+  }
+}
