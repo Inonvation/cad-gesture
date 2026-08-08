@@ -131,7 +131,7 @@ dist\CADGesture.exe
 
 `config/config.json` — `settings` + `profiles`。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 字段：`description` = COM 命令名，`key` = pyautogui 回退键，`target` = `autocad`|`zwcad`。
-`settings` 关键项：`menu_theme`（圆盘外观）、`hold_threshold_ms`（长按阈值，默认 150）、`open_config_on_start`、`auto_switch_profile`。
+`settings` 关键项：`menu_theme`（圆盘外观）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 15）、`open_config_on_start`、`auto_switch_profile`。
 
 ## 提交规范
 
