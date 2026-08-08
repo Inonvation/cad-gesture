@@ -1,7 +1,7 @@
-# CAD 鼠标手势工具 (CAD Gesture)
+# CAD Gesture
 
 一款为 **AutoCAD** 和 **中望CAD** 设计的鼠标手势 + 径向圆盘菜单工具。
-在 CAD 中**长按鼠标右键拖动**，即可从圆盘菜单快速选择并执行命令，无需记忆快捷键。
+在 CAD 中**长按鼠标右键拖动**，即可从圆盘菜单快速选择并执行命令，无需记忆快捷键。内置预设配置，适用于成图大赛等需快速绘图的场景。
 
 ## 功能特性
 
@@ -41,7 +41,7 @@ python main.py
 
 | 操作 | 说明 |
 |------|------|
-| 呼出菜单 | 在 CAD 窗口内长按鼠标右键并拖动（约 150ms） |
+| 呼出菜单 | 在 CAD 窗口内长按鼠标右键并拖动（默认约 60ms） |
 | 选择命令 | 按住右键拖向目标扇区，高亮后释放触发 |
 | 内层 | 高频绘图命令（直线、圆、复制…） |
 | 外层 | 编辑命令（圆弧、旋转、缩放…） |
@@ -61,15 +61,6 @@ python main.py
 每个方案包含三层命令：
 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 每个命令由 `label`（显示名）、`key`（回退快捷键）、`description`（CAD 命令名）构成。
-
-## 打包发布
-
-```powershell
-# 用 Python312 打包（或直接双击 build.bat）
-python -m PyInstaller cad_gesture.spec --clean --noconfirm
-
-# 输出 dist/CADGesture.exe（单文件），配置文件复制到 dist/config/
-```
 
 ## 技术栈
 
@@ -95,10 +86,4 @@ src/
 └── single_instance.py  # 单实例与覆盖更新
 ```
 
-## 开发验证
-
-```powershell
-python -m py_compile src\xxx.py   # 语法检查
-python -m pytest tests/ -q        # 单元测试
-python verify.py                  # 一键：语法 + 测试 + 重启程序
-```
+本项目为**个人独立开发**，灵感来源于quicker及solidworks中自带的鼠标笔式，首次尝试利用AI进行python脚本应用程序开发，由于学业和生活等因素，精力和实力有限，欢迎提issue或PR，感谢使用
