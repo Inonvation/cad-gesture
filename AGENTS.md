@@ -37,7 +37,7 @@ src/
 ## 环境关键坑（务必先读）
 
 - **Python 双解释器**：`python` 命令可能命中多个环境。hermes venv 的 `python.exe` 是 uv launcher，运行 `main.py` 时会 spawn 真解释器（uv cpython）——启动后看到"一对 python 进程"是**正常现象**。启动/验证统一用 hermes venv 的 python：
-  `C:\Users\cy\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe`
+  `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`
 - **绝不用 PowerShell 改中文文件**：PowerShell 的 `Get-Content`/`Set-Content` 按 GBK 读 UTF-8 会永久损坏中文（乱码不可逆）。改含中文的 .py/.json 必须用 edit/write 工具；批量替换用 python 脚本（`open(path, encoding='utf-8')`）。
 - **配置界面不能开独立线程**：`config_gui.py` 必须通过 `open_config_gui(on_save=..., master=self.root)` 嵌入主线程（app 的 root 是 `ctk.CTk()`）。若在独立线程创建 `CTk()` 会与主线程双 Tk 冲突，CTkEntry 的 StringVar trace 跨线程抛 `RuntimeError: main thread is not in main loop` → 窗口卡死"未响应"。改配置界面最易踩。
 - **单实例机制**：`main.py` 开头 `ensure_single_instance()` 用命名互斥体判断，新实例会置位命名事件请求旧实例优雅退出（覆盖更新，避免多托盘图标）。app.py 主循环每 0.5s 轮询 `is_exit_requested()`。启动逻辑别改坏这两处。
@@ -74,14 +74,14 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 ## 打包流程（仅发布时使用）
 
-**打包必须用 Python312**（`C:\Users\cy\AppData\Local\Programs\Python\Python312\python.exe`），其他 Python 环境可能缺 PyInstaller。
+**打包必须用 Python312**（`<USER>\AppData\Local\Programs\Python\Python312\python.exe`），其他 Python 环境可能缺 PyInstaller。
 
 **onefile 单文件打包**：输出 `dist/CADGesture.exe`。
 
 ```powershell
 cd F:\cad-gesture
 Get-Process CADGesture -ErrorAction SilentlyContinue | Stop-Process -Force
-& "C:\Users\cy\AppData\Local\Programs\Python\Python312\python.exe" -m PyInstaller cad_gesture.spec --clean --noconfirm
+& "<USER>\AppData\Local\Programs\Python\Python312\python.exe" -m PyInstaller cad_gesture.spec --clean --noconfirm
 Copy-Item config\config.json dist\config\config.json -Force
 dist\CADGesture.exe
 ```
@@ -161,7 +161,7 @@ dist\CADGesture.exe
    python -m py_compile src\修改的文件.py
    python -m pytest tests/ -q
    # 后台启动主程序让用户看效果
-   Start-Process "C:\Users\cy\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe" -ArgumentList "main.py" -WorkingDirectory "F:\cad-gesture"
+   Start-Process "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe" -ArgumentList "main.py" -WorkingDirectory "F:\cad-gesture"
    ```
    告诉用户"程序已启动，请查看改动效果"，然后继续下一步
 5. 检查未使用的 import

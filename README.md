@@ -57,7 +57,8 @@ python main.py
 - **右侧**：命令库，支持搜索与拖放
 - **侧边栏**：圆盘外观主题、启动选项
 
-配置保存于 `config/config.json`。每个方案包含三层命令：
+配置保存于 `config/config.json`（首次运行自动生成默认配置，模板见 `config/config.example.json`）。
+每个方案包含三层命令：
 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 每个命令由 `label`（显示名）、`key`（回退快捷键）、`description`（CAD 命令名）构成。
 

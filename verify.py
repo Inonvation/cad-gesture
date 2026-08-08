@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-PY = r"C:\Users\cy\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe"
+PY = sys.executable
 
 
 def main():

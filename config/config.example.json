@@ -1,17 +1,16 @@
 {
   "settings": {
+    "version": 1,
     "hold_threshold_ms": 150,
     "dead_zone_radius": 30,
     "ring_radius": 100,
     "outer_ring_radius": 180,
+    "ext_ring_radius": 240,
     "sector_count": 8,
-    "active_profile": "ZWCAD-绘图",
-    "start_minimized": false,
+    "active_profile": "AutoCAD-常用",
     "tray_icon": true,
     "auto_switch_profile": true,
-    "open_config_on_start": true,
-    "ext_ring_radius": 240,
-    "version": 1,
+    "open_config_on_start": false,
     "menu_theme": "azure"
   },
   "profiles": {
@@ -280,9 +279,9 @@
       "target": "autocad",
       "sectors": {
         "0": {
-          "label": "矩形",
-          "key": "rec",
-          "description": "RECTANG"
+          "label": "直线",
+          "key": "l",
+          "description": "LINE"
         },
         "1": {
           "label": "圆",
@@ -290,9 +289,9 @@
           "description": "CIRCLE"
         },
         "2": {
-          "label": "构造线",
-          "key": "xl",
-          "description": "XLINE"
+          "label": "矩形",
+          "key": "rec",
+          "description": "RECTANG"
         },
         "3": {
           "label": "圆弧",
@@ -322,14 +321,14 @@
       },
       "outer_sectors": {
         "0": {
-          "label": "矩形",
-          "key": "rec",
-          "description": "RECTANG"
+          "label": "构造线",
+          "key": "xl",
+          "description": "XLINE"
         },
         "1": {
-          "label": "样条",
-          "key": "spl",
-          "description": "SPLINE"
+          "label": "块",
+          "key": "b",
+          "description": "BLOCK"
         },
         "2": {
           "label": "插入块",
@@ -930,9 +929,9 @@
       "target": "zwcad",
       "sectors": {
         "0": {
-          "label": "圆弧",
-          "key": "a",
-          "description": "ARC"
+          "label": "直线",
+          "key": "l",
+          "description": "LINE"
         },
         "1": {
           "label": "圆",

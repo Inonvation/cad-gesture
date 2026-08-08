@@ -53,7 +53,6 @@ for sp in site.getsitepackages():
 
 if pywin32_dll_dir is None:
     possible_paths = [
-        os.path.join(os.path.expanduser('~'), 'AppData', 'Local', 'hermes', 'hermes-agent', 'venv', 'Lib', 'site-packages', 'pywin32_system32'),
         os.path.join(os.path.expanduser('~'), 'AppData', 'Local', 'Programs', 'Python', 'Python311', 'Lib', 'site-packages', 'pywin32_system32'),
         os.path.join(os.path.expanduser('~'), 'AppData', 'Local', 'Programs', 'Python', 'Python312', 'Lib', 'site-packages', 'pywin32_system32'),
     ]
