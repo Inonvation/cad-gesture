@@ -210,7 +210,8 @@ def _default_config() -> Dict[str, Any]:
     return {
         "settings": {
             "version": 1,
-            "hold_threshold_ms": 150,
+            "hold_threshold_ms": 80,
+            "trigger_distance": 15,
             "dead_zone_radius": 30,
             "ring_radius": 100,
             "outer_ring_radius": 180,
@@ -255,40 +256,6 @@ def _default_config() -> Dict[str, Any]:
                     "5": {"label": "极轴", "key": "f10", "description": "POLAR"},
                     "6": {"label": "对象捕捉", "key": "f3", "description": "OSNAP"},
                     "7": {"label": "栅格", "key": "f7", "description": "GRID"}
-                }
-            },
-            "AutoCAD-编辑": {
-                "name": "编辑",
-                "target": "autocad",
-                "sectors": {
-                    "0": {"label": "撤销", "key": "ctrl+z", "description": "U"},
-                    "1": {"label": "重做", "key": "ctrl+y", "description": "REDO"},
-                    "2": {"label": "粘贴", "key": "ctrl+v", "description": "PASTECLIP"},
-                    "3": {"label": "剪切", "key": "ctrl+x", "description": "CUTCLIP"},
-                    "4": {"label": "复制", "key": "ctrl+c", "description": "COPYCLIP"},
-                    "5": {"label": "全选", "key": "ctrl+a", "description": "AI_SELALL"},
-                    "6": {"label": "保存", "key": "ctrl+s", "description": "QSAVE"},
-                    "7": {"label": "打开", "key": "ctrl+o", "description": "OPEN"}
-                },
-                "outer_sectors": {
-                    "0": {"label": "新建", "key": "ctrl+n", "description": "NEW"},
-                    "1": {"label": "打印", "key": "ctrl+p", "description": "PRINT"},
-                    "2": {"label": "特性匹配", "key": "ma", "description": "MATCHPROP"},
-                    "3": {"label": "特性", "key": "pr", "description": "PROPERTIES"},
-                    "4": {"label": "清理", "key": "pu", "description": "PURGE"},
-                    "5": {"label": "基点复制", "key": "ctrl+shift+c", "description": "COPYBASE"},
-                    "6": {"label": "粘贴为块", "key": "ctrl+shift+v", "description": "PASTEBLOCK"},
-                    "7": {"label": "另存为", "key": "ctrl+shift+s", "description": "SAVEAS"}
-                },
-                "extension_sectors": {
-                    "0": {"label": "文字样式", "key": "st", "description": "STYLE"},
-                    "1": {"label": "表格样式", "key": "ts", "description": "TABLESTYLE"},
-                    "2": {"label": "线型", "key": "lt", "description": "LINETYPE"},
-                    "3": {"label": "线宽", "key": "lw", "description": "LWEIGHT"},
-                    "4": {"label": "单位", "key": "un", "description": "UNITS"},
-                    "5": {"label": "重命名", "key": "ren", "description": "RENAME"},
-                    "6": {"label": "草图设置", "key": "ds", "description": "DSETTINGS"},
-                    "7": {"label": "选项", "key": "op", "description": "OPTIONS"}
                 }
             },
             "AutoCAD-绘图": {
@@ -393,6 +360,31 @@ def _default_config() -> Dict[str, Any]:
                     "7": {"label": "实时缩放", "key": "z", "description": "ZOOM"}
                 }
             },
+            "ZWCAD-成图大赛": {
+                "name": "成图大赛推荐",
+                "target": "zwcad",
+                "sectors": {
+                    "0": {"label": "基准", "key": "jz", "description": "ZWMDATUMID"},
+                    "1": {"label": "形位公差", "key": "xw", "description": "ZWMFCFRAME"},
+                    "2": {"label": "圆", "key": "c", "description": "CIRCLE"},
+                    "3": {"label": "粗糙度", "key": "cc", "description": "ZWMSURFSYM"},
+                    "4": {"label": "标注", "key": "dli", "description": "DIMLINEAR"},
+                    "5": {"label": "中心线", "key": "zx", "description": "ZWMCENTERLINE"},
+                    "6": {"label": "直线", "key": "l", "description": "LINE"},
+                    "7": {"label": "裁剪", "key": "tr", "description": "TRIM"}
+                },
+                "outer_sectors": {
+                    "0": {"label": "技术要求", "key": "tj", "description": "ZWMTECHREQUEST"},
+                    "1": {"label": "局部详图", "key": "ZWMDETAIL", "description": "ZWMDETAIL"},
+                    "2": {"label": "区域缩放", "key": "z", "description": "ZOOM"},
+                    "3": {"label": "一键标注φ", "key": "ddi", "description": "DIMDIAMETER"},
+                    "4": {"label": "方向符号", "key": "ZWMVIEWDIRECTION", "description": "ZWMVIEWDIRECTION"},
+                    "5": {"label": "剖面线", "key": "h", "description": "BHATCH"},
+                    "6": {"label": "图幅", "key": "tf", "description": "ZWMFRAMEINIT"},
+                    "7": {"label": "剖切线", "key": "pq", "description": "ZWMSECTIONLINE"}
+                },
+                "extension_sectors": {}
+            },
             "ZWCAD-常用": {
                 "name": "常用",
                 "target": "zwcad",
@@ -425,40 +417,6 @@ def _default_config() -> Dict[str, Any]:
                     "5": {"label": "管道线", "key": "gd", "description": "ZWMPIPELINE"},
                     "6": {"label": "构造线", "key": "xl", "description": "XLINE"},
                     "7": {"label": "表格", "key": "tb", "description": "TABLE"}
-                }
-            },
-            "ZWCAD-编辑": {
-                "name": "编辑",
-                "target": "zwcad",
-                "sectors": {
-                    "0": {"label": "撤销", "key": "ctrl+z", "description": "U"},
-                    "1": {"label": "重做", "key": "ctrl+y", "description": "REDO"},
-                    "2": {"label": "粘贴", "key": "ctrl+v", "description": "PASTECLIP"},
-                    "3": {"label": "剪切", "key": "ctrl+x", "description": "CUTCLIP"},
-                    "4": {"label": "复制", "key": "ctrl+c", "description": "COPYCLIP"},
-                    "5": {"label": "全选", "key": "ctrl+a", "description": "AI_SELALL"},
-                    "6": {"label": "保存", "key": "ctrl+s", "description": "QSAVE"},
-                    "7": {"label": "打开", "key": "ctrl+o", "description": "OPEN"}
-                },
-                "outer_sectors": {
-                    "0": {"label": "新建", "key": "ctrl+n", "description": "NEW"},
-                    "1": {"label": "打印", "key": "ctrl+p", "description": "PRINT"},
-                    "2": {"label": "特性匹配", "key": "ma", "description": "MATCHPROP"},
-                    "3": {"label": "特性", "key": "pr", "description": "PROPERTIES"},
-                    "4": {"label": "清理", "key": "pu", "description": "PURGE"},
-                    "5": {"label": "基点复制", "key": "ctrl+shift+c", "description": "COPYBASE"},
-                    "6": {"label": "粘贴为块", "key": "ctrl+shift+v", "description": "PASTEBLOCK"},
-                    "7": {"label": "另存为", "key": "ctrl+shift+s", "description": "SAVEAS"}
-                },
-                "extension_sectors": {
-                    "0": {"label": "文字样式", "key": "st", "description": "STYLE"},
-                    "1": {"label": "表格样式", "key": "ts", "description": "TABLESTYLE"},
-                    "2": {"label": "线型", "key": "lt", "description": "LINETYPE"},
-                    "3": {"label": "线宽", "key": "lw", "description": "LWEIGHT"},
-                    "4": {"label": "单位", "key": "un", "description": "UNITS"},
-                    "5": {"label": "重命名", "key": "ren", "description": "RENAME"},
-                    "6": {"label": "草图设置", "key": "ds", "description": "DSETTINGS"},
-                    "7": {"label": "选项", "key": "op", "description": "OPTIONS"}
                 }
             },
             "ZWCAD-绘图": {

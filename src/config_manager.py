@@ -30,20 +30,43 @@ def load_config() -> Dict[str, Any]:
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             config = json.load(f)
+        if not isinstance(config, dict):
+            raise ValueError("配置文件结构异常: 顶层应为对象")
         # 兼容旧配置：如果没有 outer_sectors 则补全
         if _migrate_config(config):
             save_config(config)  # 迁移后持久化，防止异常退出丢失
         return config
-    except (json.JSONDecodeError, IOError) as e:
+    except Exception as e:
+        # 兜底任何结构异常（profiles 为 list、settings 缺失等），
+        # 避免异常穿透导致整个程序启动崩溃
         print(f"配置文件加载失败: {e}")
         return _default_config()
 
 
-def save_config(config: Dict[str, Any]) -> None:
-    """保存配置文件"""
+def save_config(config: Dict[str, Any]) -> bool:
+    """保存配置文件（原子写入）
+
+    先写临时文件再 os.replace 原子替换，避免写入中途崩溃/断电
+    导致 config.json 被截断损坏。
+
+    Returns:
+        True 表示写入成功；False 表示失败（调用方据此提示）。
+    """
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
+    tmp_path = CONFIG_FILE + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, CONFIG_FILE)
+        return True
+    except Exception:
+        # 清理残留的临时文件，避免下次启动时误读
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        return False
 
 
 def _migrate_config(config: Dict[str, Any]) -> bool:
@@ -68,7 +91,12 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "menu_theme" not in settings:
         settings["menu_theme"] = "azure"
         migrated = True
+    if "trigger_distance" not in settings:
+        settings["trigger_distance"] = 15
+        migrated = True
     # 为旧配置中的 profile 添加 target、outer_sectors 和 extension_sectors
+    # 记录哪些 profile 原本缺少 extension_sectors 字段（区分"旧配置缺失"与"用户主动清空"）
+    missing_ext = set()
     for name, profile in config.get("profiles", {}).items():
         if "target" not in profile:
             if "zwcad" in name.lower() or "中望" in profile.get("name", ""):
@@ -81,12 +109,13 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
             migrated = True
         if "extension_sectors" not in profile:
             profile["extension_sectors"] = {}
+            missing_ext.add(name)
             migrated = True
-    # 补全空的扩展圈命令：从默认配置按 target + name 匹配复制
+    # 仅为"旧配置原本缺失扩展圈字段"的 profile 从默认配置补命令。
+    # 用户主动清空的空 dict 不会被覆盖（silent data loss 防护）。
     defaults = _default_config()
-    for name, profile in config.get("profiles", {}).items():
-        if profile.get("extension_sectors"):
-            continue
+    for name in missing_ext:
+        profile = config["profiles"][name]
         dname = profile.get("name", name)
         target = profile.get("target", "")
         for dp in defaults.get("profiles", {}).values():
