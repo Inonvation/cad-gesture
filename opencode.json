@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "permission": {
+    "bash": {
+      "*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "python -m py_compile*": "allow",
+      "python -m pytest*": "allow",
+      "python -c *": "allow",
+      "python verify.py*": "allow",
+      "python main.py*": "allow",
+      "Start-Process *main.py*": "allow"
+    }
+  }
+}
