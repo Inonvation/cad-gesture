@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import copy
+import winreg
 from typing import Dict, Any, Optional, List
 
 from src.config_presets import get_preset_commands, _default_config
@@ -93,6 +94,9 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         migrated = True
     if "trigger_distance" not in settings:
         settings["trigger_distance"] = 15
+        migrated = True
+    if "auto_start" not in settings:
+        settings["auto_start"] = False
         migrated = True
     # 为旧配置中的 profile 添加 target、outer_sectors 和 extension_sectors
     # 记录哪些 profile 原本缺少 extension_sectors 字段（区分"旧配置缺失"与"用户主动清空"）
@@ -184,3 +188,48 @@ def set_active_profile(config: Dict[str, Any], profile_name: str) -> bool:
     config.setdefault("settings", {})["active_profile"] = profile_name
     save_config(config)
     return True
+
+
+# ========== 开机自启（注册表 HKCU\...\Run） ==========
+
+_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_RUN_VALUE = "CADGesture"
+
+
+def get_auto_start() -> bool:
+    """查询是否已注册开机自启（以注册表为准）"""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
+            winreg.QueryValueEx(key, _RUN_VALUE)
+            return True
+    except OSError:
+        return False
+
+
+def set_auto_start(enabled: bool) -> bool:
+    """设置/取消开机自启
+
+    源码运行注册 python.exe + main.py；打包 exe 注册可执行文件本身。
+
+    Returns:
+        True 表示注册表写入成功；False 表示失败。
+    """
+    try:
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0,
+                                winreg.KEY_SET_VALUE) as key:
+            if enabled:
+                if getattr(sys, "frozen", False):
+                    cmd = f'"{sys.executable}"'
+                else:
+                    main_py = os.path.abspath(os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)), "..", "main.py"))
+                    cmd = f'"{sys.executable}" "{main_py}"'
+                winreg.SetValueEx(key, _RUN_VALUE, 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, _RUN_VALUE)
+                except OSError:
+                    pass
+        return True
+    except Exception:
+        return False

@@ -218,7 +218,7 @@ def _default_config() -> Dict[str, Any]:
             "ext_ring_radius": 240,
             "sector_count": 8,
             "active_profile": "AutoCAD-常用",
-            "tray_icon": True,
+            "auto_start": False,
             "auto_switch_profile": True,
             "open_config_on_start": False,
             "menu_theme": "azure"

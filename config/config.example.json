@@ -9,7 +9,7 @@
     "ext_ring_radius": 240,
     "sector_count": 8,
     "active_profile": "AutoCAD-常用",
-    "tray_icon": true,
+    "auto_start": false,
     "auto_switch_profile": true,
     "open_config_on_start": false,
     "menu_theme": "azure"
