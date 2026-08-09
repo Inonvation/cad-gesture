@@ -464,7 +464,7 @@ class QSettingsPanel(QWidget):
     def _build_maintenance_card(self):
         card = self._section("maintenance", "维护")
 
-        # 配置目录：标题 + 当前路径
+        # 配置目录行：标题 + 当前路径 + 更改/重置（同一行）
         dir_head = QHBoxLayout()
         dir_head.setSpacing(8)
         dir_head.addWidget(QLabel("配置目录"))
@@ -473,17 +473,19 @@ class QSettingsPanel(QWidget):
         self._config_dir_label.setStyleSheet(
             f"color: {UI.text_muted}; font-size: {FONT_XS}px;")
         dir_head.addWidget(self._config_dir_label, 1)
-        card.lay.addLayout(dir_head)
-
-        # 操作按钮：同一行排版
-        row = QHBoxLayout()
-        row.setSpacing(6)
         btn_change = QPushButton("更改")
         btn_change.setToolTip("把配置迁移到自选目录（如 D 盘）")
         btn_change.clicked.connect(self._change_config_dir)
         btn_reset_dir = QPushButton("重置")
         btn_reset_dir.setToolTip("恢复默认 %APPDATA%\\CADGesture")
         btn_reset_dir.clicked.connect(self._restore_config_dir)
+        dir_head.addWidget(btn_change, 0, Qt.AlignVCenter)
+        dir_head.addWidget(btn_reset_dir, 0, Qt.AlignVCenter)
+        card.lay.addLayout(dir_head)
+
+        # 方案操作：保持原排版
+        row = QHBoxLayout()
+        row.setSpacing(8)
         btn_import = QPushButton("导入方案")
         btn_import.clicked.connect(lambda: self.on_import() if self.on_import else None)
         btn_export = QPushButton("导出方案")
@@ -494,11 +496,10 @@ class QSettingsPanel(QWidget):
         btn_reset.setProperty("class", "danger")
         btn_reset.setToolTip("把当前方案的三圈命令恢复为默认内容")
         btn_reset.clicked.connect(self._reset_defaults)
-        row.addWidget(btn_change)
-        row.addWidget(btn_reset_dir)
         row.addWidget(btn_import)
         row.addWidget(btn_export)
         row.addWidget(btn_dir)
+        row.addStretch(1)
         row.addWidget(btn_reset)
         card.lay.addLayout(row)
         return card
