@@ -83,6 +83,20 @@ a = Analysis(
     excludes=[
         'matplotlib', 'numpy', 'scipy', 'pandas',
         'cv2', 'torch', 'tensorflow',
+        # PySide6 用不到的 Qt 模块（每个 DLL 数 MB，排除可显著减小体积）
+        'PySide6.QtQml', 'PySide6.QtQuick', 'PySide6.QtQmlMeta',
+        'PySide6.QtQmlModels', 'PySide6.QtQmlWorkerScript',
+        'PySide6.QtQuickWidgets', 'PySide6.QtQuickControls2',
+        'PySide6.QtPdf', 'PySide6.QtPdfWidgets',
+        'PySide6.QtVirtualKeyboard',
+        'PySide6.QtNetwork', 'PySide6.QtNetworkAuth', 'PySide6.QtWebSockets',
+        'PySide6.QtSvg', 'PySide6.QtSvgWidgets',
+        'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets',
+        'PySide6.QtCharts', 'PySide6.QtDataVisualization', 'PySide6.QtGraphs',
+        'PySide6.QtSql', 'PySide6.QtBluetooth', 'PySide6.QtNfc',
+        'PySide6.QtSerialPort', 'PySide6.QtPositioning', 'PySide6.QtLocation',
+        'PySide6.QtSensors', 'PySide6.Qt3DCore', 'PySide6.Qt3DRender',
+        'PySide6.QtDesigner', 'PySide6.QtHelp', 'PySide6.QtTest',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -96,6 +110,35 @@ a = Analysis(
 import re as _re
 a.binaries = [b for b in a.binaries
               if not _re.search(r'(api-ms-win-|ext-ms-)', b[0].lower())]
+
+# ========== 排除用不到的 Qt 模块 DLL ==========
+# PySide6 hook 会全量收集 Qt 模块 DLL（Qml/Quick/Pdf/Network 等我们用不到），
+# excludes 拦不住 hook 收集的二进制，须在此按文件名过滤。
+import os as _os
+_EXCLUDE_QT_DLLS = {
+    "Qt6Qml.dll", "Qt6QmlMeta.dll", "Qt6QmlModels.dll",
+    "Qt6QmlWorkerScript.dll", "Qt6Quick.dll", "Qt6QuickControls2.dll",
+    "Qt6QuickWidgets.dll", "Qt6QmlDebug.dll",
+    "Qt6Pdf.dll", "Qt6PdfWidgets.dll",
+    "Qt6Network.dll", "Qt6NetworkAuth.dll", "Qt6WebSockets.dll",
+    "Qt6VirtualKeyboard.dll",
+    "Qt6Svg.dll", "Qt6SvgWidgets.dll",
+    "Qt6Multimedia.dll", "Qt6MultimediaWidgets.dll",
+    "Qt6Charts.dll", "Qt6DataVisualization.dll", "Qt6Graphs.dll",
+    "Qt6Sql.dll", "Qt6Test.dll", "Qt6Designer.dll",
+    "Qt6Help.dll", "Qt6Bluetooth.dll", "Qt6Nfc.dll",
+    "Qt6SerialPort.dll", "Qt6Positioning.dll", "Qt6Location.dll",
+    "Qt6Sensors.dll", "Qt6WebEngineCore.dll", "Qt6WebEngineWidgets.dll",
+}
+a.binaries = [b for b in a.binaries
+              if _os.path.basename(b[0]) not in _EXCLUDE_QT_DLLS]
+# 同步排除对应的 PySide6 二进制绑定（.pyd），避免残留无用模块
+a.binaries = [b for b in a.binaries
+              if not (_os.path.basename(b[0]).startswith(("QtQml", "QtQuick",
+                          "QtPdf", "QtNetwork", "QtVirtualKeyboard", "QtSvg",
+                          "QtMultimedia", "QtCharts", "QtSql", "QtTest",
+                          "QtDesigner", "QtHelp", "QtWebEngine"))
+                      and _os.path.basename(b[0]).endswith(".pyd"))]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
