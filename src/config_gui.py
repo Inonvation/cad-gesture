@@ -7,7 +7,7 @@ import json
 import ctypes
 import tkinter as tk
 from tkinter import filedialog
-from typing import Dict, Any, Optional, Callable, Tuple
+from typing import Dict, Optional, Callable, Tuple
 
 import customtkinter as ctk
 
@@ -128,22 +128,75 @@ class _ToolTip:
 
 
 class _VSeparator(tk.Frame):
-    """垂直可拖拽分隔条"""
+    """垂直可拖拽分隔条（PanedWindow 已替代，保留备用）"""
 
     def __init__(self, master, on_drag, bg=BORDER, width=5):
         super().__init__(master, width=width, bg=bg,
                          cursor="sb_h_double_arrow", highlightthickness=0)
         self._on_drag = on_drag
         self._start_x = 0
+        self._dragging = False
+        self._preview = None
         self.bind("<Button-1>", self._press)
         self.bind("<B1-Motion>", self._motion)
+        self.bind("<ButtonRelease-1>", self._release)
         self.bind("<Double-Button-1>", lambda e: on_drag("reset"))
 
     def _press(self, e):
         self._start_x = e.x_root
+        self._dragging = True
+        self._show_preview(e.x_root)
 
     def _motion(self, e):
+        if self._dragging:
+            self._move_preview(e.x_root)
+
+    def _release(self, e):
+        self._dragging = False
+        self._hide_preview()
         self._on_drag(e.x_root - self._start_x)
+
+    def _show_preview(self, x):
+        try:
+            top = self.winfo_toplevel()
+            h = top.winfo_screenheight()
+            win = tk.Toplevel(top)
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            win.configure(bg=ACCENT)
+            win.geometry(f"2x{h}+{x}+0")
+            # 鼠标点击穿透，避免预览线挡住分隔条拖动
+            hwnd = win.winfo_id()
+            while True:
+                parent = ctypes.windll.user32.GetParent(hwnd)
+                if parent == 0:
+                    break
+                hwnd = parent
+            GWL_EXSTYLE = -20
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(
+                hwnd, GWL_EXSTYLE,
+                style | 0x00000020 | 0x00080000 | 0x08000000)
+            win.lift()
+            self._preview = win
+        except Exception:
+            self._preview = None
+
+    def _move_preview(self, x):
+        if self._preview is not None:
+            try:
+                h = self.winfo_toplevel().winfo_screenheight()
+                self._preview.geometry(f"2x{h}+{x}+0")
+            except Exception:
+                pass
+
+    def _hide_preview(self):
+        if self._preview is not None:
+            try:
+                self._preview.destroy()
+            except Exception:
+                pass
+            self._preview = None
 
 
 class ConfigGUI:
@@ -211,23 +264,13 @@ class ConfigGUI:
         self.root.bind("<Escape>", lambda e: self._cancel_drag())
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _drag_sidebar(self, delta):
-        """拖拽左侧边栏宽度（160~320px，双击恢复默认 230）"""
-        if delta == "reset":
-            self._sep1_start_w = 230
-            self.sidebar.configure(width=230)
-            return
-        new = max(160, min(320, self._sep1_start_w + delta))
-        self.sidebar.configure(width=new)
-
-    def _drag_right(self, delta):
-        """拖拽右侧命令库宽度（220~420px，双击恢复默认 290）"""
-        if delta == "reset":
-            self._sep2_start_w = 290
-            self.right_panel.configure(width=290)
-            return
-        new = max(220, min(420, self._sep2_start_w - delta))
-        self.right_panel.configure(width=new)
+    def _set_initial_sash(self):
+        """设置初始分隔条位置（paned.add 的 width 已处理，此方法备用）"""
+        try:
+            self._paned.paneconfigure(self.sidebar, width=230)
+            self._paned.paneconfigure(self.right_panel, width=290)
+        except Exception:
+            pass
 
     def _fix_window_flicker(self):
         """修复 Windows 窗口切换/最小化后恢复时闪黑问题（设置窗口背景刷）"""
@@ -258,23 +301,24 @@ class ConfigGUI:
         """三栏布局（左侧导航 + 中间预览编辑 + 右侧命令库）"""
         main_frame = ctk.CTkFrame(self.root, fg_color=BG, corner_radius=0)
         main_frame.pack(fill=tk.BOTH, expand=True)
-        # 列：0=左侧边栏(可拖宽) 1=分隔条 2=中间主体(弹性) 3=分隔条 4=右侧命令库(可拖宽)
-        main_frame.grid_columnconfigure(0, weight=0, minsize=160)
-        main_frame.grid_columnconfigure(1, weight=0)
-        main_frame.grid_columnconfigure(2, weight=1, minsize=400)
-        main_frame.grid_columnconfigure(3, weight=0)
-        main_frame.grid_columnconfigure(4, weight=0, minsize=220)
         main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(1, weight=0)
+        main_frame.grid_columnconfigure(0, weight=1)
+
+        # 三栏可拖拽布局：tk.PanedWindow（opaque=False = 拖动时只移动 sash，
+        # pane 释放后才重排，避免 CustomTkinter 拖动分隔条时全量重排卡顿重影）
+        self._paned = tk.PanedWindow(
+            main_frame, orient=tk.HORIZONTAL, opaque=False, showhandle=False,
+            sashwidth=5, sashrelief=tk.FLAT, bg=BORDER,
+            borderwidth=0, relief=tk.FLAT)
+        self._paned.grid(row=0, column=0, sticky="nsew")
 
         # ===== 左侧导航栏 =====
-        self.sidebar = ctk.CTkFrame(main_frame, width=230, fg_color=SIDEBAR,
+        self.sidebar = ctk.CTkFrame(self._paned, width=230, fg_color=SIDEBAR,
                                     corner_radius=0)
-        self.sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 1))
+        self._paned.add(self.sidebar, width=230, minsize=160, stretch="never")
         self.sidebar.pack_propagate(False)
         sidebar = self.sidebar
-        self._sep1_start_w = 230
-        _VSeparator(main_frame, self._drag_sidebar).grid(
-            row=0, column=1, sticky="ns")
 
         ctk.CTkLabel(sidebar, text="配置方案", text_color=TEXT,
                      font=_FONT_TITLE, anchor="w").pack(
@@ -328,92 +372,19 @@ class ConfigGUI:
         self._btn_del.grid(row=1, column=1, sticky="ew", padx=(5, 0), pady=3)
         _ToolTip(self._btn_del, "删除当前方案（至少保留一个）")
 
-        # 分隔线 + 设置选项
+        # 底部全局设置入口
         tk.Frame(sidebar, bg=BORDER, height=1).pack(fill=tk.X, padx=20, pady=8)
-
-        self.open_config_var = tk.BooleanVar(
-            value=self.config.get("settings", {}).get("open_config_on_start", False))
-        self._chk_open = ctk.CTkCheckBox(
-            sidebar, text="启动时打开此界面", variable=self.open_config_var,
-            command=self._on_setting_change, text_color=TEXT,
-            fg_color=ACCENT, hover_color=ACCENT_DIM,
-            checkmark_color="#ffffff", border_color=BORDER_LIGHT,
-            corner_radius=6, font=_FONT_SMALL)
-        self._chk_open.pack(anchor="w", padx=22, pady=4)
-        _ToolTip(self._chk_open, "程序启动时自动弹出本配置界面")
-
-        self.auto_switch_var = tk.BooleanVar(
-            value=self.config.get("settings", {}).get("auto_switch_profile", True))
-        self._chk_auto = ctk.CTkCheckBox(
-            sidebar, text="根据 CAD 窗口自动切换", variable=self.auto_switch_var,
-            command=self._on_setting_change, text_color=TEXT,
-            fg_color=ACCENT, hover_color=ACCENT_DIM,
-            checkmark_color="#ffffff", border_color=BORDER_LIGHT,
-            corner_radius=6, font=_FONT_SMALL)
-        self._chk_auto.pack(anchor="w", padx=22, pady=4)
-        _ToolTip(self._chk_auto, "前台窗口为 AutoCAD 或中望 CAD 时自动切换对应方案")
-
-        # 圆盘外观主题
-        ctk.CTkLabel(sidebar, text="圆盘外观", text_color=TEXT_DIM,
-                     font=("Microsoft YaHei", 10), anchor="w").pack(
-            anchor="w", padx=22, pady=(12, 4))
-        theme_labels = [t.label for t in MENU_THEMES.values()]
-        self._theme_option = ctk.CTkOptionMenu(
-            sidebar, values=theme_labels, height=32, corner_radius=8,
-            fg_color=CARD, button_color=SIDEBAR,
-            button_hover_color=PRESET_HOVER,
-            dropdown_fg_color=CARD, dropdown_hover_color=PRESET_HOVER,
-            dropdown_text_color=TEXT, text_color=TEXT, font=_FONT_SMALL,
-            command=self._on_theme_change)
-        self._theme_option.pack(fill=tk.X, padx=22, pady=(0, 6))
-        _ToolTip(self._theme_option, "切换圆盘菜单的配色风格")
-        cur_label = get_menu_theme(self._menu_theme_name).label
-        self._theme_option.set(cur_label)
-
-        # 触发灵敏度设置
-        ctk.CTkLabel(sidebar, text="触发灵敏度", text_color=TEXT_DIM,
-                     font=("Microsoft YaHei", 10), anchor="w").pack(
-            anchor="w", padx=22, pady=(14, 2))
-
-        delay_row = ctk.CTkFrame(sidebar, fg_color=SIDEBAR, corner_radius=0)
-        delay_row.pack(fill=tk.X, padx=22)
-        ctk.CTkLabel(delay_row, text="长按延迟", text_color=TEXT,
-                     font=_FONT_SMALL, anchor="w").pack(side=tk.LEFT)
-        self._delay_value_label = ctk.CTkLabel(
-            delay_row, text="", text_color=ACCENT, font=_FONT_SMALL, anchor="e")
-        self._delay_value_label.pack(side=tk.RIGHT)
-        self._delay_slider = ctk.CTkSlider(
-            sidebar, from_=60, to=200, number_of_steps=14,
-            command=self._on_delay_change, height=16,
-            button_color=ACCENT, button_hover_color=ACCENT_HOVER,
-            progress_color=ACCENT, fg_color=BORDER)
-        self._delay_slider.pack(fill=tk.X, padx=22, pady=(2, 6))
-        _ToolTip(self._delay_slider, "长按鼠标右键多久后响应拖动（越小越灵敏）")
-        _hold = self.config.get("settings", {}).get("hold_threshold_ms", 80)
-        self._delay_slider.set(_hold)
-        self._delay_value_label.configure(text=f"{_hold} ms")
-
-        dist_row = ctk.CTkFrame(sidebar, fg_color=SIDEBAR, corner_radius=0)
-        dist_row.pack(fill=tk.X, padx=22)
-        ctk.CTkLabel(dist_row, text="触发距离", text_color=TEXT,
-                     font=_FONT_SMALL, anchor="w").pack(side=tk.LEFT)
-        self._dist_value_label = ctk.CTkLabel(
-            dist_row, text="", text_color=ACCENT, font=_FONT_SMALL, anchor="e")
-        self._dist_value_label.pack(side=tk.RIGHT)
-        self._dist_slider = ctk.CTkSlider(
-            sidebar, from_=8, to=40, number_of_steps=16,
-            command=self._on_dist_change, height=16,
-            button_color=ACCENT, button_hover_color=ACCENT_HOVER,
-            progress_color=ACCENT, fg_color=BORDER)
-        self._dist_slider.pack(fill=tk.X, padx=22, pady=(2, 6))
-        _ToolTip(self._dist_slider, "拖动多少像素后弹出圆盘（越小越灵敏）")
-        _td = self.config.get("settings", {}).get("trigger_distance", 15)
-        self._dist_slider.set(_td)
-        self._dist_value_label.configure(text=f"{_td} px")
+        self._btn_settings = ctk.CTkButton(
+            sidebar, text="设置", height=34, corner_radius=8,
+            fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            text_color="#ffffff", font=_FONT_SMALL,
+            command=self._show_settings)
+        self._btn_settings.pack(fill=tk.X, padx=14, pady=(0, 14))
+        _ToolTip(self._btn_settings, "全局设置：启动行为、外观、触发灵敏度、圆盘尺寸、导入导出")
 
         # ===== 中间内容区 =====
-        center_frame = ctk.CTkFrame(main_frame, fg_color=BG, corner_radius=0)
-        center_frame.grid(row=0, column=2, sticky="nsew", padx=24, pady=20)
+        center_frame = ctk.CTkFrame(self._paned, fg_color=BG, corner_radius=0)
+        self._paned.add(center_frame, stretch="always")
         center_frame.grid_columnconfigure(0, weight=1)
         center_frame.grid_rowconfigure(1, weight=1)
 
@@ -432,30 +403,6 @@ class ConfigGUI:
         # 右侧快捷操作（固定列，窗口变窄时按钮组不会被挤出）
         top_actions = ctk.CTkFrame(top_bar, fg_color=BG, corner_radius=0)
         top_actions.grid(row=0, column=2, sticky="e")
-        self._btn_import = ctk.CTkButton(
-            top_actions, text="导入", height=30, corner_radius=8,
-            fg_color=CARD, hover_color=PRESET_HOVER,
-            border_width=1, border_color=BORDER_LIGHT,
-            text_color=TEXT, font=_FONT_SMALL,
-            command=self._import_profile)
-        self._btn_import.pack(side=tk.LEFT, padx=3)
-        _ToolTip(self._btn_import, "从 JSON 文件合并配置到当前方案")
-        self._btn_export = ctk.CTkButton(
-            top_actions, text="导出", height=30, corner_radius=8,
-            fg_color=CARD, hover_color=PRESET_HOVER,
-            border_width=1, border_color=BORDER_LIGHT,
-            text_color=TEXT, font=_FONT_SMALL,
-            command=self._export_profile)
-        self._btn_export.pack(side=tk.LEFT, padx=3)
-        _ToolTip(self._btn_export, "将当前方案导出为 JSON 文件")
-        self._btn_reset = ctk.CTkButton(
-            top_actions, text="重置", height=30, corner_radius=8,
-            fg_color=CARD, hover_color=PRESET_HOVER,
-            border_width=1, border_color=BORDER_LIGHT,
-            text_color=TEXT, font=_FONT_SMALL,
-            command=self._reset)
-        self._btn_reset.pack(side=tk.LEFT, padx=3)
-        _ToolTip(self._btn_reset, "恢复全部默认配置（会丢失自定义设置）")
         self._btn_save = ctk.CTkButton(
             top_actions, text="保存", height=30, corner_radius=8,
             fg_color=ACCENT, hover_color=ACCENT_HOVER,
@@ -465,13 +412,13 @@ class ConfigGUI:
         _ToolTip(self._btn_save, "保存全部修改并关闭 (Ctrl+S)")
 
         # 内容主体（预览 + 编辑），预览占满剩余空间
-        body = ctk.CTkFrame(center_frame, fg_color=BG, corner_radius=0)
-        body.grid(row=1, column=0, sticky="nsew")
-        body.grid_columnconfigure(0, weight=1)
-        body.grid_rowconfigure(0, weight=1)
+        self.body = ctk.CTkFrame(center_frame, fg_color=BG, corner_radius=0)
+        self.body.grid(row=1, column=0, sticky="nsew")
+        self.body.grid_columnconfigure(0, weight=1)
+        self.body.grid_rowconfigure(0, weight=1)
 
         # 圆盘预览区（卡片，撑满主体）
-        preview_card = ctk.CTkFrame(body, fg_color=CARD,
+        preview_card = ctk.CTkFrame(self.body, fg_color=CARD,
                                     corner_radius=14, border_width=1,
                                     border_color=BORDER)
         preview_card.grid(row=0, column=0, sticky="nsew", pady=(0, 14))
@@ -507,7 +454,7 @@ class ConfigGUI:
         preview_inner.bind("<Configure>", self._on_preview_resize)
 
         # 扇区编辑卡片（紧凑，置于预览下方）
-        sector_card = ctk.CTkFrame(body, fg_color=CARD,
+        sector_card = ctk.CTkFrame(self.body, fg_color=CARD,
                                    corner_radius=14, border_width=1,
                                    border_color=BORDER)
         sector_card.grid(row=1, column=0, sticky="ew", pady=(0, 4))
@@ -597,14 +544,100 @@ class ConfigGUI:
         self.detail_key_var.trace_add("write", self._on_detail_change)
         self.detail_desc_var.trace_add("write", self._on_detail_change)
 
-        self._sep2_start_w = 290
-        _VSeparator(main_frame, self._drag_right).grid(
-            row=0, column=3, sticky="ns")
+        # ===== 内嵌全局设置面板（与圆盘编辑同区域切换，不新开窗口） =====
+        self.settings_view = ctk.CTkFrame(center_frame, fg_color=BG, corner_radius=0)
+        self.settings_view.grid(row=1, column=0, sticky="nsew")
+        self.settings_view.grid_rowconfigure(1, weight=1)
+        self.settings_view.grid_columnconfigure(0, weight=1)
+        self.settings_view.grid_remove()
+
+        # 固定返回条（不随内容滚动）
+        set_head = ctk.CTkFrame(self.settings_view, fg_color=BG, corner_radius=0)
+        set_head.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+        ctk.CTkButton(set_head, text="← 返回圆盘编辑", height=30, corner_radius=8,
+                      fg_color=CARD, hover_color=PRESET_HOVER,
+                      border_width=1, border_color=BORDER_LIGHT,
+                      text_color=TEXT, font=_FONT_SMALL,
+                      command=self._show_editor).pack(side=tk.LEFT)
+
+        # 可滚动内容区
+        self._settings_scroll = ctk.CTkScrollableFrame(
+            self.settings_view, fg_color=BG, scrollbar_button_color=PANEL,
+            scrollbar_button_hover_color=BORDER_LIGHT)
+        self._settings_scroll.grid(row=1, column=0, sticky="nsew")
+
+        self._settings_sliders = {}
+        self._settings_checks = {}
+        self._updating_settings = False
+
+        # —— 常规 ——
+        self._add_settings_section("常规")
+        self._add_settings_check("open_config_on_start", "启动时打开此界面",
+                                 "程序启动时自动弹出本配置界面")
+        self._add_settings_check("auto_switch_profile", "根据 CAD 窗口自动切换",
+                                 "前台窗口为 AutoCAD 或中望 CAD 时自动切换对应方案")
+
+        # —— 圆盘外观 ——
+        self._add_settings_section("圆盘外观")
+        self._add_settings_theme()
+
+        # —— 触发灵敏度 ——
+        self._add_settings_section("触发灵敏度")
+        self._add_settings_slider("hold_threshold_ms", "长按延迟",
+                                  60, 200, 14, "ms",
+                                  "长按鼠标右键多久后响应拖动（越小越灵敏）")
+        self._add_settings_slider("trigger_distance", "触发距离",
+                                  8, 40, 16, "px",
+                                  "拖动多少像素后弹出圆盘（越小越灵敏）")
+
+        # —— 圆盘尺寸（高级） ——
+        self._add_settings_section("圆盘尺寸（高级）")
+        self._add_settings_slider("dead_zone_radius", "中心死区半径",
+                                  10, 60, 10, "",
+                                  "圆盘中心不触发手势的区域半径")
+        self._add_settings_slider("ring_radius", "内层半径",
+                                  60, 160, 20, "",
+                                  "内层扇区半径，需大于死区半径")
+        self._add_settings_slider("outer_ring_radius", "外层半径",
+                                  120, 260, 28, "",
+                                  "外层扇区半径，需大于内层半径")
+        self._add_settings_slider("ext_ring_radius", "扩展圈半径",
+                                  180, 360, 36, "",
+                                  "扩展圈半径，需大于外层半径")
+        self._add_settings_slider("sector_count", "扇区数量",
+                                  4, 16, 12, "",
+                                  "圆盘扇区数（改动后需为新增扇区配置命令）")
+
+        # —— 配置方案管理 ——
+        self._add_settings_section("配置方案管理")
+        mgmt = ctk.CTkFrame(self._settings_scroll, fg_color=BG, corner_radius=0)
+        mgmt.pack(fill=tk.X, padx=20, pady=6)
+        btn_imp = ctk.CTkButton(mgmt, text="导入方案", height=30, corner_radius=8,
+                                fg_color=CARD, hover_color=PRESET_HOVER,
+                                border_width=1, border_color=BORDER_LIGHT,
+                                text_color=TEXT, font=_FONT_SMALL,
+                                command=self._import_profile)
+        btn_imp.pack(side=tk.LEFT, padx=(0, 8))
+        _ToolTip(btn_imp, "从 JSON 文件合并配置到当前方案")
+        btn_exp = ctk.CTkButton(mgmt, text="导出方案", height=30, corner_radius=8,
+                                fg_color=CARD, hover_color=PRESET_HOVER,
+                                border_width=1, border_color=BORDER_LIGHT,
+                                text_color=TEXT, font=_FONT_SMALL,
+                                command=self._export_profile)
+        btn_exp.pack(side=tk.LEFT, padx=(0, 8))
+        _ToolTip(btn_exp, "将当前方案导出为 JSON 文件")
+        btn_rs = ctk.CTkButton(mgmt, text="恢复默认", height=30, corner_radius=8,
+                               fg_color="#3a2430", hover_color="#4a2a35",
+                               border_width=1, border_color="#4a2a35",
+                               text_color=DANGER, font=_FONT_SMALL,
+                               command=self._reset)
+        btn_rs.pack(side=tk.LEFT)
+        _ToolTip(btn_rs, "恢复全部默认配置（会丢失自定义设置）")
 
         # ===== 右侧命令库 =====
-        self.right_panel = ctk.CTkFrame(main_frame, width=290, fg_color=PANEL,
+        self.right_panel = ctk.CTkFrame(self._paned, width=290, fg_color=PANEL,
                                         corner_radius=0)
-        self.right_panel.grid(row=0, column=4, sticky="ns", pady=0)
+        self._paned.add(self.right_panel, width=290, minsize=220, stretch="never")
         self.right_panel.pack_propagate(False)
         right_panel = self.right_panel
 
@@ -637,7 +670,7 @@ class ConfigGUI:
         # ===== 底部状态栏 =====
         status_bar = ctk.CTkFrame(main_frame, fg_color=SIDEBAR,
                                   corner_radius=0, height=36)
-        status_bar.grid(row=1, column=0, columnspan=3, sticky="ew")
+        status_bar.grid(row=1, column=0, sticky="ew")
         status_bar.grid_propagate(False)
         self.status_label = ctk.CTkLabel(
             status_bar, text="就绪", text_color=TEXT_DIM,
@@ -743,35 +776,223 @@ class ConfigGUI:
         if getattr(self, "_unsaved_label", None) is not None:
             self._unsaved_label.configure(text="✓ 已自动保存")
 
-    def _on_setting_change(self):
-        """设置改变"""
-        self._set_changed()
-        self.config.setdefault("settings", {})["open_config_on_start"] = self.open_config_var.get()
-        self.config["settings"]["auto_switch_profile"] = self.auto_switch_var.get()
+    def _show_settings(self):
+        """就地切换到全局设置面板（不新开窗口）"""
+        self._refresh_settings_values()
+        self.body.grid_remove()
+        self.settings_view.grid()
+        self._btn_save.pack_forget()
+        try:
+            self._settings_scroll._parent_canvas.yview_moveto(0.0)
+        except Exception:
+            pass
+        self.status_label.configure(text="全局设置：修改即时保存")
 
-    def _on_theme_change(self, label: str):
-        """切换圆盘外观主题"""
-        for t in MENU_THEMES.values():
-            if t.label == label:
-                self._menu_theme_name = t.name
-                break
-        self.config.setdefault("settings", {})["menu_theme"] = self._menu_theme_name
-        self._set_changed()
+    def _show_editor(self):
+        """返回圆盘编辑视图"""
+        self.settings_view.grid_remove()
+        self.body.grid()
+        self._btn_save.pack(side=tk.LEFT, padx=(9, 0))
+        self._refresh_badges()
+        self._draw_preview()
+        self.status_label.configure(text="圆盘编辑")
+
+    def _refresh_badges(self):
+        """刷新顶栏当前方案徽标"""
+        profile = self.config.get("profiles", {}).get(self.current_profile_name, {})
+        display_name = profile.get("name", self.current_profile_name)
+        if len(display_name) > 12:
+            display_name = display_name[:12] + "…"
+        target = profile.get("target", "autocad")
+        target_label = {"autocad": "AutoCAD", "zwcad": "中望CAD"}.get(
+            target, target.upper())
+        self.profile_badge.configure(text=display_name)
+        self.target_badge.configure(text=target_label)
+
+    def _refresh_settings_values(self):
+        """进入设置面板时从配置刷新控件显示值"""
+        s = self.config.get("settings", {})
+        self._updating_settings = True
+        try:
+            for key, var in self._settings_checks.items():
+                var.set(bool(s.get(key, False)))
+            labels = [t.label for t in MENU_THEMES.values()]
+            cur = s.get("menu_theme", "azure")
+            cur_label = next((t.label for t in MENU_THEMES.values()
+                              if t.name == cur), labels[0])
+            self._settings_theme.set(cur_label)
+            for key, (slider, label, unit) in self._settings_sliders.items():
+                val = int(s.get(key, slider.get()))
+                slider.set(val)
+                label.configure(text=f"{val}{unit}")
+        finally:
+            self._updating_settings = False
+
+    def _add_settings_section(self, title):
+        """设置面板区块标题"""
+        head = ctk.CTkFrame(self._settings_scroll, fg_color=BG, corner_radius=0)
+        head.pack(fill=tk.X, pady=(18, 4))
+        ctk.CTkFrame(head, width=3, height=14, fg_color=ACCENT,
+                     corner_radius=2).pack(side=tk.LEFT, padx=(18, 8))
+        ctk.CTkLabel(head, text=title, text_color=ACCENT,
+                     font=("Microsoft YaHei", 12, "bold")).pack(side=tk.LEFT)
+
+    def _add_settings_check(self, key, text, tip):
+        """设置面板开关项"""
+        var = tk.BooleanVar(
+            value=bool(self.config.get("settings", {}).get(key, False)))
+        cb = ctk.CTkCheckBox(self._settings_scroll, text=text, variable=var,
+                             text_color=TEXT, fg_color=ACCENT,
+                             hover_color=ACCENT_DIM, checkmark_color="#ffffff",
+                             border_color=BORDER_LIGHT, corner_radius=6,
+                             font=_FONT_SMALL,
+                             command=lambda k=key: self._on_settings_check(k))
+        cb.pack(anchor="w", padx=20, pady=4)
+        _ToolTip(cb, tip)
+        self._settings_checks[key] = var
+
+    def _add_settings_theme(self):
+        """设置面板外观主题下拉"""
+        labels = [t.label for t in MENU_THEMES.values()]
+        cur = self.config.get("settings", {}).get("menu_theme", "azure")
+        cur_label = next((t.label for t in MENU_THEMES.values()
+                          if t.name == cur), labels[0])
+        row = ctk.CTkFrame(self._settings_scroll, fg_color=BG, corner_radius=0)
+        row.pack(fill=tk.X, padx=20, pady=4)
+        ctk.CTkLabel(row, text="外观主题", text_color=TEXT,
+                     font=_FONT_SMALL, anchor="w").pack(side=tk.LEFT)
+        option = ctk.CTkOptionMenu(
+            row, values=labels, height=30, corner_radius=8,
+            fg_color=CARD, button_color=PANEL, button_hover_color=PRESET_HOVER,
+            dropdown_fg_color=CARD, dropdown_hover_color=PRESET_HOVER,
+            dropdown_text_color=TEXT, text_color=TEXT, font=_FONT_SMALL,
+            command=self._on_settings_theme)
+        option.set(cur_label)
+        option.pack(side=tk.RIGHT)
+        _ToolTip(option, "切换圆盘菜单的配色风格")
+        self._settings_theme = option
+
+    def _add_settings_slider(self, key, text, from_, to, steps, unit, tip):
+        """设置面板滑块项（带实时数值标签）"""
+        row = ctk.CTkFrame(self._settings_scroll, fg_color=BG, corner_radius=0)
+        row.pack(fill=tk.X, padx=20, pady=(8, 0))
+        ctk.CTkLabel(row, text=text, text_color=TEXT,
+                     font=_FONT_SMALL, anchor="w").pack(side=tk.LEFT)
+        value_label = ctk.CTkLabel(row, text="", text_color=ACCENT,
+                                   font=_FONT_SMALL, anchor="e")
+        value_label.pack(side=tk.RIGHT)
+
+        val = int(self.config.get("settings", {}).get(key, from_))
+        value_label.configure(text=f"{val}{unit}")
+
+        slider = ctk.CTkSlider(
+            self._settings_scroll, from_=from_, to=to, number_of_steps=steps,
+            height=16, button_color=ACCENT, button_hover_color=ACCENT_HOVER,
+            progress_color=ACCENT, fg_color=BORDER,
+            command=lambda v, k=key: self._on_settings_slider(k, v))
+        slider.set(val)
+        slider.pack(fill=tk.X, padx=20, pady=(2, 2))
+        _ToolTip(slider, tip)
+        self._disable_slider_wheel(slider)
+        self._settings_sliders[key] = (slider, value_label, unit)
+
+    def _disable_slider_wheel(self, slider):
+        """禁用滚轮对滑块值的改动（滚轮改为滚动设置面板，防误触）
+
+        CTkSlider 把滚轮绑定在其内部 canvas 上且 bind 代理用 add=True 追加，
+        无法通过外部 bind 覆盖，须直接替换内部 canvas 的滚轮绑定。
+        滚动速度与 CTkScrollableFrame 的标准滚轮一致（-delta/6，非 -delta/120）。
+        """
+        scroll_view = self._settings_scroll
+
+        def _on_wheel(e):
+            try:
+                canvas = scroll_view._parent_canvas
+                if getattr(e, "num", None) in (4, 5):
+                    if canvas.yview() != (0.0, 1.0):
+                        canvas.yview_scroll(-1 if e.num == 4 else 1, "units")
+                elif getattr(e, "delta", 0):
+                    if canvas.yview() != (0.0, 1.0):
+                        canvas.yview("scroll", -int(e.delta / 6), "units")
+            except Exception:
+                pass
+            return "break"
+
+        try:
+            inner = slider._canvas
+        except AttributeError:
+            return
+        inner.bind("<MouseWheel>", _on_wheel)
+        inner.bind("<Button-4>", _on_wheel)
+        inner.bind("<Button-5>", _on_wheel)
+
+    def _save_now(self):
+        """设置改动立即写盘（取消防抖）"""
+        if getattr(self, "_autosave_after", None) is not None:
+            self.root.after_cancel(self._autosave_after)
+            self._autosave_after = None
+            self._do_autosave()
+        elif save_config(self.config):
+            self._has_changes = False
+            if getattr(self, "_unsaved_label", None) is not None:
+                self._unsaved_label.configure(text="✓ 已保存")
+
+    def _on_settings_slider(self, key, value):
+        """设置面板滑块回调（即时写入配置并保存）"""
+        if self._updating_settings or key not in self._settings_sliders:
+            return
+        val = int(round(value))
+        slider, label, unit = self._settings_sliders[key]
+        label.configure(text=f"{val}{unit}")
+        self.config.setdefault("settings", {})[key] = val
+        if key in ("dead_zone_radius", "ring_radius", "outer_ring_radius",
+                   "ext_ring_radius"):
+            self._apply_radius_constraints()
+        self._save_now()
         self._draw_preview()
 
-    def _on_delay_change(self, value):
-        """长按延迟滑块"""
-        ms = int(round(value))
-        self.config.setdefault("settings", {})["hold_threshold_ms"] = ms
-        self._delay_value_label.configure(text=f"{ms} ms")
-        self._set_changed()
+    def _on_settings_check(self, key):
+        """设置面板开关回调（即时写入配置并保存）"""
+        if self._updating_settings:
+            return
+        var = self._settings_checks[key]
+        self.config.setdefault("settings", {})[key] = var.get()
+        self._save_now()
 
-    def _on_dist_change(self, value):
-        """触发距离滑块"""
-        px = int(round(value))
-        self.config.setdefault("settings", {})["trigger_distance"] = px
-        self._dist_value_label.configure(text=f"{px} px")
-        self._set_changed()
+    def _on_settings_theme(self, label):
+        """设置面板主题回调（即时写入配置并保存）"""
+        if self._updating_settings:
+            return
+        name = next((t.name for t in MENU_THEMES.values()
+                     if t.label == label), "azure")
+        self._menu_theme_name = name
+        self.config.setdefault("settings", {})["menu_theme"] = name
+        self._save_now()
+        self._draw_preview()
+
+    def _apply_radius_constraints(self):
+        """保证 死区 < 内层 < 外层 < 扩展圈，并同步滑块位置"""
+        s = self.config.setdefault("settings", {})
+        dead = int(s.get("dead_zone_radius", 30))
+        inner = int(s.get("ring_radius", 100))
+        outer = int(s.get("outer_ring_radius", 180))
+        ext = int(s.get("ext_ring_radius", 240))
+        inner = max(inner, dead + 10)
+        outer = max(outer, inner + 10)
+        ext = max(ext, outer + 10)
+        s["ring_radius"] = inner
+        s["outer_ring_radius"] = outer
+        s["ext_ring_radius"] = ext
+        self._updating_settings = True
+        try:
+            for key, val in (("dead_zone_radius", dead), ("ring_radius", inner),
+                             ("outer_ring_radius", outer),
+                             ("ext_ring_radius", ext)):
+                slider, label, unit = self._settings_sliders[key]
+                slider.set(val)
+                label.configure(text=f"{val}{unit}")
+        finally:
+            self._updating_settings = False
 
     def _load_profile(self, profile_name: str):
         """加载 Profile"""
@@ -919,7 +1140,7 @@ class ConfigGUI:
         return None
 
     def _on_canvas_motion(self, event):
-        """圆盘 hover 事件（节流 16ms）"""
+        """圆盘 hover 事件（节流 45ms，避免拖动窗口时预览全量重绘风暴卡顿）"""
         ex, ey = event.x, event.y
         if self._hover_after_id is not None:
             return
@@ -936,7 +1157,7 @@ class ConfigGUI:
                 else:
                     self.preview_canvas.config(cursor="")
 
-        self._hover_after_id = self.root.after(16, update)
+        self._hover_after_id = self.root.after(45, update)
 
     def _on_canvas_leave(self, event):
         """鼠标离开圆盘"""
@@ -1594,8 +1815,6 @@ class ConfigGUI:
     def _collect_config(self):
         """从界面收集配置"""
         self.config["settings"]["active_profile"] = self.current_profile_name
-        self.config["settings"]["auto_switch_profile"] = self.auto_switch_var.get()
-        self.config["settings"]["open_config_on_start"] = self.open_config_var.get()
 
     def _save(self) -> bool:
         """保存配置（非模态：成功仅状态栏提示，窗口保持可继续编辑）
@@ -1623,9 +1842,9 @@ class ConfigGUI:
             return
         self.config = _default_config()
         self.current_profile_name = "AutoCAD-常用"
-        self.open_config_var.set(True)
-        self.auto_switch_var.set(True)
+        self._menu_theme_name = "azure"
         self._set_changed()
+        self._show_editor()
         self._refresh_profile_list()
         self._load_profile(self.current_profile_name)
         self.status_label.configure(text="已重置为默认配置")
