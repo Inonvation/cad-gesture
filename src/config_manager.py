@@ -45,10 +45,11 @@ def load_config() -> Dict[str, Any]:
 
 
 def save_config(config: Dict[str, Any]) -> bool:
-    """保存配置文件（原子写入）
+    """保存配置文件（原子写入 + 自动备份）
 
     先写临时文件再 os.replace 原子替换，避免写入中途崩溃/断电
-    导致 config.json 被截断损坏。
+    导致 config.json 被截断损坏；保存前备份旧配置到 config.json.bak，
+    供误操作/损坏时恢复。
 
     Returns:
         True 表示写入成功；False 表示失败（调用方据此提示）。
@@ -56,6 +57,13 @@ def save_config(config: Dict[str, Any]) -> bool:
     os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     tmp_path = CONFIG_FILE + ".tmp"
     try:
+        # 备份旧配置（保留最近一份旧版本，用于误操作恢复）
+        if os.path.exists(CONFIG_FILE):
+            try:
+                import shutil
+                shutil.copy2(CONFIG_FILE, CONFIG_FILE + ".bak")
+            except Exception:
+                pass
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, CONFIG_FILE)

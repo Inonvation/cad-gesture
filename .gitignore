@@ -44,3 +44,4 @@ Thumbs.db
 
 # 用户配置（运行时生成/编辑，不纳入版本控制；模板见 config/config.example.json）
 config/config.json
+config/config.json.bak
