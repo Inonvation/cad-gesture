@@ -71,8 +71,8 @@ def test_migrate_config():
     migrated = _migrate_config(old)
     assert migrated
     assert old["settings"]["version"] == 1
-    assert old["settings"]["outer_ring_radius"] == 180
-    assert old["settings"]["ext_ring_radius"] == 240
+    assert old["settings"]["outer_ring_radius"] == 135
+    assert old["settings"]["ext_ring_radius"] == 185
     assert old["settings"]["auto_switch_profile"] == True
     assert old["profiles"]["AutoCAD-常用"]["target"] == "autocad"
     assert "outer_sectors" in old["profiles"]["AutoCAD-常用"]

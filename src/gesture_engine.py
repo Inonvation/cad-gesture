@@ -88,7 +88,7 @@ class GestureEngine:
 
     @property
     def dead_zone(self) -> int:
-        return self.config.get("settings", {}).get("dead_zone_radius", 30)
+        return self.config.get("settings", {}).get("dead_zone_radius", 24)
 
     @property
     def trigger_distance(self) -> int:
@@ -97,11 +97,11 @@ class GestureEngine:
 
     @property
     def ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("ring_radius", 100)
+        return self.config.get("settings", {}).get("ring_radius", 70)
 
     @property
     def outer_ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("outer_ring_radius", 180)
+        return self.config.get("settings", {}).get("outer_ring_radius", 135)
 
     @property
     def hold_threshold_ms(self) -> int:

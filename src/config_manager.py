@@ -86,10 +86,10 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         settings["version"] = 1
         migrated = True
     if "outer_ring_radius" not in settings:
-        settings["outer_ring_radius"] = 180
+        settings["outer_ring_radius"] = 135
         migrated = True
     if "ext_ring_radius" not in settings:
-        settings["ext_ring_radius"] = 240
+        settings["ext_ring_radius"] = 185
         migrated = True
     if "auto_switch_profile" not in settings:
         settings["auto_switch_profile"] = True
@@ -105,6 +105,9 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         migrated = True
     if "auto_start" not in settings:
         settings["auto_start"] = False
+        migrated = True
+    if "menu_opacity" not in settings:
+        settings["menu_opacity"] = 0.95
         migrated = True
     # 为旧配置中的 profile 添加 target、outer_sectors 和 extension_sectors
     # 记录哪些 profile 原本缺少 extension_sectors 字段（区分"旧配置缺失"与"用户主动清空"）

@@ -68,15 +68,15 @@ class QRadialMenu(QWidget):
 
     @property
     def ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("ring_radius", 100)
+        return self.config.get("settings", {}).get("ring_radius", 70)
 
     @property
     def outer_ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("outer_ring_radius", 180)
+        return self.config.get("settings", {}).get("outer_ring_radius", 135)
 
     @property
     def ext_ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("ext_ring_radius", 240)
+        return self.config.get("settings", {}).get("ext_ring_radius", 185)
 
     @property
     def sector_count(self) -> int:
@@ -84,7 +84,12 @@ class QRadialMenu(QWidget):
 
     @property
     def dead_zone(self) -> int:
-        return self.config.get("settings", {}).get("dead_zone_radius", 30)
+        return self.config.get("settings", {}).get("dead_zone_radius", 24)
+
+    @property
+    def menu_opacity(self) -> float:
+        """圆盘整体透明度（0.3 ~ 1.0）"""
+        return max(0.3, min(1.0, self.config.get("settings", {}).get("menu_opacity", 0.95)))
 
     # ========== 对外接口 ==========
 
@@ -221,6 +226,7 @@ class QRadialMenu(QWidget):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setOpacity(self.menu_opacity)
         cx = cy = self._size // 2
         t = self._theme
         n = self.sector_count
