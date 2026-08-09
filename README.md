@@ -57,7 +57,7 @@ python main.py
 - **快捷键**：`Delete` 删除选中扇区命令，`Ctrl+Z` / `Ctrl+Y` 撤销 / 重做，`Ctrl+F` 搜索命令，`Esc` 取消放置
 - **设置**：主题色板（含自定义主色）、触发灵敏度、圆盘尺寸实时预览、开机自启
 
-配置保存于 `config/config.json`（首次运行自动生成默认配置，模板见 `config/config.example.json`）。
+配置保存在 `%APPDATA%\CADGesture\config.json`（Windows 标准用户目录，与 exe 位置无关，用户可随时手动编辑；首次运行自动从旧版本位置迁移，模板见 `config/config.example.json`）。
 每个方案包含三层命令：
 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 每个命令由 `label`（显示名）、`key`（回退快捷键）、`description`（CAD 命令名）构成。

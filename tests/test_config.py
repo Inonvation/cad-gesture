@@ -151,6 +151,32 @@ def test_migrate_no_rewrite_empty_extension():
     assert migrated is False or old["profiles"]["AutoCAD-常用"]["extension_sectors"] == {}
 
 
+def test_migrate_legacy_config(monkeypatch, tmp_path):
+    """旧位置（exe/脚本旁 config/config.json）迁移到用户目录"""
+    import json
+    from src import config_manager as cm
+    legacy = tmp_path / "legacy" / "config.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"settings": {"version": 1}, "profiles": {}},
+                   ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(cm, "_legacy_config_path", lambda: str(legacy))
+    monkeypatch.setattr(cm, "CONFIG_FILE", str(tmp_path / "user" / "config.json"))
+    assert cm.migrate_legacy_config()
+    assert os.path.exists(cm.CONFIG_FILE)
+    # 用户目录已有配置时不覆盖
+    assert not cm.migrate_legacy_config()
+
+
+def test_migrate_legacy_config_missing_source(monkeypatch, tmp_path):
+    """旧位置没有配置时迁移失败但不报错"""
+    from src import config_manager as cm
+    monkeypatch.setattr(cm, "_legacy_config_path",
+                        lambda: str(tmp_path / "nope" / "config.json"))
+    monkeypatch.setattr(cm, "CONFIG_FILE", str(tmp_path / "user" / "config.json"))
+    assert not cm.migrate_legacy_config()
+
+
 if __name__ == "__main__":
     test_load_config()
     test_get_active_profile()

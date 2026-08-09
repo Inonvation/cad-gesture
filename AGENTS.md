@@ -15,7 +15,7 @@
 
 ```
 main.py                 # 入口（含单实例检查）
-config/config.json      # 多Profile配置（三层：sectors + outer_sectors + extension_sectors）
+config/config.json      # 旧版配置位置（0.0.2-：仅迁移用，现配置在 %APPDATA%\CADGesture）
 src/
 ├── app.py              # 主类（Qt）：事件队列、托盘(QSystemTrayIcon)、Profile切换、配置入口
 ├── gesture_engine.py   # [核心] WH_MOUSE_LL 钩子 → 方向/圈层判定
@@ -141,7 +141,7 @@ dist\CADGesture-x64.exe
 
 ## 配置结构
 
-`config/config.json` — `settings` + `profiles`。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
+`%APPDATA%\CADGesture\config.json` — `settings` + `profiles`（与 exe 位置无关，用户可编辑；旧版 `config/config.json` 仅用于首次迁移）。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 字段：`description` = COM 命令名，`key` = pyautogui 回退键，`target` = `autocad`|`zwcad`。
 `settings` 关键项：`menu_theme`（圆盘外观）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 15）、`open_config_on_start`、`auto_switch_profile`。
 

@@ -10,8 +10,18 @@ from typing import Dict, Any, Optional, List
 from src.config_presets import get_preset_commands, _default_config
 
 
-def get_config_path() -> str:
-    """获取配置文件路径"""
+def _user_config_dir() -> str:
+    """用户数据目录（Windows 标准：%APPDATA%\\CADGesture）
+
+    与 exe 位置无关：exe 在受保护目录（如 Program Files）或随版本
+    覆盖更新时，配置始终保留且用户可读可改。
+    """
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "CADGesture")
+
+
+def _legacy_config_path() -> str:
+    """旧版本配置路径（exe/脚本旁的 config/config.json，仅用于一次性迁移）"""
     if getattr(sys, 'frozen', False):
         base_dir = os.path.dirname(sys.executable)
     else:
@@ -19,11 +29,32 @@ def get_config_path() -> str:
     return os.path.join(base_dir, "config", "config.json")
 
 
+def get_config_path() -> str:
+    """获取用户配置文件路径（%APPDATA%\\CADGesture\\config.json）"""
+    return os.path.join(_user_config_dir(), "config.json")
+
+
 CONFIG_FILE = get_config_path()
 
 
+def migrate_legacy_config() -> bool:
+    """把旧版本（exe 旁 config/config.json）迁移到用户目录；成功返回 True"""
+    legacy = _legacy_config_path()
+    if not os.path.exists(legacy) or os.path.exists(CONFIG_FILE):
+        return False
+    try:
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+        import shutil
+        shutil.copy2(legacy, CONFIG_FILE)
+        return True
+    except Exception:
+        return False
+
+
 def load_config() -> Dict[str, Any]:
-    """加载配置文件"""
+    """加载配置文件（首次从旧位置迁移，缺失时生成默认配置）"""
+    if not os.path.exists(CONFIG_FILE):
+        migrate_legacy_config()  # 0.0.2 及更早版本：exe 旁 config/config.json
     if not os.path.exists(CONFIG_FILE):
         config = _default_config()
         save_config(config)
