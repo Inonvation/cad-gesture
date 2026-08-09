@@ -130,7 +130,7 @@ exe = EXE(
     a.binaries,      # 所有二进制文件打包进 exe
     a.zipfiles,      # 所有 zip 文件打包进 exe
     a.datas,         # 所有数据文件打包进 exe
-    name='CADGesture',
+    name='CADGesture-x64',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

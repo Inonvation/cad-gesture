@@ -23,7 +23,7 @@
 
 ### 方式一：使用打包版
 
-1. 下载最新 [Release](https://github.com/Inonvation/cad-gesture/releases) 的 `CADGesture.exe`
+1. 下载最新 [Release](https://github.com/Inonvation/cad-gesture/releases) 的 `CADGesture-x64.exe`
 2. 双击运行，右下角出现托盘图标
 3. 打开 CAD，**长按鼠标右键拖动**即可使用
 
@@ -68,7 +68,7 @@ python main.py
 # 用 Python312 打包（或直接双击 build.bat）
 python -m PyInstaller cad_gesture.spec --clean --noconfirm
 
-# 输出 dist/CADGesture.exe（单文件），配置文件复制到 dist/config/
+# 输出 dist/CADGesture-x64.exe（单文件），配置文件复制到 dist/config/
 ```
 
 ## 技术栈

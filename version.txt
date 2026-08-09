@@ -18,9 +18,9 @@ VSVersionInfo(
           StringStruct('CompanyName', 'CAD Gesture'),
           StringStruct('FileDescription', 'CAD Mouse Gesture Tool'),
           StringStruct('FileVersion', '0.0.1'),
-          StringStruct('InternalName', 'CADGesture'),
+          StringStruct('InternalName', 'CADGesture-x64'),
           StringStruct('LegalCopyright', ''),
-          StringStruct('OriginalFilename', 'CADGesture.exe'),
+          StringStruct('OriginalFilename', 'CADGesture-x64.exe'),
           StringStruct('ProductName', 'CAD Mouse Gesture'),
           StringStruct('ProductVersion', '0.0.1'),
         ]

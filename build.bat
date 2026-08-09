@@ -50,12 +50,12 @@ echo [4/4] 打包完成！
 echo.
 echo ========================================
 echo   输出目录: dist\
-echo   主程序:   dist\CADGesture.exe
+echo   主程序:   dist\CADGesture-x64.exe
 echo   配置文件: dist\config\config.json
 echo ========================================
 echo.
 echo   使用方法: 将 dist 文件夹整个复制到任意位置
-echo             双击 CADGesture.exe 即可运行
+echo             双击 CADGesture-x64.exe 即可运行
 echo ========================================
 echo.
 
