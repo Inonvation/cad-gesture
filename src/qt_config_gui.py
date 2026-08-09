@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup,
                                QVBoxLayout, QWidget)
 
 from src.config_manager import (load_config, save_config,
-                                get_preset_commands, CONFIG_FILE,
+                                get_preset_commands, get_config_path,
                                 _default_config)
 from src.theme import UI, build_qss, FONT_XS
 from src.qt_preview import (CommandTree, _PanelToggleButton, QRadialPreview,
@@ -541,7 +541,7 @@ class QConfigGUI(QMainWindow):
         self.preview.update_config(self.config)
 
     def _open_config_dir(self):
-        d = os.path.dirname(CONFIG_FILE)
+        d = os.path.dirname(get_config_path())
         os.makedirs(d, exist_ok=True)
         os.startfile(d)
 

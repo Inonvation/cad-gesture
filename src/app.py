@@ -12,7 +12,8 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from src.config_manager import (
     load_config, save_config, get_active_profile,
-    get_profile_for_window, get_profile_names, set_active_profile, CONFIG_FILE
+    get_profile_for_window, get_profile_names, set_active_profile,
+    get_config_path
 )
 from src.gesture_engine import GestureEngine
 from src.qt_radial_menu import QRadialMenu
@@ -26,7 +27,7 @@ class CADGestureApp:
     """CAD鼠标手势应用主类（Qt 版）"""
 
     def __init__(self):
-        self._is_first_run = not os.path.exists(CONFIG_FILE)
+        self._is_first_run = not os.path.exists(get_config_path())
         self.config = load_config()
         self.log = get_logger()
 

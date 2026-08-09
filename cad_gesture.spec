@@ -83,6 +83,7 @@ a = Analysis(
     excludes=[
         'matplotlib', 'numpy', 'scipy', 'pandas',
         'cv2', 'torch', 'tensorflow',
+        'tkinter', '_tkinter',  # 程序不用 tkinter，排除可省 tcl/tk DLL
         # PySide6 用不到的 Qt 模块（每个 DLL 数 MB，排除可显著减小体积）
         'PySide6.QtQml', 'PySide6.QtQuick', 'PySide6.QtQmlMeta',
         'PySide6.QtQmlModels', 'PySide6.QtQmlWorkerScript',
@@ -129,6 +130,10 @@ _EXCLUDE_QT_DLLS = {
     "Qt6Help.dll", "Qt6Bluetooth.dll", "Qt6Nfc.dll",
     "Qt6SerialPort.dll", "Qt6Positioning.dll", "Qt6Location.dll",
     "Qt6Sensors.dll", "Qt6WebEngineCore.dll", "Qt6WebEngineWidgets.dll",
+    # 软件渲染后备库（20MB+）：Qt 在无 GPU 环境会自动退回 raster 软绘，无需打包
+    "opengl32sw.dll",
+    # Qt6OpenGL 仅被已排除的 Quick/OpenGLWidgets 引用（Qt6Gui 的 GL 走系统 opengl32.dll）
+    "Qt6OpenGL.dll", "Qt6OpenGLWidgets.dll",
 }
 a.binaries = [b for b in a.binaries
               if _os.path.basename(b[0]) not in _EXCLUDE_QT_DLLS]
@@ -139,6 +144,18 @@ a.binaries = [b for b in a.binaries
                           "QtMultimedia", "QtCharts", "QtSql", "QtTest",
                           "QtDesigner", "QtHelp", "QtWebEngine"))
                       and _os.path.basename(b[0]).endswith(".pyd"))]
+
+# ========== 排除冗余二进制（孤儿 DLL / 用不到的扩展） ==========
+_EXCLUDE_EXTRA = {
+    "tcl86t.dll", "tk86t.dll", "tcl87t.dll", "tk87t.dll",  # tkinter 附带
+    "libcrypto-3.dll", "libssl-3.dll",  # 仅被已排除的 Qt6Network 引用
+}
+a.binaries = [b for b in a.binaries
+              if _os.path.basename(b[0]) not in _EXCLUDE_EXTRA
+              and not _os.path.basename(b[0]).startswith("_avif")]  # Pillow AVIF 插件(8MB)
+
+# ========== 排除 Qt 翻译文件（界面为自定义中文绘制，无需多语言 .qm） ==========
+a.datas = [d for d in a.datas if not d[0].endswith(".qm")]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

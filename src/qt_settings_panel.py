@@ -12,13 +12,15 @@ import os
 from PySide6.QtCore import QEasingCurve, QPoint, Qt, QVariantAnimation
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
-                               QComboBox, QFormLayout, QGraphicsDropShadowEffect,
-                               QGridLayout, QHBoxLayout, QLabel, QPushButton,
-                               QScrollArea, QSizePolicy, QSlider, QSpinBox,
-                               QVBoxLayout, QWidget, QMessageBox)
+                               QComboBox, QFileDialog, QFormLayout,
+                               QGraphicsDropShadowEffect, QGridLayout,
+                               QHBoxLayout, QLabel, QPushButton, QScrollArea,
+                               QSizePolicy, QSlider, QSpinBox, QVBoxLayout,
+                               QWidget, QMessageBox)
 
 from src.config_manager import (save_config, get_auto_start, set_auto_start,
-                                _default_config)
+                                get_config_path, set_config_dir,
+                                reset_config_dir, _default_config)
 from src.theme import (UI, build_qss, MENU_THEMES, make_custom_theme,
                        theme_from_settings, FONT_XS, FONT_SM, RADIUS_LG,
                        _CUSTOM_ACCENT)
@@ -461,6 +463,26 @@ class QSettingsPanel(QWidget):
 
     def _build_maintenance_card(self):
         card = self._section("maintenance", "维护")
+
+        # 配置目录：显示当前路径，可自定义/恢复默认
+        dir_head = QHBoxLayout()
+        dir_head.addWidget(QLabel("配置目录"))
+        dir_head.addStretch(1)
+        btn_change = QPushButton("更改目录…")
+        btn_change.setToolTip("把配置迁移到自选目录（如 D 盘）")
+        btn_change.clicked.connect(self._change_config_dir)
+        btn_default = QPushButton("恢复默认")
+        btn_default.setToolTip("恢复到 %APPDATA%\\CADGesture")
+        btn_default.clicked.connect(self._restore_config_dir)
+        dir_head.addWidget(btn_change)
+        dir_head.addWidget(btn_default)
+        card.lay.addLayout(dir_head)
+        self._config_dir_label = QLabel(get_config_path())
+        self._config_dir_label.setWordWrap(True)
+        self._config_dir_label.setStyleSheet(
+            f"color: {UI.text_muted}; font-size: {FONT_XS}px;")
+        card.lay.addWidget(self._config_dir_label)
+
         row = QHBoxLayout()
         row.setSpacing(8)
         btn_import = QPushButton("导入方案")
@@ -479,6 +501,38 @@ class QSettingsPanel(QWidget):
         row.addWidget(btn_reset)
         card.lay.addLayout(row)
         return card
+
+    def _change_config_dir(self):
+        """选择新配置目录并迁移现有配置"""
+        d = QFileDialog.getExistingDirectory(self, "选择配置目录")
+        if not d:
+            return
+        try:
+            set_config_dir(d)
+        except Exception as e:
+            QMessageBox.warning(self, "更改失败", f"无法使用该目录：{e}")
+            return
+        self._config_dir_label.setText(get_config_path())
+        self._save()  # 把当前配置立即写入新位置
+        self._update_preview()
+        QMessageBox.information(
+            self, "配置目录已更改",
+            f"配置已迁移到：\n{get_config_path()}\n\n"
+            "目录位置已记住，下次启动自动使用。")
+
+    def _restore_config_dir(self):
+        """恢复默认配置目录（%APPDATA%\\CADGesture）"""
+        try:
+            reset_config_dir()
+        except Exception as e:
+            QMessageBox.warning(self, "恢复失败", str(e))
+            return
+        self._config_dir_label.setText(get_config_path())
+        self._save()
+        self._update_preview()
+        QMessageBox.information(
+            self, "已恢复默认",
+            f"配置目录已恢复为：\n{get_config_path()}")
 
     # ========== 交互 ==========
 

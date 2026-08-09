@@ -20,6 +20,22 @@ def _user_config_dir() -> str:
     return os.path.join(base, "CADGesture")
 
 
+_META_FILE = "config_path.txt"   # 自定义配置目录标记文件（位于用户数据目录）
+
+
+def _custom_config_dir() -> Optional[str]:
+    """自定义配置目录（由用户在设置页指定）；未设置返回 None"""
+    meta = os.path.join(_user_config_dir(), _META_FILE)
+    try:
+        with open(meta, "r", encoding="utf-8") as f:
+            path = f.read().strip()
+        if path and os.path.isdir(path):
+            return path
+    except OSError:
+        pass
+    return None
+
+
 def _legacy_config_path() -> str:
     """旧版本配置路径（exe/脚本旁的 config/config.json，仅用于一次性迁移）"""
     if getattr(sys, 'frozen', False):
@@ -30,11 +46,46 @@ def _legacy_config_path() -> str:
 
 
 def get_config_path() -> str:
-    """获取用户配置文件路径（%APPDATA%\\CADGesture\\config.json）"""
-    return os.path.join(_user_config_dir(), "config.json")
+    """获取当前配置文件路径（默认 %APPDATA%\\CADGesture，可自定义目录）"""
+    return os.path.join(_custom_config_dir() or _user_config_dir(), "config.json")
 
 
 CONFIG_FILE = get_config_path()
+
+
+def set_config_dir(path: str) -> str:
+    """设置自定义配置目录并迁移现有配置；返回新的配置文件路径"""
+    path = os.path.abspath(path)
+    new = os.path.join(path, "config.json")
+    old = get_config_path()
+    os.makedirs(path, exist_ok=True)
+    if os.path.abspath(old) != new and os.path.exists(old) and not os.path.exists(new):
+        import shutil
+        shutil.copy2(old, new)
+    meta = os.path.join(_user_config_dir(), _META_FILE)
+    os.makedirs(os.path.dirname(meta), exist_ok=True)
+    with open(meta, "w", encoding="utf-8") as f:
+        f.write(path)
+    global CONFIG_FILE
+    CONFIG_FILE = new
+    return new
+
+
+def reset_config_dir() -> str:
+    """恢复默认配置目录（%APPDATA%\\CADGesture），现有配置迁移回去"""
+    new = os.path.join(_user_config_dir(), "config.json")
+    old = get_config_path()
+    if os.path.abspath(old) != new and os.path.exists(old) and not os.path.exists(new):
+        import shutil
+        shutil.copy2(old, new)
+    meta = os.path.join(_user_config_dir(), _META_FILE)
+    try:
+        os.remove(meta)
+    except OSError:
+        pass
+    global CONFIG_FILE
+    CONFIG_FILE = new
+    return new
 
 
 def migrate_legacy_config() -> bool:

@@ -177,6 +177,35 @@ def test_migrate_legacy_config_missing_source(monkeypatch, tmp_path):
     assert not cm.migrate_legacy_config()
 
 
+def test_set_and_reset_config_dir(monkeypatch, tmp_path):
+    """自定义配置目录：迁移现有配置 + 元文件记录 + 恢复默认"""
+    from src import config_manager as cm
+    old = cm.CONFIG_FILE
+    try:
+        # 先造一份现有配置
+        cm.save_config(_default_config())
+        assert os.path.exists(cm.CONFIG_FILE)
+
+        new_path = cm.set_config_dir(str(tmp_path / "custom"))
+        assert new_path == str(tmp_path / "custom" / "config.json")
+        assert cm.CONFIG_FILE == new_path
+        assert cm.get_config_path() == new_path
+        # 配置已迁移到新位置
+        assert os.path.exists(new_path)
+        # 元文件记录自定义目录
+        meta = os.path.join(cm._user_config_dir(), cm._META_FILE)
+        assert os.path.exists(meta)
+        assert open(meta, encoding="utf-8").read().strip() == str(tmp_path / "custom")
+
+        # 恢复默认：配置回到用户目录
+        default_path = cm.reset_config_dir()
+        assert default_path == os.path.join(cm._user_config_dir(), "config.json")
+        assert cm.get_config_path() == default_path
+        assert not os.path.exists(meta)
+    finally:
+        monkeypatch.setattr(cm, "CONFIG_FILE", old)
+
+
 if __name__ == "__main__":
     test_load_config()
     test_get_active_profile()
