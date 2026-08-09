@@ -23,14 +23,28 @@ def blend_color(c1: str, c2: str, t: float) -> str:
         return c1
 
 
+_font_cache: Dict[tuple, tkfont.Font] = {}
+
+
 def _fit_font(label: str, base_font: tuple, max_px: float) -> tuple:
-    """根据可用宽度自动缩小字号，避免长标签溢出扇区"""
+    """根据可用宽度自动缩小字号，避免长标签溢出扇区。
+
+    复用模块级 Font 对象（tkfont.Font 每次新建开销大，高频重绘会拖慢性能），
+    测量前设置目标字号、测量后恢复基准字号，避免污染缓存的 Font。
+    """
     try:
-        f = tkfont.Font(font=base_font)
-        size = f.cget("size")
-        while size > 7 and f.measure(label) > max_px:
-            size -= 1
+        f = _font_cache.get(base_font)
+        if f is None:
+            f = tkfont.Font(font=base_font)
+            _font_cache[base_font] = f
+        base_size = f.cget("size")
+        size = base_size
+        while size > 7:
             f.configure(size=size)
+            if f.measure(label) <= max_px:
+                break
+            size -= 1
+        f.configure(size=base_size)
         if len(base_font) > 2 and "bold" in base_font:
             return (base_font[0], size, "bold")
         return (base_font[0], size)

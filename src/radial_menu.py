@@ -152,7 +152,7 @@ class RadialMenu:
                 def apply():
                     self._highlight_throttle_id = None
                     self._draw()
-                self._highlight_throttle_id = self._root.after(50, apply)
+                self._highlight_throttle_id = self._root.after(80, apply)
 
     def set_extension_hint(self, is_in_zone: bool):
         if is_in_zone != self._in_extension_zone:
@@ -161,7 +161,7 @@ class RadialMenu:
                 def apply():
                     self._highlight_throttle_id = None
                     self._draw()
-                self._highlight_throttle_id = self._root.after(50, apply)
+                self._highlight_throttle_id = self._root.after(80, apply)
 
     def _draw(self):
         if self._canvas is None or self._profile is None:
