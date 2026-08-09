@@ -105,6 +105,52 @@ def test_default_config():
     print(f"[OK]  默认配置: {len(config['profiles'])}个Profile")
 
 
+def test_migrate_missing_layers():
+    """旧配置缺外层/扩展圈时自动补全（含 target 推断）"""
+    old = {
+        "settings": {"active_profile": "AutoCAD-常用"},
+        "profiles": {
+            "AutoCAD-常用": {
+                "name": "常用",
+                "sectors": {"0": {"label": "直线", "key": "l", "description": "LINE"}},
+            },
+            "ZWCAD-常用": {
+                "name": "常用",
+                "sectors": {"0": {"label": "直线", "key": "l", "description": "LINE"}},
+            },
+        }
+    }
+    migrated = _migrate_config(old)
+    assert migrated
+    ac = old["profiles"]["AutoCAD-常用"]
+    zw = old["profiles"]["ZWCAD-常用"]
+    # target 推断：AutoCAD-常用 -> autocad，ZWCAD-常用 -> zwcad
+    assert ac["target"] == "autocad"
+    assert zw["target"] == "zwcad"
+    # 外层/扩展圈补全
+    assert "outer_sectors" in ac
+    assert "extension_sectors" in ac
+    assert isinstance(ac["outer_sectors"], dict)
+    assert "extension_sectors" in zw
+
+
+def test_migrate_no_rewrite_empty_extension():
+    """用户主动清空的 extension_sectors 不应被默认值覆盖"""
+    old = {
+        "settings": {"version": 1},
+        "profiles": {
+            "AutoCAD-常用": {
+                "name": "常用", "target": "autocad",
+                "sectors": {}, "outer_sectors": {},
+                "extension_sectors": {},  # 用户主动清空
+            }
+        }
+    }
+    migrated = _migrate_config(old)
+    # 用户主动清空不覆盖；无缺失字段则无需迁移
+    assert migrated is False or old["profiles"]["AutoCAD-常用"]["extension_sectors"] == {}
+
+
 if __name__ == "__main__":
     test_load_config()
     test_get_active_profile()
