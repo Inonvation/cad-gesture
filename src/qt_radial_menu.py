@@ -96,7 +96,19 @@ class QRadialMenu(QWidget):
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
-        self.move(int(lx - self._size // 2), int(ly - self._size // 2))
+        # 屏幕边缘自适应：圆盘窗口不超出屏幕可用区域（贴近边缘时整体内移）
+        left = int(lx - self._size // 2)
+        top = int(ly - self._size // 2)
+        try:
+            scr = QGuiApplication.screenAt(QPoint(x, y))
+            if scr is None:
+                scr = QGuiApplication.primaryScreen()
+            geo = scr.availableGeometry()
+            left = max(geo.left(), min(geo.right() - self._size + 1, left))
+            top = max(geo.top(), min(geo.bottom() - self._size + 1, top))
+        except Exception:
+            pass
+        self.move(left, top)
         super().show()
         self._visible = True
         self.update()

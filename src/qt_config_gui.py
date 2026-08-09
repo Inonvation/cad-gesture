@@ -40,10 +40,10 @@ QSplitter::handle { background: #232a34; }
 QSplitter::handle:hover { background: #38bdf8; }
 QListWidget, QTreeWidget { background: #12161d; border: 1px solid #232a34;
                            border-radius: 6px; padding: 4px; }
-QListWidget::item, QTreeWidget::item { padding: 5px 8px; border-radius: 4px; }
+QListWidget::item { padding: 5px 8px; border-radius: 4px; }
 QListWidget::item:hover, QTreeWidget::item:hover { background: #252d39; }
 QListWidget::item:selected, QTreeWidget::item:selected { background: #0369a1; }
-QTreeWidget::item { padding: 4px 6px; }
+QTreeWidget::item { padding: 6px 10px; border: none; }
 QLineEdit, QComboBox { background: #12161d; border: 1px solid #2c3542;
                        border-radius: 4px; padding: 5px 8px; }
 QLineEdit:focus, QComboBox:focus { border-color: #38bdf8; }
@@ -167,6 +167,7 @@ class QRadialPreview(QWidget):
         self.pending: dict | None = None     # 待放置的命令（右键命令后进入放置模式）
         self.on_select = None                # 回调 (layer, idx)
         self.on_drop = None                  # 回调 (layer, idx, data)
+        self.on_clear = None                 # 回调 () 点击圆盘外取消选择
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setMinimumSize(320, 320)
@@ -279,12 +280,27 @@ class QRadialPreview(QWidget):
                 self.update()
                 if self.on_select:
                     self.on_select(*s)
+            else:
+                # 点击圆盘外：取消放置模式或取消选中高亮
+                if self.pending is not None:
+                    self.pending = None
+                    self.setCursor(Qt.ArrowCursor)
+                self._clear_selection()
         elif e.button() == Qt.RightButton:
             # 右键取消放置模式
             if self.pending is not None:
                 self.pending = None
                 self.setCursor(Qt.ArrowCursor)
                 self.update()
+
+    def _clear_selection(self):
+        """清除选中高亮（点击圆盘外触发）"""
+        if self.selected is not None:
+            self.selected = None
+            self.hovered = None
+            self.update()
+            if self.on_clear:
+                self.on_clear()
 
     # ---- 绘制 ----
     def paintEvent(self, event):
@@ -362,6 +378,7 @@ class QConfigGUI(QMainWindow):
         self.preview = QRadialPreview()
         self.preview.on_select = self._on_sector_selected
         self.preview.on_drop = self._on_drop
+        self.preview.on_clear = self._on_sector_cleared
 
         # 快捷键：Delete 删除选中命令、Ctrl+Z 撤销、Ctrl+Y 重做、Esc 取消放置
         QShortcut(QKeySequence(Qt.Key_Delete), self,
@@ -417,6 +434,8 @@ class QConfigGUI(QMainWindow):
         v.addWidget(sub)
 
         self.profile_list = QListWidget()
+        # 去掉选中时的焦点虚线框（整行块选中，无虚线包裹）
+        self.profile_list.setFocusPolicy(Qt.NoFocus)
         self.profile_list.itemClicked.connect(self._on_profile_clicked)
         v.addWidget(self.profile_list, 1)
 
@@ -531,6 +550,8 @@ class QConfigGUI(QMainWindow):
         self._settings_panel = QSettingsPanel(self.config, self)
         self._settings_panel.on_back = self._show_editor
         self._settings_panel.on_saved = self._on_settings_saved
+        self._settings_panel.on_import = self._import_profile
+        self._settings_panel.on_export = self._export_profile
         self._center_stack.addWidget(self._settings_panel)
         self._center_stack.setCurrentIndex(0)
         return self._center_stack
@@ -575,9 +596,14 @@ class QConfigGUI(QMainWindow):
         self.preset_tree.setHeaderHidden(True)
         self.preset_tree.setColumnCount(2)
         self.preset_tree.setIndentation(12)
-        self.preset_tree.setRootIsDecorated(True)
-        self.preset_tree.setUniformRowHeights(True)
-        self.preset_tree.setColumnWidth(1, 0)  # 第二列宽度自适应
+        # 隐藏左侧展开箭头列（branch），避免选中时左边缘留下背景分块；
+        # 展开/折叠改为点击分类标题，标题前用 ▸/▾ 指示状态
+        self.preset_tree.setRootIsDecorated(False)
+        self.preset_tree.setAnimated(True)      # 展开/折叠缓动动画
+        self.preset_tree.setUniformRowHeights(False)  # 动画需要非统一行高
+        # 去掉选中时的焦点虚线框（整行块选中，无虚线包裹）
+        self.preset_tree.setFocusPolicy(Qt.NoFocus)
+        # 列宽：名称列自适应拉伸，快捷键列按内容
         self.preset_tree.header().setStretchLastSection(False)
         self.preset_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.preset_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -592,7 +618,11 @@ class QConfigGUI(QMainWindow):
 
     def _on_preset_clicked(self, item, col):
         if item.parent() is None:
+            # 分类标题：点击切换展开/折叠，并更新 ▸/▾ 前缀
             item.setExpanded(not item.isExpanded())
+            text = item.text(0)
+            prefix = "▾ " if item.isExpanded() else "▸ "
+            item.setText(0, prefix + text[2:])
             return
         info = item.data(0, Qt.UserRole)
         if info and self._selected_sector:
@@ -609,8 +639,11 @@ class QConfigGUI(QMainWindow):
         if not data:
             return
         menu = QMenu(self)
-        act = menu.addAction("添加到圆盘扇区")
-        act.triggered.connect(lambda: self._start_pending_place(data))
+        act = menu.addAction("拖拽或点击放置到圆盘扇区")
+        act.setEnabled(False)
+        menu.addSeparator()
+        act2 = menu.addAction("放置到圆盘扇区…")
+        act2.triggered.connect(lambda: self._start_pending_place(data))
         menu.exec(self.preset_tree.viewport().mapToGlobal(pos))
 
     def _start_pending_place(self, data):
@@ -743,6 +776,12 @@ class QConfigGUI(QMainWindow):
         self.desc_entry.setText(cfg.get("description", ""))
         self._block_form(False)
 
+    def _on_sector_cleared(self):
+        """点击圆盘外取消选择：清空扇区编辑表单与选中状态"""
+        self._selected_sector = None
+        self._clear_form()
+        self.statusBar().showMessage("已取消选择")
+
     def _on_detail_change(self, text):
         if not getattr(self, "_selected_sector", None):
             return
@@ -830,6 +869,7 @@ class QConfigGUI(QMainWindow):
         if not getattr(self, "_preset_commands", None):
             return
         filter_text = filter_text.strip().lower()
+        is_searching = bool(filter_text)
         for category, commands in self._preset_commands.items():
             if filter_text:
                 filtered = {k: v for k, v in commands.items()
@@ -841,26 +881,29 @@ class QConfigGUI(QMainWindow):
                     continue
             else:
                 filtered = commands
-            # 分类标题：低调小字，弱化层级
-            cat = QTreeWidgetItem([category])
+            # 分类标题：低调小字，弱化层级；▸/▾ 指示展开状态
+            cat = QTreeWidgetItem([f"▸ {category}"])
             f = cat.font(0)
             f.setBold(True)
             f.setPixelSize(11)
             cat.setFont(0, f)
             cat.setForeground(0, QColor("#8a93a3"))
             cat.setSizeHint(0, QSize(0, 26))
+            # 搜索时默认全部展开显示结果；非搜索时默认展开便于浏览
             cat.setExpanded(True)
+            cat.setText(0, f"▾ {category}")
             cat.setFirstColumnSpanned(True)
             for name, data in filtered.items():
                 label = data.get("label", name)
                 key = data.get("key", "")
                 child = QTreeWidgetItem([label, key])
                 child.setData(0, Qt.UserRole, data)
-                child.setSizeHint(0, QSize(0, 28))
+                child.setSizeHint(0, QSize(0, 30))
+                # 显示名称左对齐，快捷键右对齐（灰色弱化）
                 child.setForeground(0, QColor("#e6e9ef"))
-                if key:
-                    child.setForeground(1, QColor("#7b8494"))
-                    child.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+                child.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
+                child.setForeground(1, QColor("#7b8494"))
+                child.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
                 child.setToolTip(
                     0, f"命令: {label}\n快捷键: {key}\nCAD 命令: {data.get('description', '')}\n\n"
                        f"拖拽到圆盘扇区即可新增/更换，也可左键应用到选中扇区")
@@ -929,6 +972,59 @@ class QConfigGUI(QMainWindow):
             self.config["settings"]["active_profile"] = new_name
         self.current_profile = new_name
         self._refresh_profiles()
+        self._autosave_timer.start()
+
+    def _export_profile(self):
+        """导出当前方案为 JSON 文件"""
+        profile = self.config.get("profiles", {}).get(self.current_profile, {})
+        if not profile:
+            QMessageBox.warning(self, "提示", "没有可导出的配置")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出方案", f"{self.current_profile}.json", "JSON 文件 (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(profile, f, ensure_ascii=False, indent=2)
+            self.statusBar().showMessage(f"已导出到: {path}")
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"导出失败: {e}")
+
+    def _import_profile(self):
+        """从 JSON 文件导入方案（合并到当前方案）"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入方案", "", "JSON 文件 (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"导入失败（无法读取文件）: {e}")
+            return
+        if not isinstance(data, dict):
+            QMessageBox.warning(self, "错误", "导入失败：文件格式无效（应为对象）")
+            return
+        # 先校验结构，再合并：避免坏数据污染内存配置后被保存
+        for key in ("sectors", "outer_sectors", "extension_sectors"):
+            if key in data:
+                if not isinstance(data[key], dict):
+                    QMessageBox.warning(self, "错误", f"导入失败：{key} 格式无效")
+                    return
+                for v in data[key].values():
+                    if not isinstance(v, dict):
+                        QMessageBox.warning(self, "错误",
+                                            f"导入失败：{key} 中存在无效数据")
+                        return
+        self._push_undo()
+        profile = self.config.get("profiles", {}).get(self.current_profile, {})
+        for key in ("sectors", "outer_sectors", "extension_sectors"):
+            if key in data:
+                profile[key] = data[key]
+        self.preview.update()
+        self._on_sector_selected(*self._selected_sector) if self._selected_sector else None
+        self.statusBar().showMessage(f"已从 {path} 导入配置")
         self._autosave_timer.start()
 
     def _delete_profile(self):
@@ -1024,6 +1120,8 @@ class QSettingsPanel(QWidget):
         self.config = config
         self.on_back = None
         self.on_saved = None
+        self.on_import = None
+        self.on_export = None
         self.setStyleSheet(QSS)
 
         v = QVBoxLayout(self)
@@ -1089,6 +1187,16 @@ class QSettingsPanel(QWidget):
             self._size_sliders[key] = sl
             form.addWidget(lb)
             form.addWidget(sl)
+
+        btn_row = QHBoxLayout()
+        btn_import = QPushButton("导入方案")
+        btn_import.clicked.connect(lambda: self.on_import() if self.on_import else None)
+        btn_export = QPushButton("导出方案")
+        btn_export.clicked.connect(lambda: self.on_export() if self.on_export else None)
+        btn_row.addWidget(btn_import)
+        btn_row.addWidget(btn_export)
+        btn_row.addStretch(1)
+        form.addLayout(btn_row)
 
         btn_reset = QPushButton("恢复默认")
         btn_reset.clicked.connect(self._reset_defaults)
