@@ -21,7 +21,7 @@ from PySide6.QtGui import (QColor, QFont, QFontMetrics, QGuiApplication,
 from PySide6.QtWidgets import QWidget
 
 from src.gesture_engine import calc_sector
-from src.theme import get_menu_theme
+from src.theme import theme_from_settings
 from src.qt_renderer import (INNER, OUTER, EXTENSION, draw_shadow, draw_ring,
                              draw_center, draw_label)
 
@@ -46,12 +46,11 @@ class QRadialMenu(QWidget):
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
-        self._theme = get_menu_theme(
-            config.get("settings", {}).get("menu_theme", "azure"))
+        self._theme = theme_from_settings(
+            config.get("settings", {}))
 
         # 窗口尺寸覆盖到扩展圈判定范围（第三圈区域透明）
-        self._size = self.ext_ring_radius * 2 + 120
-        self.setFixedSize(self._size, self._size)
+        self._apply_size()
 
         # 窗口淡入动画
         self._fade_anim = QPropertyAnimation(self, b"windowOpacity", self)
@@ -65,6 +64,14 @@ class QRadialMenu(QWidget):
         self._hl_fade_timer.timeout.connect(self._on_hl_fade_tick)
 
     # ========== 配置属性 ==========
+
+    def _apply_size(self):
+        """按当前扩展圈半径重算窗口尺寸。
+
+        设置里改大圆盘后窗口必须跟着变大，否则第三圈会被窗口边缘裁切。
+        """
+        self._size = self.ext_ring_radius * 2 + 120
+        self.setFixedSize(self._size, self._size)
 
     @property
     def ring_radius(self) -> int:
@@ -150,8 +157,8 @@ class QRadialMenu(QWidget):
 
     def update_config(self, config: dict):
         self.config = config
-        self._theme = get_menu_theme(
-            config.get("settings", {}).get("menu_theme", "azure"))
+        self._theme = theme_from_settings(config.get("settings", {}))
+        self._apply_size()   # 圆盘尺寸设置改变时同步窗口大小，防止裁切
 
     def update_highlight(self, mouse_x: int, mouse_y: int):
         if not self._visible:
@@ -254,22 +261,25 @@ class QRadialMenu(QWidget):
                   hl_layer=hl_layer, hl_fade=self._hl_fade)
 
         draw_center(p, cx, cy, self.dead_zone, t, self._size,
-                    self._center_label())
+                    *self._center_texts())
         p.end()
 
-    def _center_label(self) -> str:
-        if self._highlighted_sector < 0:
-            return ""
-        idx = self._highlighted_sector
-        if self._in_extension_zone:
-            cfg = self._profile.get("extension_sectors", {}).get(str(idx), {})
-        elif self._highlighted_outer:
-            cfg = self._profile.get("outer_sectors", {}).get(str(idx), {})
-            if not cfg:
+    def _center_texts(self) -> tuple[str, str]:
+        """中心两行文字：有悬停显示 (命令名, 快捷键)，否则淡显方案名"""
+        if self._highlighted_sector >= 0:
+            idx = self._highlighted_sector
+            if self._in_extension_zone:
+                cfg = self._profile.get("extension_sectors", {}).get(str(idx), {})
+            elif self._highlighted_outer:
+                cfg = self._profile.get("outer_sectors", {}).get(str(idx), {})
+                if not cfg:
+                    cfg = self._profile.get("sectors", {}).get(str(idx), {})
+            else:
                 cfg = self._profile.get("sectors", {}).get(str(idx), {})
-        else:
-            cfg = self._profile.get("sectors", {}).get(str(idx), {})
-        return cfg.get("label", "")
+            label = cfg.get("label", "")
+            sub = cfg.get("key", "").upper() if cfg.get("key") else ""
+            return label, sub
+        return "", self._profile.get("name", "") if self._profile else ""
 
 
 def _demo():

@@ -1,7 +1,182 @@
-"""统一配色方案 — 深色/浅色两套主题"""
+"""统一配色与设计 token — 深色界面 + 圆盘外观主题
 
+分层：
+1. UITheme：界面 chrome 的设计 token（背景/文字/边框/强调色），QSS 由它生成，
+   消除散落在各控件里的硬编码颜色。
+2. MenuTheme：圆盘菜单外观主题（仅圆盘配色）。全部由主色经 HLS 推导生成，
+   保证每套视觉质感一致；另支持"自定义"主题（用户挑一个主色自动推导整套）。
+"""
+
+import colorsys
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
+
+# ========== 布局常量（间距 / 圆角 / 字号） ==========
+
+SP_SM = 4
+SP_MD = 8
+SP_LG = 12
+SP_XL = 16
+SP_XXL = 24
+
+RADIUS_SM = 5
+RADIUS_MD = 9
+RADIUS_LG = 14
+
+FONT_XS = 11
+FONT_SM = 12
+FONT_BASE = 13
+FONT_MD = 15
+FONT_LG = 18
+FONT_TITLE = 20
+
+
+# ========== 界面设计 token ==========
+
+
+@dataclass
+class UITheme:
+    """界面 chrome 配色（深色、低饱和、克制）"""
+    bg: str                 # 窗口最底层
+    bg_raised: str          # 面板 / 列表
+    bg_card: str            # 卡片
+    bg_overlay: str         # 浮层 / 弹层
+    bg_input: str           # 输入框
+    bg_hover: str           # 悬停项
+    bg_selected: str        # 选中项（低调的强调色，不整块染色）
+    text: str
+    text_secondary: str
+    text_muted: str
+    border: str
+    border_strong: str
+    accent: str
+    accent_hover: str
+    accent_text: str        # 强调色上的浅色文字（用于 primary 按钮）
+    accent_dim: str         # 深一档的强调色
+    danger: str
+    danger_bg: str
+    danger_border: str
+    scroll_handle: str
+    scroll_handle_hover: str
+
+
+UI = UITheme(
+    bg="#0f1218",
+    bg_raised="#151a22",
+    bg_card="#1a202b",
+    bg_overlay="#1e2532",
+    bg_input="#12161e",
+    bg_hover="#222a36",
+    bg_selected="#2a3a4d",
+    text="#dfe4ec",
+    text_secondary="#a0a9b6",
+    text_muted="#6f7a88",
+    border="#232b37",
+    border_strong="#303b4a",
+    accent="#6fa3d8",
+    accent_hover="#8bb7e6",
+    accent_text="#f2f7fd",
+    accent_dim="#3f5f85",
+    danger="#d98a8a",
+    danger_bg="#3c2629",
+    danger_border="#5a3439",
+    scroll_handle="#303b4a",
+    scroll_handle_hover="#42506a",
+)
+
+
+def build_qss(t: UITheme) -> str:
+    """从设计 token 生成全局样式表（界面统一风格，不再散落硬编码颜色）"""
+    return f"""
+QMainWindow, QWidget {{ background: {t.bg}; color: {t.text};
+                       font-size: {FONT_BASE}px; }}
+QLabel {{ background: transparent; }}
+QToolTip {{ background: {t.bg_overlay}; color: {t.text};
+            border: 1px solid {t.border_strong}; padding: 4px 8px; }}
+
+/* ---- 输入控件 ---- */
+QLineEdit, QComboBox, QSpinBox {{
+    background: {t.bg_input}; border: 1px solid {t.border_strong};
+    border-radius: {RADIUS_SM}px; padding: 5px 9px; min-height: 24px;
+    selection-background-color: {t.accent_dim};
+}}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{ border-color: {t.accent}; }}
+QLineEdit:disabled, QComboBox:disabled {{
+    color: {t.text_muted}; background: {t.bg_raised}; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox QAbstractItemView {{
+    background: {t.bg_overlay}; border: 1px solid {t.border_strong};
+    selection-background-color: {t.bg_selected}; selection-color: {t.text};
+}}
+
+/* ---- 按钮 ---- */
+QPushButton {{
+    background: {t.bg_raised}; border: 1px solid {t.border_strong};
+    border-radius: {RADIUS_SM}px; padding: 6px 14px; min-height: 26px;
+    color: {t.text};
+}}
+QPushButton:hover {{ background: {t.bg_hover}; }}
+QPushButton:pressed {{ background: {t.bg_card}; }}
+QPushButton:disabled {{ color: {t.text_muted}; background: {t.bg_raised}; }}
+QPushButton.primary {{ background: {t.accent}; border-color: {t.accent}; color: {t.accent_text}; }}
+QPushButton.primary:hover {{ background: {t.accent_hover}; }}
+QPushButton.ghost {{ background: transparent; border-color: transparent;
+                     color: {t.text_secondary}; }}
+QPushButton.ghost:hover {{ background: {t.bg_hover}; color: {t.text}; }}
+QPushButton.danger {{ background: {t.danger_bg}; border-color: {t.danger_border};
+                      color: {t.danger}; }}
+QPushButton.danger:hover {{ background: {t.danger_border}; }}
+QPushButton.iconBtn {{ background: transparent; border: 1px solid transparent;
+                       border-radius: {RADIUS_SM}px; padding: 4px 8px; }}
+QPushButton.iconBtn:hover {{ background: {t.bg_hover}; border-color: {t.border}; }}
+QPushButton.iconBtn:disabled {{ color: {t.text_muted}; }}
+
+/* ---- 列表 / 树 ---- */
+QListWidget, QTreeWidget {{
+    background: {t.bg_raised}; border: 1px solid {t.border};
+    border-radius: {RADIUS_MD}px; padding: 4px;
+}}
+QListWidget::item {{ padding: 6px 9px; border-radius: {RADIUS_SM}px; }}
+QListWidget::item:hover, QTreeWidget::item:hover {{ background: {t.bg_hover}; }}
+QListWidget::item:selected, QTreeWidget::item:selected {{
+    background: {t.bg_selected}; color: {t.text}; }}
+QTreeWidget::item {{ padding: 7px 10px; border: none; }}
+QTreeWidget::branch {{ background: transparent; }}
+QHeaderView::section {{
+    background: {t.bg_card}; color: {t.text_secondary};
+    border: none; padding: 4px 8px; }}
+
+/* ---- 滚动条 ---- */
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
+QScrollBar::handle:vertical {{ background: {t.scroll_handle};
+                              border-radius: 5px; min-height: 24px; }}
+QScrollBar::handle:vertical:hover {{ background: {t.scroll_handle_hover}; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 0; }}
+QScrollBar::handle:horizontal {{ background: {t.scroll_handle};
+                                 border-radius: 5px; min-width: 24px; }}
+QScrollBar::handle:horizontal:hover {{ background: {t.scroll_handle_hover}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+
+/* ---- 分割条 / 状态栏 ---- */
+QSplitter::handle {{ background: {t.border_strong}; }}
+QSplitter::handle:hover {{ background: {t.accent}; }}
+QStatusBar {{ background: {t.bg_raised}; color: {t.text_muted}; }}
+
+/* ---- 开关与滑杆 ---- */
+QCheckBox {{ spacing: 6px; }}
+QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 4px;
+                        border: 1px solid {t.border_strong}; background: {t.bg_input}; }}
+QCheckBox::indicator:checked {{ background: {t.accent}; border-color: {t.accent}; }}
+QSlider::groove:horizontal {{ height: 4px; background: {t.border_strong};
+                              border-radius: 2px; }}
+QSlider::handle:horizontal {{ width: 14px; background: {t.accent};
+                              border-radius: 7px; margin: -5px 0; }}
+QSlider::handle:horizontal:hover {{ background: {t.accent_hover}; }}
+"""
+
+
+# ========== 圆盘主题 ==========
 
 
 @dataclass
@@ -15,148 +190,6 @@ class RingColors:
     outline_hl: str = ""
     text: str = ""
     text_dim: str = ""
-
-
-@dataclass
-class ThemeColors:
-    """完整 UI 配色"""
-    bg: str
-    card_bg: str
-    text: str
-    text_dim: str
-    text_secondary: str
-    accent: str
-    accent_hover: str
-    accent_dim: str
-    border: str
-    border_light: str
-    inner: RingColors
-    outer: RingColors
-    extension: RingColors
-    dead_zone: str
-    dead_zone_outline: str
-    selected_border: str
-    panel_bg: str
-    sidebar_bg: str
-    preset_bg: str
-    preset_hover: str
-    drag_proxy_bg: str
-    menu_bg: str = "#010101"
-    center_text: str = "#ffffff"
-
-
-DARK_THEME = ThemeColors(
-    bg="#0d1017",
-    card_bg="#161b23",
-    text="#e6e9ef",
-    text_dim="#8a93a3",
-    text_secondary="#a8b2bf",
-    accent="#38bdf8",
-    accent_hover="#0ea5e9",
-    accent_dim="#0369a1",
-    border="#232a34",
-    border_light="#2c3542",
-    inner=RingColors(
-        normal="#2a4f78",
-        empty="#182940",
-        highlight="#38bdf8",
-        hover="#3a6b9a",
-        outline="#0f1319",
-        outline_hl="#7dd3fc",
-        text="#ffffff",
-        text_dim="#c9d6e2",
-    ),
-    outer=RingColors(
-        normal="#1e3a5c",
-        empty="#132338",
-        highlight="#38bdf8",
-        hover="#2b5278",
-        outline="#0f1319",
-        outline_hl="#7dd3fc",
-        text="#ffffff",
-        text_dim="#a9bccd",
-    ),
-    extension=RingColors(
-        normal="#24507a",
-        empty="#15273a",
-        highlight="#38bdf8",
-        hover="#2b5278",
-        outline="#0f1319",
-        outline_hl="#7dd3fc",
-        text="#ffffff",
-        text_dim="#b0c4d8",
-    ),
-    dead_zone="#10141a",
-    dead_zone_outline="#29323e",
-    selected_border="#38bdf8",
-    panel_bg="#12161d",
-    sidebar_bg="#0f1319",
-    preset_bg="#1b212b",
-    preset_hover="#252d39",
-    drag_proxy_bg="#38bdf8",
-    menu_bg="#010101",
-    center_text="#e8ecf0",
-)
-
-LIGHT_THEME = ThemeColors(
-    bg="#f0f0f0",
-    card_bg="#ffffff",
-    text="#1a1a1a",
-    text_dim="#888888",
-    text_secondary="#555555",
-    accent="#0078D4",
-    accent_hover="#1a86d9",
-    accent_dim="#005a9e",
-    border="#d0d0d0",
-    border_light="#e0e0e0",
-    inner=RingColors(
-        normal="#d4e8f8",
-        empty="#e8f0f8",
-        highlight="#0078D4",
-        hover="#b0d0ec",
-        outline="#b0cce0",
-        outline_hl="#1a86d9",
-        text="#1a1a1a",
-        text_dim="#888888",
-    ),
-    outer=RingColors(
-        normal="#dce8f0",
-        empty="#e8f0f4",
-        highlight="#0078D4",
-        hover="#c0d8e8",
-        outline="#c0d4e0",
-        outline_hl="#1a86d9",
-        text="#1a1a1a",
-        text_dim="#888888",
-    ),
-    extension=RingColors(
-        normal="#e0ecf4",
-        empty="#eaf0f8",
-        highlight="#0078D4",
-        hover="#c4dcec",
-        outline="#c8dce8",
-        outline_hl="#1a86d9",
-        text="#1a1a1a",
-        text_dim="#888888",
-    ),
-    dead_zone="#e8e8e8",
-    dead_zone_outline="#d0d0d0",
-    selected_border="#0078D4",
-    panel_bg="#fafafa",
-    sidebar_bg="#f0f0f0",
-    preset_bg="#f5f5f5",
-    preset_hover="#e8e8e8",
-    drag_proxy_bg="#0078D4",
-    menu_bg="#010101",
-    center_text="#1a1a1a",
-)
-
-
-def get_theme(is_dark: bool = True) -> ThemeColors:
-    return DARK_THEME if is_dark else LIGHT_THEME
-
-
-# ========== 圆盘菜单外观主题（仅圆盘配色，不含界面 chrome） ==========
 
 
 @dataclass
@@ -176,6 +209,67 @@ class MenuTheme:
     menu_bg: str = "#010101"
 
 
+# ---------- HLS 颜色推导 ----------
+
+
+def _hex_to_hls(hex_color: str):
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    return colorsys.rgb_to_hls(r, g, b)  # (hue, lightness, saturation)
+
+
+def _hls(h: float, l: float, s: float) -> str:
+    """hue/lightness/saturation -> hex，越界自动夹紧"""
+    r, g, b = colorsys.hls_to_rgb(h % 1.0, max(0.0, min(1.0, l)),
+                                  max(0.0, min(1.0, s)))
+    return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
+
+
+def _derive_ring(h: float, l_normal: float, s_normal: float) -> RingColors:
+    """从一个色相推导单层扇区环的完整配色。
+
+    高亮态 = 更饱和 + 略提亮的扇面 + 亮描边 + 柔光晕，文字始终保持
+    白字可读（高亮色与白字对比度 >= 4），不靠刷亮背景表达选中。
+    """
+    l_hl = min(0.52, l_normal + 0.12)
+    s_hl = min(0.80, s_normal * 2.6 + 0.18)
+    return RingColors(
+        normal=_hls(h, l_normal, s_normal),
+        empty=_hls(h, l_normal - 0.10, s_normal * 0.55),
+        highlight=_hls(h, l_hl, s_hl),
+        hover=_hls(h, l_normal + 0.07, min(0.6, s_normal + 0.08)),
+        outline=_hls(h, 0.06, min(0.4, s_normal)),
+        outline_hl=_hls(h, 0.62, s_hl * 0.7),
+        text="#ffffff",
+        text_dim=_hls(h, 0.82, 0.10),
+    )
+
+
+# 三层亮度节奏：内层亮 → 外层暗 → 扩展圈居中，制造视觉层次
+_INNER_L, _OUTER_L, _EXT_L = 0.35, 0.30, 0.325
+
+
+def _make_theme(name: str, label: str, h: float, s: float) -> MenuTheme:
+    """由主色相生成一套圆盘主题（三层统一质感）"""
+    inner = _derive_ring(h, _INNER_L, s)
+    return MenuTheme(
+        name=name, label=label,
+        inner=inner,
+        outer=_derive_ring(h, _OUTER_L, s),
+        extension=_derive_ring(h, _EXT_L, s),
+        dead_zone=_hls(h, 0.075, 0.14),
+        dead_zone_outline=_hls(h, 0.20, 0.20),
+        center_text="#e9edf2",
+        selected_border=inner.highlight,
+        border=_hls(h, 0.06, min(0.4, s)),
+        accent_dim=_hls(h, 0.40, min(0.65, s + 0.15)),
+    )
+
+
+def _hue_of(hex_color: str) -> float:
+    return _hex_to_hls(hex_color)[0]
+
+
 MENU_THEMES: Dict[str, MenuTheme] = {}
 
 
@@ -183,103 +277,47 @@ def _reg(t: MenuTheme):
     MENU_THEMES[t.name] = t
 
 
-_reg(MenuTheme(
-    name="azure", label="天蓝",
-    inner=RingColors(normal="#2a4f78", empty="#182940", highlight="#38bdf8",
-                     hover="#3a6b9a", outline="#0f1319", outline_hl="#7dd3fc",
-                     text="#ffffff", text_dim="#c9d6e2"),
-    outer=RingColors(normal="#1e3a5c", empty="#132338", highlight="#38bdf8",
-                     hover="#2b5278", outline="#0f1319", outline_hl="#7dd3fc",
-                     text="#ffffff", text_dim="#a9bccd"),
-    extension=RingColors(normal="#24507a", empty="#15273a", highlight="#38bdf8",
-                         hover="#2b5278", outline="#0f1319", outline_hl="#7dd3fc",
-                         text="#ffffff", text_dim="#b0c4d8"),
-    dead_zone="#10141a", dead_zone_outline="#29323e",
-    center_text="#e8ecf0", selected_border="#38bdf8",
-    border="#0f1319", accent_dim="#0369a1",
-))
-
-_reg(MenuTheme(
-    name="emerald", label="翡翠",
-    inner=RingColors(normal="#1e5a48", empty="#14362c", highlight="#34d399",
-                     hover="#2a745c", outline="#0e1412", outline_hl="#6ee7b7",
-                     text="#ffffff", text_dim="#c3ddd2"),
-    outer=RingColors(normal="#174736", empty="#0f2d23", highlight="#34d399",
-                     hover="#1e5a48", outline="#0e1412", outline_hl="#6ee7b7",
-                     text="#ffffff", text_dim="#a9c9bc"),
-    extension=RingColors(normal="#1b5a46", empty="#103026", highlight="#34d399",
-                         hover="#1e5a48", outline="#0e1412", outline_hl="#6ee7b7",
-                         text="#ffffff", text_dim="#b3d4c7"),
-    dead_zone="#0f1417", dead_zone_outline="#1f3a30",
-    center_text="#e8f2ec", selected_border="#34d399",
-    border="#0e1412", accent_dim="#0f766e",
-))
-
-_reg(MenuTheme(
-    name="crimson", label="绯红",
-    inner=RingColors(normal="#7a2f45", empty="#401a26", highlight="#fb7185",
-                     hover="#8a3a52", outline="#160f13", outline_hl="#fda4af",
-                     text="#ffffff", text_dim="#e2c3cc"),
-    outer=RingColors(normal="#5c2238", empty="#341722", highlight="#fb7185",
-                     hover="#6e2a40", outline="#160f13", outline_hl="#fda4af",
-                     text="#ffffff", text_dim="#cfadb8"),
-    extension=RingColors(normal="#6e2a40", empty="#381725", highlight="#fb7185",
-                         hover="#7a2f45", outline="#160f13", outline_hl="#fda4af",
-                         text="#ffffff", text_dim="#d8b7c2"),
-    dead_zone="#160f13", dead_zone_outline="#3a1e2a",
-    center_text="#fce8ec", selected_border="#fb7185",
-    border="#160f13", accent_dim="#9f1239",
-))
-
-_reg(MenuTheme(
-    name="midnight", label="午夜",
-    inner=RingColors(normal="#43358a", empty="#241d4d", highlight="#a78bfa",
-                     hover="#52429e", outline="#100f1a", outline_hl="#c4b5fd",
-                     text="#ffffff", text_dim="#d2cbea"),
-    outer=RingColors(normal="#33286b", empty="#1c1739", highlight="#a78bfa",
-                     hover="#3d2f7d", outline="#100f1a", outline_hl="#c4b5fd",
-                     text="#ffffff", text_dim="#bdb4dd"),
-    extension=RingColors(normal="#3a2f7d", empty="#1f1a42", highlight="#a78bfa",
-                         hover="#43358a", outline="#100f1a", outline_hl="#c4b5fd",
-                         text="#ffffff", text_dim="#c6bde2"),
-    dead_zone="#0f0e16", dead_zone_outline="#2c2550",
-    center_text="#efeafc", selected_border="#a78bfa",
-    border="#100f1a", accent_dim="#6d28d9",
-))
-
+# 8 套主题：色相取自现主题主色，保证"天蓝还是天蓝"，但由生成器统一质感
+_reg(_make_theme("azure", "天蓝", _hue_of("#38bdf8"), 0.30))
+_reg(_make_theme("emerald", "翡翠", _hue_of("#34d399"), 0.30))
+_reg(_make_theme("crimson", "绯红", _hue_of("#fb7185"), 0.30))
+_reg(_make_theme("midnight", "午夜", _hue_of("#a78bfa"), 0.34))
+# 极光保留三色特色：内层青、外层紫、扩展圈青（由色相覆盖实现）
 _reg(MenuTheme(
     name="aurora", label="极光",
-    inner=RingColors(normal="#2b4d8a", empty="#182942", highlight="#22d3ee",
-                     hover="#3a6b9a", outline="#0e1120", outline_hl="#67e8f9",
-                     text="#ffffff", text_dim="#c6d6ee"),
-    outer=RingColors(normal="#5b3a8a", empty="#311a4d", highlight="#a78bfa",
-                     hover="#6b4a9e", outline="#120e22", outline_hl="#c4b5fd",
-                     text="#ffffff", text_dim="#d0c3e4"),
-    extension=RingColors(normal="#1e5a7a", empty="#14303d", highlight="#22d3ee",
-                         hover="#2a6b8a", outline="#0d1418", outline_hl="#67e8f9",
-                         text="#ffffff", text_dim="#b3cdd8"),
-    dead_zone="#0f111a", dead_zone_outline="#2a3550",
-    center_text="#ecf2fb", selected_border="#22d3ee",
-    border="#0e1120", accent_dim="#0e7490",
+    inner=_derive_ring(_hue_of("#22d3ee"), _INNER_L, 0.30),
+    outer=_derive_ring(_hue_of("#a78bfa"), _OUTER_L, 0.34),
+    extension=_derive_ring(_hue_of("#22d3ee"), _EXT_L, 0.30),
+    dead_zone=_hls(_hue_of("#22d3ee"), 0.075, 0.14),
+    dead_zone_outline=_hls(_hue_of("#22d3ee"), 0.20, 0.20),
+    center_text="#e9edf2",
+    selected_border=_derive_ring(_hue_of("#22d3ee"), _INNER_L, 0.30).highlight,
+    border=_hls(_hue_of("#22d3ee"), 0.06, 0.3),
+    accent_dim=_hls(_hue_of("#a78bfa"), 0.40, 0.60),
 ))
+_reg(_make_theme("graphite", "石墨", _hue_of("#94a3b8"), 0.22))
+_reg(_make_theme("amber", "琥珀", _hue_of("#d9a545"), 0.32))   # 新增
+_reg(_make_theme("mono", "单色", _hue_of("#c8d0d8"), 0.0))     # 新增：无彩色
 
-_reg(MenuTheme(
-    name="graphite", label="石墨",
-    inner=RingColors(normal="#3a4048", empty="#22262c", highlight="#94a3b8",
-                     hover="#484f58", outline="#0e1013", outline_hl="#cbd5e1",
-                     text="#ffffff", text_dim="#c8cdd4"),
-    outer=RingColors(normal="#2e333a", empty="#1b1e23", highlight="#94a3b8",
-                     hover="#3a4048", outline="#0e1013", outline_hl="#cbd5e1",
-                     text="#ffffff", text_dim="#b3b9c0"),
-    extension=RingColors(normal="#343a42", empty="#1e2227", highlight="#94a3b8",
-                         hover="#3a4048", outline="#0e1013", outline_hl="#cbd5e1",
-                         text="#ffffff", text_dim="#bcc2c9"),
-    dead_zone="#0d0e10", dead_zone_outline="#2e3338",
-    center_text="#e8eaed", selected_border="#94a3b8",
-    border="#0e1013", accent_dim="#334155",
-))
+# 自定义主题色相（用户主色），默认给一个柔和蓝
+_CUSTOM_ACCENT = "#6fa3d8"
 
 
-def get_menu_theme(name: str = "azure") -> MenuTheme:
-    """按名称获取圆盘外观主题，未知名称回退到默认天蓝"""
+def make_custom_theme(accent: str) -> MenuTheme:
+    """由用户自选主色推导整套圆盘主题"""
+    h, _, _ = _hex_to_hls(accent)
+    return _make_theme("custom", "自定义", h, 0.32)
+
+
+def get_menu_theme(name: str = "azure",
+                   custom_accent: Optional[str] = None) -> MenuTheme:
+    """按名称获取圆盘主题；custom 时用自选主色生成，未知名称回退天蓝"""
+    if name == "custom":
+        return make_custom_theme(custom_accent or _CUSTOM_ACCENT)
     return MENU_THEMES.get(name, MENU_THEMES["azure"])
+
+
+def theme_from_settings(settings: dict) -> MenuTheme:
+    """从配置 settings 取圆盘主题（含自定义主色）"""
+    return get_menu_theme(settings.get("menu_theme", "azure"),
+                          settings.get("custom_accent"))
