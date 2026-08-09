@@ -7,20 +7,21 @@
 
 import ctypes
 import copy
+import json
 import math
 import os
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import (QColor, QCursor, QFont, QFontMetrics, QIcon,
-                           QKeySequence, QPainter, QPen, QRadialGradient,
-                           QShortcut)
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout,
-                               QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+from PySide6.QtCore import (QMimeData, QPointF, QRectF, QSize, Qt, QTimer)
+from PySide6.QtGui import (QColor, QCursor, QDrag, QFont, QFontMetrics, QIcon,
+                           QKeySequence, QPainter, QPen, QPixmap,
+                           QRadialGradient, QShortcut)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
+                               QFileDialog, QFormLayout, QHBoxLayout,
+                               QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QMainWindow,
                                QMenu, QMessageBox, QPushButton, QScrollArea,
-                               QSlider, QSplitter, QStackedWidget,
-                               QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-                               QWidget)
+                               QSlider, QSplitter, QStackedWidget, QTreeWidget,
+                               QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from src.config_manager import (load_config, save_config, get_profile_names,
                                 _default_config, get_preset_commands,
@@ -104,6 +105,49 @@ def _layer_key(layer: str) -> str:
     return "sectors"
 
 
+_COMMAND_MIME = "application/x-cad-gesture-command"
+
+
+class PresetTree(QTreeWidget):
+    """命令库树：节点可拖拽（携带命令 JSON），拖到圆盘直接放置"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragOnly)
+
+    def startDrag(self, supported_actions):
+        item = self.currentItem()
+        if item is None or item.parent() is None:
+            return
+        data = item.data(0, Qt.UserRole)
+        if not data:
+            return
+        md = QMimeData()
+        md.setData(_COMMAND_MIME, json.dumps(data, ensure_ascii=False).encode("utf-8"))
+
+        drag = QDrag(self)
+        drag.setMimeData(md)
+        # 拖拽时的半透明预览图标
+        label = data.get("label", "")
+        pm = QPixmap(max(56, len(label) * 14 + 16), 30)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QColor("#7dd3fc"))
+        p.setBrush(QColor(8, 145, 178, 220))
+        p.drawRoundedRect(1, 1, pm.width() - 2, pm.height() - 2, 6, 6)
+        p.setPen(QColor("#ffffff"))
+        f = QFont("Microsoft YaHei")
+        f.setPixelSize(12)
+        p.setFont(f)
+        p.drawText(pm.rect(), Qt.AlignCenter, label)
+        p.end()
+        drag.setPixmap(pm)
+        drag.setHotSpot(pm.rect().center())
+        drag.exec(Qt.CopyAction)
+
+
 def _layer_name(layer: str) -> str:
     return {"outer": "外层", "extension": "扩展圈"}.get(layer, "内层")
 
@@ -124,6 +168,7 @@ class QRadialPreview(QWidget):
         self.on_select = None                # 回调 (layer, idx)
         self.on_drop = None                  # 回调 (layer, idx, data)
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
         self.setMinimumSize(320, 320)
 
     def set_data(self, config, profile):
@@ -180,6 +225,43 @@ class QRadialPreview(QWidget):
     def leaveEvent(self, e):
         self.hovered = None
         self.update()
+
+    # ---- 拖放（命令库拖拽到圆盘） ----
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasFormat(_COMMAND_MIME):
+            e.acceptProposedAction()
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasFormat(_COMMAND_MIME):
+            s = self._sector_at(e.position().x(), e.position().y())
+            if s != self.hovered:
+                self.hovered = s
+                self.update()
+            e.acceptProposedAction()
+        else:
+            e.ignore()
+
+    def dragLeaveEvent(self, e):
+        self.hovered = None
+        self.update()
+
+    def dropEvent(self, e):
+        md = e.mimeData()
+        if not md.hasFormat(_COMMAND_MIME):
+            e.ignore()
+            return
+        try:
+            data = json.loads(bytes(md.data(_COMMAND_MIME)).decode("utf-8"))
+        except Exception:
+            data = None
+        s = self._sector_at(e.position().x(), e.position().y())
+        self.hovered = None
+        self.update()
+        if s and data and self.on_drop:
+            self.on_drop(*s, data)
+        e.acceptProposedAction()
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
@@ -476,9 +558,12 @@ class QConfigGUI(QMainWindow):
         v.setSpacing(8)
         head = QHBoxLayout()
         t = QLabel("命令库")
-        t.setStyleSheet("font-size: 16px; font-weight: bold; color: #38bdf8;")
+        t.setStyleSheet("font-size: 15px; font-weight: 600;")
         head.addWidget(t)
         head.addStretch(1)
+        hint = QLabel("拖拽到圆盘放置")
+        hint.setStyleSheet("color: #7b8494; font-size: 11px;")
+        head.addWidget(hint)
         v.addLayout(head)
 
         self.search_entry = QLineEdit()
@@ -486,9 +571,16 @@ class QConfigGUI(QMainWindow):
         self.search_entry.textChanged.connect(self._on_search)
         v.addWidget(self.search_entry)
 
-        self.preset_tree = QTreeWidget()
+        self.preset_tree = PresetTree()
         self.preset_tree.setHeaderHidden(True)
-        self.preset_tree.setIndentation(10)
+        self.preset_tree.setColumnCount(2)
+        self.preset_tree.setIndentation(12)
+        self.preset_tree.setRootIsDecorated(True)
+        self.preset_tree.setUniformRowHeights(True)
+        self.preset_tree.setColumnWidth(1, 0)  # 第二列宽度自适应
+        self.preset_tree.header().setStretchLastSection(False)
+        self.preset_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.preset_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.preset_tree.itemClicked.connect(self._on_preset_clicked)
         self.preset_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.preset_tree.customContextMenuRequested.connect(self._on_preset_context)
@@ -749,27 +841,29 @@ class QConfigGUI(QMainWindow):
                     continue
             else:
                 filtered = commands
-            # 分类标题：粗体蓝色，突出主层级
-            cat = QTreeWidgetItem([f"{category} ({len(filtered)})"])
+            # 分类标题：低调小字，弱化层级
+            cat = QTreeWidgetItem([category])
             f = cat.font(0)
             f.setBold(True)
-            f.setPixelSize(13)
+            f.setPixelSize(11)
             cat.setFont(0, f)
-            cat.setForeground(0, QColor("#38bdf8"))
-            cat.setSizeHint(0, QSize(0, 30))
+            cat.setForeground(0, QColor("#8a93a3"))
+            cat.setSizeHint(0, QSize(0, 26))
             cat.setExpanded(True)
+            cat.setFirstColumnSpanned(True)
             for name, data in filtered.items():
                 label = data.get("label", name)
                 key = data.get("key", "")
-                desc = data.get("description", "")
-                text = f"{label}    {key}" if key else label
-                child = QTreeWidgetItem([text])
+                child = QTreeWidgetItem([label, key])
                 child.setData(0, Qt.UserRole, data)
-                child.setSizeHint(0, QSize(0, 26))
+                child.setSizeHint(0, QSize(0, 28))
                 child.setForeground(0, QColor("#e6e9ef"))
+                if key:
+                    child.setForeground(1, QColor("#7b8494"))
+                    child.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
                 child.setToolTip(
-                    0, f"命令: {label}\n快捷键: {key}\nCAD 命令: {desc}\n\n"
-                       f"左键: 应用/替换到当前选中扇区\n右键: 添加到圆盘扇区")
+                    0, f"命令: {label}\n快捷键: {key}\nCAD 命令: {data.get('description', '')}\n\n"
+                       f"拖拽到圆盘扇区即可新增/更换，也可左键应用到选中扇区")
                 cat.addChild(child)
             self.preset_tree.addTopLevelItem(cat)
 
