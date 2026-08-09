@@ -6,7 +6,6 @@ CAD鼠标手势工具 - PyInstaller 打包配置 (onefile 单文件版)
 
 import sys
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 block_cipher = None
 
@@ -15,18 +14,9 @@ entry_point = 'main.py'
 
 # ========== 隐式导入 ==========
 hidden_imports = [
-    'tkinter',
-    'tkinter.ttk',
-    'tkinter.messagebox',
-    'tkinter.filedialog',
-    'customtkinter',
-    'darkdetect',
     'PIL',
     'PIL.Image',
     'PIL.ImageDraw',
-    'PIL.ImageTk',
-    'pystray',
-    'pystray._win32',
     'win32com',
     'win32com.client',
     'pythoncom',
@@ -40,6 +30,7 @@ hidden_imports = [
     'time',
     'os',
     'sys',
+    # PySide6 由 PyInstaller 内置 hook 自动收集（Qt 插件/DLL）
 ]
 
 # ========== pywin32 DLL 路径 ==========
@@ -73,21 +64,6 @@ if pywin32_dll_dir:
     print(f"[INFO] Found pywin32 DLLs at: {pywin32_dll_dir}")
 else:
     print("[WARNING] pywin32_system32 directory not found!")
-
-# 收集 tkinter 数据文件 (tcl/tk runtime)
-from PyInstaller.utils.hooks import collect_data_files as _cdf
-try:
-    tk_data = _cdf('tkinter')
-    datas.extend(tk_data)
-except Exception:
-    pass
-
-# 收集 customtkinter 主题数据文件
-try:
-    ctk_data = _cdf('customtkinter')
-    datas.extend(ctk_data)
-except Exception:
-    pass
 
 # 不打包 config 目录（放在 exe 外部供用户编辑）
 

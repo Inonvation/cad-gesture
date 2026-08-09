@@ -3,7 +3,7 @@
 ## 项目概述
 
 8 扇区径向圆盘菜单（内层/外层/扩展圈三层）：长按右键拖动 → 弹出菜单 → 释放触发 CAD 命令。
-支持 AutoCAD 2025+ 和中望CAD，Python 3.11+ / Win32 API / CustomTkinter / PyInstaller 打包。
+支持 AutoCAD 2025+ 和中望CAD，Python 3.11+ / Win32 API / PySide6(Qt6) / PyInstaller 打包。
 
 **核心设计（方案B）**：钩子只监听不拦截 → CAD 收到右键释放可能弹上下文菜单 → 工具随后发 ESC 取消 → 命令优先走 COM `SendCommand`，不影响十字光标。
 
@@ -17,21 +17,22 @@
 main.py                 # 入口（含单实例检查）
 config/config.json      # 多Profile配置（三层：sectors + outer_sectors + extension_sectors）
 src/
-├── app.py              # 主类：事件队列(60fps)、托盘、Profile切换、配置界面入口
+├── app.py              # 主类（Qt）：事件队列、托盘(QSystemTrayIcon)、Profile切换、配置入口
 ├── gesture_engine.py   # [核心] WH_MOUSE_LL 钩子 → 方向/圈层判定
-├── radial_menu.py      # [核心] 透明悬浮圆盘菜单（三层绘制）
-├── renderer.py         # 共享圆盘绘制（radial_menu 和 config_gui 预览共用）
+├── qt_radial_menu.py   # [核心] Qt 透明悬浮圆盘菜单（三层绘制 + 淡入/高亮动画）
+├── qt_renderer.py      # 共享 Qt 圆盘绘制（qt_radial_menu 运行时 与 qt_config_gui 预览共用）
 ├── theme.py            # 界面配色 + 6 套圆盘外观主题
 ├── command_executor.py # COM SendCommand + pyautogui 回退
 ├── config_manager.py   # JSON 配置读写 + Profile管理 + 自动迁移
-├── config_gui.py       # CustomTkinter 现代深色配置编辑器
+├── config_presets.py   # 预设命令库 + 默认配置
+├── qt_config_gui.py    # Qt 配置界面（三栏 + 撤销重做 + 右键放置 + Delete 删除）
 └── single_instance.py  # 命名互斥体单实例 + 覆盖更新
 ```
 
-事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()` (16ms/帧)。
+事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 100ms）。
 每个事件包裹 `try-except`，防止单次错误崩溃整个队列循环。
 
-**圈层判定**（gesture_engine 触发 与 radial_menu hover 共用同一规则）：
+**圈层判定**（gesture_engine 触发 与 qt_radial_menu hover 共用同一规则）：
 距离 ≤ `ring_radius`(100) = 内层；≤ `outer_ring_radius`(180) = 外层；> 180 = 扩展圈（命令在 `extension_sectors`）。
 
 ## 环境关键坑（务必先读）
@@ -39,19 +40,20 @@ src/
 - **Python 双解释器**：`python` 命令可能命中多个环境。hermes venv 的 `python.exe` 是 uv launcher，运行 `main.py` 时会 spawn 真解释器（uv cpython）——启动后看到"一对 python 进程"是**正常现象**。启动/验证统一用 hermes venv 的 python：
   `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`
 - **绝不用 PowerShell 改中文文件**：PowerShell 的 `Get-Content`/`Set-Content` 按 GBK 读 UTF-8 会永久损坏中文（乱码不可逆）。改含中文的 .py/.json 必须用 edit/write 工具；批量替换用 python 脚本（`open(path, encoding='utf-8')`）。
-- **配置界面不能开独立线程**：`config_gui.py` 必须通过 `open_config_gui(on_save=..., master=self.root)` 嵌入主线程（app 的 root 是 `ctk.CTk()`）。若在独立线程创建 `CTk()` 会与主线程双 Tk 冲突，CTkEntry 的 StringVar trace 跨线程抛 `RuntimeError: main thread is not in main loop` → 窗口卡死"未响应"。改配置界面最易踩。
-- **单实例机制**：`main.py` 开头 `ensure_single_instance()` 用命名互斥体判断，新实例会置位命名事件请求旧实例优雅退出（覆盖更新，避免多托盘图标）。app.py 主循环每 0.5s 轮询 `is_exit_requested()`。启动逻辑别改坏这两处。
+- **Qt 单应用单线程**：主程序是 `QApplication`（`app.py` 创建）。Qt 控件只能在主线程操作（QObject 非线程安全）；托盘/菜单回调都运行在主线程，无需跨线程投递。配置界面 `qt_config_gui.open_config_gui(on_save=...)` 返回独立 `QMainWindow`（非模态），app 用 `self._config_win` 持有引用防 GC。
+- **Qt 坐标是逻辑像素，钩子给物理像素**：`QRadialMenu.show(x, y)` 内部用 `_to_logical` 按所在屏幕 DPI 换算，圆盘中心才对准鼠标。别直接拿钩子的 `pt.x/pt.y` 去 `move()`（DPI 缩放≠100% 时圆盘会偏移）。
+- **单实例机制**：`main.py` 开头 `ensure_single_instance()` 用命名互斥体判断，新实例会置位命名事件请求旧实例优雅退出（覆盖更新，避免多托盘图标）。app.py 主循环每 32 帧轮询 `is_exit_requested()`。启动逻辑别改坏这两处。
 
 ## 改动联动清单（一处改动，多处必须同步）
 
 | 改动内容 | 必须同步的地方 |
 |---------|---------------|
 | 圆盘配色/主题 | `theme.py` 的 `MENU_THEMES`（配置界面主题下拉自动读取，无需改界面） |
-| 字体/标签位置/扇区绘制 | `renderer.py` 的 `draw_ring`（被 `radial_menu` 和 `config_gui` 预览共用，两处必须一致） |
-| 新增 `settings` 配置项 | `config_presets._default_config` + `config_manager._migrate_config`（迁移补字段） + 需要时 `config_gui`/`radial_menu`/`gesture_engine` |
+| 字体/标签位置/扇区绘制 | `qt_renderer.py`（被 `qt_radial_menu` 运行时 和 `qt_config_gui` 预览共用，两处必须一致） |
+| 新增 `settings` 配置项 | `config_presets._default_config` + `config_manager._migrate_config`（迁移补字段） + 需要时 `qt_config_gui`/`qt_radial_menu`/`gesture_engine` |
 | 新增命令预设 | `config_presets` 默认 profile + `command_executor` 的 `COMBO_TO_COMMAND` 表 |
-| 新增 Python 依赖 | `requirements.txt` + `cad_gesture.spec`（hiddenimports / collect_data_files） |
-| 改圈层/触发阈值 | `gesture_engine`（钩子判定）与 `radial_menu`（hover 显示）必须用同一半径常量 |
+| 新增 Python 依赖 | `requirements.txt` + `cad_gesture.spec`（PySide6 由 PyInstaller 内置 hook 自动收集） |
+| 改圈层/触发阈值 | `gesture_engine`（钩子判定）与 `qt_radial_menu`（hover 显示）必须用同一半径常量 |
 
 ## 一键验证
 
@@ -62,7 +64,7 @@ src/
 ```bash
 python main.py                        # 调试运行（有控制台输出）
 python -m py_compile src\xxx.py       # 快速语法校验（改完先跑）
-python -m pytest tests/ -q            # 运行测试（pytest：test_config.py + test_renderer.py）
+python -m pytest tests/ -q            # 运行测试（pytest：test_config.py + test_qt_renderer.py）
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
@@ -91,19 +93,19 @@ dist\CADGesture-x64.exe
 ### 打包前检查清单
 
 1. 关闭所有 CADGesture-x64.exe 进程
-2. Python312 环境装依赖（`requirements.txt` 含 `customtkinter`）
+2. Python312 环境装依赖（`requirements.txt` 含 `PySide6`）
 3. `config/config.json` 存在
 4. `assets/icon.ico` 存在（`python generate_icon.py` 生成）
 
-`cad_gesture.spec` 已含 `customtkinter`/`darkdetect` 的 hiddenimports 与 `collect_data_files('customtkinter')`，改依赖时同步检查 spec。
+`cad_gesture.spec` 的 PySide6 由 PyInstaller 内置 hook 自动收集（Qt 插件/DLL），改依赖时同步检查 spec。
 
 ### 常见错误速查
 
 | 错误现象 | 原因 | 解决 |
 |---------|------|------|
 | `PermissionError` / `Access denied` | exe 正在运行 | 关闭 exe 后重试 |
-| 打包成功但 exe 启动闪退 | 缺隐式导入/DLL/customtkinter | 先 `python main.py` 确认源码没问题 |
-| `ModuleNotFoundError: customtkinter` | 装到了别的 Python | 用 Python312 的 pip 装 `requirements.txt` |
+| 打包成功但 exe 启动闪退 | 缺隐式导入/DLL/PySide6 插件 | 先 `python main.py` 确认源码没问题 |
+| `ModuleNotFoundError: PySide6` | 装到了别的 Python | 用 Python312 的 pip 装 `requirements.txt` |
 | `pywintypes` DLL not found | pywin32 DLL 路径错误 | 确认 spec 的 `pywin32_system32/` 路径 |
 
 ## 发版流程（打 tag 发布 GitHub Release）
@@ -121,11 +123,11 @@ dist\CADGesture-x64.exe
 - 钩子回调必须返回 `c_ssize_t`（非 `c_long`），否则 64 位崩溃
 - `CallNextHookEx` 必须设 `argtypes`，否则参数溢出
 - `GetModuleHandleW(None)` 在 ctypes 中传 `None`（非 0）
-- 菜单窗口用 `tk.Toplevel(parent)`（非独立 `Tk()`），`-transparentcolor` 实现透明
+- 圆盘菜单用 Qt `QRadialMenu`：`FramelessWindowHint` + `WA_TranslucentBackground` 实现透明悬浮窗，`WA_ShowWithoutActivating` 不抢焦点
 - COM 发送前自动切换英文输入法：`PostMessage(WM_INPUTLANGCHANGEREQUEST)`
 - 钩子线程退出：`stop()` 发 `PostThreadMessageW(WM_QUIT)`
 - 事件队列格式：`("show", (x, y, window_type))` 元组嵌套
-- **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（6 套：azure/emerald/crimson/midnight/aurora/graphite），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `renderer.py`（`draw_ring` 被菜单和配置预览共用，改动必须两处一致）。
+- **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（6 套：azure/emerald/crimson/midnight/aurora/graphite），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和配置预览共用，改动必须两处一致）。
 - **配置自动迁移**：`config_manager._migrate_config` 自动补旧配置字段；空的 `extension_sectors` 会从默认配置按 target+name 自动补全。
 
 ## 命令执行优先级
@@ -186,6 +188,5 @@ dist\CADGesture-x64.exe
 - 日志：文件 `%TEMP%\cad-gesture.log` + 控制台（`[Gesture]` 前缀）
 - 用 `python main.py`（非 `pythonw`）看完整输出
 - 托盘右键 → 配置 可编辑扇区
-- 配置窗口"未响应"：多半是配置界面被放到独立线程（见「环境关键坑」）
 - 钩子安装失败：检查其他手势软件冲突（WGestures、Quicker）或杀毒拦截
 - 命令错乱：确认输入法是英文（程序自动切换，首次可能需手动切一次）
