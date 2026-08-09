@@ -6,7 +6,8 @@ import os
 import math
 from PIL import Image, ImageDraw
 
-ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", "assets")
 os.makedirs(ICON_DIR, exist_ok=True)
 
 

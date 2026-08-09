@@ -65,7 +65,7 @@ python main.py
 ## 打包发布
 
 ```powershell
-# 用 Python312 打包（或直接双击 build.bat）
+# 用 Python312 打包（或直接双击 scripts\build.bat）
 python -m PyInstaller cad_gesture.spec --clean --noconfirm
 
 # 输出 dist/CADGesture-x64.exe（单文件），配置文件复制到 dist/config/
@@ -82,20 +82,28 @@ python -m PyInstaller cad_gesture.spec --clean --noconfirm
 
 ```
 main.py                 # 入口（含单实例检查）
-config/config.json      # 配置（多 Profile 三层命令）
-src/
+start.bat / start.vbs   # 一键启动（静默/带窗口）
+src/                    # 程序代码
 ├── app.py               # 主程序（Qt）：事件队列、托盘、配置入口
 ├── gesture_engine.py    # 鼠标钩子与手势/圈层判定
 ├── qt_radial_menu.py    # Qt 透明悬浮圆盘菜单（运行时）
 ├── qt_renderer.py       # 共享圆盘绘制（菜单与配置预览共用）
 ├── qt_config_gui.py     # Qt 配置界面（导航式布局 + 扇区浮层编辑）
+├── qt_preview.py        # 圆盘编辑页组件（预览/命令树/折叠按钮）
 ├── qt_settings_panel.py # 设置面板（主题色板网格 + 实时预览）
-├── qt_sector_editor.py  # 扇区编辑浮层（就地编辑 / 清空 / 复制到）
+├── qt_sector_editor.py  # 扇区编辑浮层（就地编辑 / 保存 / 清空）
 ├── theme.py             # 设计 token、QSS 生成、8 套主题 + 自定义主题
 ├── command_executor.py  # COM 命令执行 + pyautogui 回退
 ├── config_manager.py    # 配置读写与自动迁移
 ├── config_presets.py    # 预设命令库与默认配置
 └── single_instance.py   # 单实例与覆盖更新
+scripts/                # 开发脚本
+├── build.bat            # 一键打包（PyInstaller）
+├── verify.py / verify.bat  # 一键验证：语法 + 测试 + 重启程序
+└── generate_icon.py     # 生成 assets/icon.ico
+config/                 # 配置（config.json 运行时生成，example 为模板）
+assets/                 # 图标等资源
+tests/                  # 自动化测试
 ```
 
 ## 开发验证
@@ -103,5 +111,5 @@ src/
 ```powershell
 python -m py_compile src\xxx.py   # 语法检查
 python -m pytest tests/ -q        # 单元测试
-python verify.py                  # 一键：语法 + 测试 + 重启程序
+python scripts\verify.py          # 一键：语法 + 测试 + 重启程序
 ```

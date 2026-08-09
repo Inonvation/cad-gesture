@@ -1,6 +1,6 @@
 """一键验证：语法检查 → 单元测试 → 启动/覆盖更新程序
 
-用法：python verify.py 或双击 verify.bat
+用法：python scripts/verify.py 或双击 scripts/verify.bat（项目根目录外任意位置运行）
 注意：不会杀进程——靠单实例机制让新实例覆盖旧实例，避免误杀 verify.py 自身。
 """
 import glob
@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PY = sys.executable
 
 

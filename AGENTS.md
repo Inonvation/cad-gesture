@@ -57,7 +57,7 @@ src/
 
 ## 一键验证
 
-改完代码用 `python verify.py`（或双击 `verify.bat`）：自动跑 `py_compile` → `pytest` → 启动新实例（单实例机制自动覆盖旧实例，不杀进程）。
+改完代码用 `python scripts\verify.py`（或双击 `scripts\verify.bat`）：自动跑 `py_compile` → `pytest` → 启动新实例（单实例机制自动覆盖旧实例，不杀进程）。
 
 ## 命令
 
@@ -88,14 +88,14 @@ Copy-Item config\config.example.json dist\config\config.example.json -Force  # �
 dist\CADGesture-x64.exe
 ```
 
-或直接运行 `build.bat`（双击即可）。
+或直接运行 `scripts\build.bat`（双击即可）。
 
 ### 打包前检查清单
 
 1. 关闭所有 CADGesture-x64.exe 进程
 2. Python312 环境装依赖（`requirements.txt` 含 `PySide6`）
 3. `config/config.json` 存在
-4. `assets/icon.ico` 存在（`python generate_icon.py` 生成）
+4. `assets/icon.ico` 存在（`python scripts\generate_icon.py` 生成）
 
 `cad_gesture.spec` 的 PySide6 由 PyInstaller 内置 hook 自动收集（Qt 插件/DLL），改依赖时同步检查 spec。
 
