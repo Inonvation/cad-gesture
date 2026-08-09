@@ -27,6 +27,12 @@ COMBO_TO_COMMAND = {
     "ctrl+shift+v": "_.PASTEBLOCK",
 }
 
+# IME 控制消息常量（WM_IME_CONTROL 相关）
+WM_IME_CONTROL = 0x0283
+IMC_GETCONVERSIONMODE = 0x0001
+IMC_SETCONVERSIONMODE = 0x0002
+IME_CMODE_NATIVE = 0x0001
+
 # 线程本地存储，确保每个线程独立初始化 COM
 _thread_local = threading.local()
 # 模块级缓存，按 target 分别缓存（autocad / zwcad）
@@ -34,13 +40,76 @@ _com_cache = {}
 _cache_lock = threading.Lock()
 
 
+def _ime_wnd_send(ime_wnd, wparam, lparam, timeout_ms=200):
+    """带超时地向 IME 窗口发送 WM_IME_CONTROL 消息
+
+    SendMessageW 会同步阻塞等待目标进程（CAD）处理完消息，
+    若 CAD 繁忙或挂死主线程会无限卡住。改用 SendMessageTimeoutW
+    保证最多等待 timeout_ms 就返回，避免 Qt 主线程被拖死。
+
+    Returns:
+        消息结果（无符号），失败或超时返回 None。
+    """
+    try:
+        user32 = ctypes.windll.user32
+        user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+        user32.SendMessageTimeoutW.argtypes = [
+            wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+            wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_size_t),
+        ]
+        SMTO_ABORTIFHUNG = 0x0002
+        result = ctypes.c_size_t()
+        ok = user32.SendMessageTimeoutW(
+            ime_wnd, WM_IME_CONTROL, wparam, lparam,
+            SMTO_ABORTIFHUNG, timeout_ms, ctypes.byref(result),
+        )
+        if not ok:
+            return None
+        return result.value & 0xFFFFFFFF
+    except Exception:
+        return None
+
+
 def _switch_to_english_ime():
-    """通过 PostMessage 让 CAD 窗口切换到英文输入法
+    """让 CAD 窗口所在线程的输入法切换到英文模式（不换键盘布局）
+
+    通过向前台窗口的默认 IME 窗口发送 WM_IME_CONTROL / IMC_SETCONVERSIONMODE，
+    直接把输入法的转换模式设为英文（清除 IME_CMODE_NATIVE 标志）。该方案：
+    1. 保留当前输入法本身（微软拼音等），任务栏仍是输入法图标，Shift 可切回中文；
+    2. 不模拟按键、不切换键盘布局，避免误触和抢焦点；
+    3. 设置后读取验证，失败才回退到整体切换英文键盘布局。
 
     必须显式声明 restype/argtypes：GetForegroundWindow 返回 64 位 HWND、
     LoadKeyboardLayoutW 返回 64 位 HKL，默认 c_int 会截断高 32 位，
     导致 PostMessage 发到错误窗口或无效 HKL，输入法切换静默失败。
     """
+    try:
+        user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        imm32 = ctypes.windll.imm32
+        imm32.ImmGetDefaultIMEWnd.restype = wintypes.HWND
+        imm32.ImmGetDefaultIMEWnd.argtypes = [wintypes.HWND]
+
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return
+        ime_wnd = imm32.ImmGetDefaultIMEWnd(hwnd)
+        if not ime_wnd:
+            raise RuntimeError("no default IME window")
+
+        conv = _ime_wnd_send(ime_wnd, IMC_GETCONVERSIONMODE, 0)
+        if conv is not None and not (conv & IME_CMODE_NATIVE):
+            return  # 输入法已在英文模式
+        _ime_wnd_send(ime_wnd, IMC_SETCONVERSIONMODE, 0)
+        time.sleep(0.05)
+        conv = _ime_wnd_send(ime_wnd, IMC_GETCONVERSIONMODE, 0)
+        if conv is not None and not (conv & IME_CMODE_NATIVE):
+            return  # 切换成功
+        raise RuntimeError("IME switch failed")
+    except Exception:
+        pass
+
+    # 回退：无 IME 窗口或切换验证失败 → 整体切到英文键盘布局
     try:
         user32 = ctypes.windll.user32
         user32.GetForegroundWindow.restype = wintypes.HWND
@@ -51,7 +120,8 @@ def _switch_to_english_ime():
         ]
         en_hkl = user32.LoadKeyboardLayoutW("00000409", 0x00000001)
         hwnd = user32.GetForegroundWindow()
-        user32.PostMessageW(hwnd, 0x0050, 0, en_hkl)
+        if en_hkl and hwnd:
+            user32.PostMessageW(hwnd, 0x0050, 0, en_hkl)
     except Exception:
         pass
 
@@ -135,6 +205,9 @@ def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad", m
 
     # 回退：pyautogui 模拟按键
     try:
+        # 输入法切英文，否则按键会被 IME 吞成中文
+        _switch_to_english_ime()
+
         # 仅在显示过圆盘菜单时才先 ESC 取消右键菜单
         if menu_was_shown:
             pyautogui.press('esc', _pause=False)
