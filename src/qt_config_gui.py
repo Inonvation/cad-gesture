@@ -20,8 +20,9 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
                                QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QMainWindow,
                                QMenu, QMessageBox, QPushButton, QScrollArea,
-                               QSlider, QSplitter, QStackedWidget, QTreeWidget,
-                               QTreeWidgetItem, QVBoxLayout, QWidget)
+                               QSizePolicy, QSlider, QSplitter,
+                               QStackedWidget, QTreeWidget, QTreeWidgetItem,
+                               QVBoxLayout, QWidget)
 
 from src.config_manager import (load_config, save_config, get_profile_names,
                                 _default_config, get_preset_commands,
@@ -54,6 +55,10 @@ QPushButton:pressed { background: #1f2733; }
 QPushButton:disabled { color: #4a5568; }
 QPushButton.primary { background: #0369a1; border-color: #0369a1; color: #ffffff; }
 QPushButton.primary:hover { background: #0ea5e9; }
+QPushButton.ghost { background: transparent; border-color: #2c3542; color: #a8b2bf; }
+QPushButton.ghost:hover { background: #252d39; color: #e6e9ef; }
+QPushButton.danger { background: #3f1d2b; border-color: #5b2a3d; color: #fda4af; }
+QPushButton.danger:hover { background: #552438; }
 QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
 QScrollBar::handle:vertical { background: #2c3542; border-radius: 5px; min-height: 24px; }
 QScrollBar::handle:vertical:hover { background: #3b4a63; }
@@ -191,8 +196,10 @@ class QRadialPreview(QWidget):
         return cx, cy, scale
 
     def _radius(self, key, base):
-        s = self.config.get("settings", {})
-        return s.get(key, base)
+        # 配置界面预览使用固定基准半径，不随真实圆盘尺寸变化，
+        # 保证编辑时预览稳定（运行时与设置界面预览才反映真实大小）
+        return {"dead_zone_radius": 30, "ring_radius": 100,
+                "outer_ring_radius": 180, "ext_ring_radius": 240}.get(key, base)
 
     def _sector_at(self, x, y):
         if self.profile is None:
@@ -308,6 +315,9 @@ class QRadialPreview(QWidget):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        # 圆盘整体透明度（配置界面预览也跟随设置，与运行时一致）
+        op = self.config.get("settings", {}).get("menu_opacity", 0.95)
+        p.setOpacity(max(0.3, min(1.0, op)))
         cx, cy, scale = self._geo()
         t = self.theme
         n = self.config.get("settings", {}).get("sector_count", 8)
@@ -1117,7 +1127,7 @@ class _RadiusPreview(QWidget):
     def __init__(self, config=None, parent=None):
         super().__init__(parent)
         self.config = config or {}
-        self.setMinimumSize(300, 300)
+        self.setMinimumSize(380, 380)
 
     def update_config(self, config):
         self.config = config
@@ -1126,6 +1136,8 @@ class _RadiusPreview(QWidget):
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        op = self.config.get("settings", {}).get("menu_opacity", 0.95)
+        p.setOpacity(max(0.3, min(1.0, op)))
         s = self.config.get("settings", {})
         dead = int(s.get("dead_zone_radius", 30))
         inner = int(s.get("ring_radius", 100))
@@ -1163,9 +1175,10 @@ class QSettingsPanel(QWidget):
     """全局设置面板（覆盖整个界面，不新开窗口）"""
 
     _SECTION_QSS = """QWidget#secCard { background: #161b23; border: 1px solid #232a34;
-                       border-radius: 10px; }
+                       border-radius: 12px; }
                       QWidget#secCard QLabel { background: transparent; }
-                      QWidget#secCard QCheckBox { background: transparent; }"""
+                      QWidget#secCard QCheckBox { background: transparent; }
+                      QWidget#secCard QComboBox { background: #12161d; }"""
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
@@ -1177,40 +1190,120 @@ class QSettingsPanel(QWidget):
         self.setStyleSheet(QSS + self._SECTION_QSS)
         self._slider_labels = {}
 
-        v = QVBoxLayout(self)
-        v.setContentsMargins(20, 14, 20, 14)
-        v.setSpacing(10)
+        # 内容居中容器（不铺满全屏，两侧留白更大气）
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(24, 16, 24, 16)
+        outer.addStretch(1)
+        center = QWidget()
+        center.setMaximumWidth(960)
+        cv = QVBoxLayout(center)
+        cv.setSpacing(14)
+        outer.addWidget(center)
+        outer.addStretch(1)
 
         # 顶部导航
         top = QHBoxLayout()
         btn_back = QPushButton("← 返回圆盘编辑")
+        btn_back.setProperty("class", "ghost")
         btn_back.clicked.connect(self._back)
         top.addWidget(btn_back)
+        top.addStretch(1)
         title = QLabel("全局设置")
-        title.setStyleSheet("font-size: 17px; font-weight: bold;")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
         top.addWidget(title)
         top.addStretch(1)
         sub = QLabel("修改即时保存")
         sub.setStyleSheet("color: #7b8494; font-size: 11px;")
         top.addWidget(sub)
-        v.addLayout(top)
+        cv.addLayout(top)
 
-        # 主体：左侧设置项（滚动），右侧圆盘预览（固定）
+        # 主体：左侧设置项（滚动），右侧预览圆盘 + 常规（固定）
         body = QHBoxLayout()
-        body.setSpacing(16)
+        body.setSpacing(24)
 
         # ---- 左侧：设置项 ----
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setMinimumWidth(440)
         inner = QWidget()
         form = QVBoxLayout(inner)
-        form.setSpacing(10)
+        form.setSpacing(12)
         form.setContentsMargins(0, 0, 0, 0)
 
-        # 常规
+        # 外观
+        card = self._section("圆盘外观")
+        form.addWidget(card, 0)
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(QLabel("主题"))
+        self.theme_combo = QComboBox()
+        for th in MENU_THEMES.values():
+            self.theme_combo.addItem(th.label, th.name)
+        self.theme_combo.currentIndexChanged.connect(
+            lambda: (self._set("menu_theme", self.theme_combo.currentData()),
+                     self._update_radius_preview()))
+        row.addWidget(self.theme_combo, 1)
+        card.lay.addLayout(row)
+        # 透明度滑杆（30% ~ 100%）
+        self._opacity_slider, self._opacity_label = self._slider_row(
+            card, "不透明度", "menu_opacity", 30, 100, "%",
+            on_change=self._update_radius_preview, divisor=100.0)
+
+        # 触发灵敏度
+        card = self._section("触发灵敏度")
+        form.addWidget(card, 0)
+        self._hold_slider, self._hold_label = self._slider_row(
+            card, "长按延迟", "hold_threshold_ms", 60, 200, "ms")
+        self._trig_slider, self._trig_label = self._slider_row(
+            card, "触发距离", "trigger_distance", 8, 40, "px")
+
+        # 圆盘尺寸
+        card = self._section("圆盘尺寸")
+        form.addWidget(card, 0)
+        self._size_sliders = {}
+        for key, text, lo, hi, unit in (("dead_zone_radius", "中心死区", 8, 60, "px"),
+                                        ("ring_radius", "内层半径", 40, 160, "px"),
+                                        ("outer_ring_radius", "外层半径", 90, 260, "px"),
+                                        ("ext_ring_radius", "扩展圈", 140, 360, "px"),
+                                        ("sector_count", "扇区数量", 4, 16, "")):
+            sl, lb = self._slider_row(card, text, key, lo, hi, unit,
+                                      on_change=self._update_radius_preview)
+            self._size_sliders[key] = sl
+
+        # 底部按钮
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        btn_import = QPushButton("导入方案")
+        btn_import.clicked.connect(lambda: self.on_import() if self.on_import else None)
+        btn_export = QPushButton("导出方案")
+        btn_export.clicked.connect(lambda: self.on_export() if self.on_export else None)
+        btn_reset = QPushButton("恢复默认")
+        btn_reset.setProperty("class", "danger")
+        btn_reset.clicked.connect(self._reset_defaults)
+        btn_row.addWidget(btn_import)
+        btn_row.addWidget(btn_export)
+        btn_row.addStretch(1)
+        btn_row.addWidget(btn_reset)
+        form.addLayout(btn_row)
+        form.addStretch(1)   # 卡片保持内容高度，多余空间留白
+
+        scroll.setWidget(inner)
+        body.addWidget(scroll, 1)
+
+        # ---- 右侧：预览圆盘 + 常规 ----
+        right_col = QWidget()
+        right_col.setFixedWidth(440)
+        rv = QVBoxLayout(right_col)
+        rv.setSpacing(12)
+        rv.setContentsMargins(0, 0, 0, 0)
+        # 顶部弹性空间使预览+常规整体贴底，与左侧卡片底部对齐
+        rv.addStretch(1)
+        self._radius_preview = _RadiusPreview(self.config)
+        rv.addWidget(self._radius_preview, 0, Qt.AlignHCenter)
+
         card = self._section("常规")
-        form.addWidget(card)
+        rv.addWidget(card, 0)
         self.chk_open = QCheckBox("启动时打开此界面")
         self.chk_open.toggled.connect(lambda b: self._set("open_config_on_start", b))
         card.lay.addWidget(self.chk_open)
@@ -1221,73 +1314,21 @@ class QSettingsPanel(QWidget):
         self.chk_startup.toggled.connect(self._on_startup)
         card.lay.addWidget(self.chk_startup)
 
-        # 外观
-        card = self._section("圆盘外观")
-        form.addWidget(card)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("主题"))
-        self.theme_combo = QComboBox()
-        for th in MENU_THEMES.values():
-            self.theme_combo.addItem(th.label, th.name)
-        self.theme_combo.currentIndexChanged.connect(
-            lambda: (self._set("menu_theme", self.theme_combo.currentData()),
-                     self._update_radius_preview()))
-        row.addWidget(self.theme_combo, 1)
-        card.lay.addLayout(row)
+        body.addWidget(right_col, 0)
 
-        # 触发灵敏度
-        card = self._section("触发灵敏度")
-        form.addWidget(card)
-        self._hold_slider, self._hold_label = self._slider_row(
-            card, "长按延迟", "hold_threshold_ms", 60, 200, "ms")
-        self._trig_slider, self._trig_label = self._slider_row(
-            card, "触发距离", "trigger_distance", 8, 40, "px")
-
-        # 圆盘尺寸
-        card = self._section("圆盘尺寸")
-        form.addWidget(card)
-        self._size_sliders = {}
-        for key, text, lo, hi, unit in (("dead_zone_radius", "中心死区", 10, 60, "px"),
-                                        ("ring_radius", "内层半径", 60, 160, "px"),
-                                        ("outer_ring_radius", "外层半径", 120, 260, "px"),
-                                        ("ext_ring_radius", "扩展圈", 180, 360, "px"),
-                                        ("sector_count", "扇区数量", 4, 16, "")):
-            sl, lb = self._slider_row(card, text, key, lo, hi, unit,
-                                      on_change=self._update_radius_preview)
-            self._size_sliders[key] = sl
-
-        # 底部按钮
-        btn_row = QHBoxLayout()
-        btn_import = QPushButton("导入方案")
-        btn_import.clicked.connect(lambda: self.on_import() if self.on_import else None)
-        btn_export = QPushButton("导出方案")
-        btn_export.clicked.connect(lambda: self.on_export() if self.on_export else None)
-        btn_reset = QPushButton("恢复默认")
-        btn_reset.clicked.connect(self._reset_defaults)
-        btn_row.addWidget(btn_import)
-        btn_row.addWidget(btn_export)
-        btn_row.addStretch(1)
-        btn_row.addWidget(btn_reset)
-        form.addLayout(btn_row)
-
-        scroll.setWidget(inner)
-        body.addWidget(scroll, 1)
-
-        # ---- 右侧：圆盘大小预览 ----
-        self._radius_preview = _RadiusPreview(self.config)
-        body.addWidget(self._radius_preview, 0, Qt.AlignTop)
-
-        v.addLayout(body, 1)
+        cv.addLayout(body, 1)
 
     def _section(self, title):
         """创建分组卡片，返回带 .lay 布局的容器"""
         card = QWidget()
         card.setObjectName("secCard")
         lay = QVBoxLayout(card)
-        lay.setContentsMargins(14, 12, 14, 12)
-        lay.setSpacing(6)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+        # 卡片随布局横向拉伸（占满所在列宽度）
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         h = QLabel(title)
-        h.setStyleSheet("color: #38bdf8; font-weight: bold; font-size: 13px;")
+        h.setStyleSheet("color: #8a93a3; font-weight: bold; font-size: 12px;")
         lay.addWidget(h)
         card.lay = lay
         return card
@@ -1296,24 +1337,30 @@ class QSettingsPanel(QWidget):
         if self.on_back:
             self.on_back()
 
-    def _slider_row(self, card, text, key, lo, hi, unit, on_change=None):
-        """向卡片内添加一行：名称 | 滑杆 | 当前值"""
+    def _slider_row(self, card, text, key, lo, hi, unit, on_change=None, divisor=1.0):
+        """向卡片内添加一行：名称 | 滑杆 | 当前值
+
+        divisor>1 时滑杆值为整数（lo~hi），写入配置时除以 divisor
+        （例如不透明度：滑杆 30~100，配置存 0.30~1.00）
+        """
         row = QHBoxLayout()
-        row.setSpacing(8)
+        row.setSpacing(10)
         name = QLabel(text)
-        name.setFixedWidth(70)
+        name.setFixedWidth(76)
         row.addWidget(name)
-        val = int(self.config.get("settings", {}).get(key, lo))
+        raw = self.config.get("settings", {}).get(key, lo)
+        val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
+        val = max(lo, min(hi, val))
         lb = QLabel(f"{val}{unit}")
-        lb.setFixedWidth(46)
+        lb.setFixedWidth(48)
         lb.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         lb.setStyleSheet("color: #a8b2bf;")
         sl = QSlider(Qt.Horizontal)
         sl.setRange(lo, hi)
         sl.setValue(val)
-        def _on_value(v, l=lb, u=unit, k=key):
+        def _on_value(v, l=lb, u=unit, k=key, d=divisor):
             l.setText(f"{v}{u}")
-            self.config.setdefault("settings", {})[k] = v
+            self.config.setdefault("settings", {})[k] = v / d if d != 1.0 else v
             if on_change:
                 on_change()
         sl.valueChanged.connect(_on_value)
@@ -1321,7 +1368,7 @@ class QSettingsPanel(QWidget):
         row.addWidget(sl, 1)
         row.addWidget(lb)
         card.lay.addLayout(row)
-        self._slider_labels[key] = (unit, lb)
+        self._slider_labels[key] = (unit, lb, divisor)
         return sl, lb
 
     def _update_radius_preview(self):
@@ -1345,14 +1392,19 @@ class QSettingsPanel(QWidget):
         for w in (self.chk_open, self.chk_auto, self.chk_startup,
                   self.theme_combo):
             w.blockSignals(False)
-        # 同步尺寸滑杆与预览
-        for key, sl in self._size_sliders.items():
+        # 同步所有滑杆（尺寸 + 不透明度）与预览
+        for key, (unit, lb, divisor) in self._slider_labels.items():
+            sl = self._size_sliders.get(key)
+            if sl is None and hasattr(self, "_opacity_slider") and key == "menu_opacity":
+                sl = self._opacity_slider
+            if sl is None:
+                continue
+            raw = s.get(key, 0)
+            val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
             sl.blockSignals(True)
-            sl.setValue(int(s.get(key, 0)))
+            sl.setValue(val)
             sl.blockSignals(False)
-            if key in self._slider_labels:
-                unit, lb = self._slider_labels[key]
-                lb.setText(f"{int(s.get(key, 0))}{unit}")
+            lb.setText(f"{val}{unit}")
         self._radius_preview.update_config(config)
 
     def _set(self, key, value):
