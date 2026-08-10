@@ -21,23 +21,28 @@ src/
 ├── app.py              # 主类（Qt）：事件队列、托盘(QSystemTrayIcon)、Profile切换、配置入口、更新流程
 ├── gesture_engine.py   # [核心] WH_MOUSE_LL 钩子 → 方向/圈层判定
 ├── qt_radial_menu.py   # [核心] Qt 透明悬浮圆盘菜单（三层绘制 + 淡入/高亮动画）
-├── qt_renderer.py      # 共享 Qt 圆盘绘制（qt_radial_menu 运行时 与 qt_config_gui 预览共用）
-├── theme.py            # 界面配色 + 6 套圆盘外观主题
+├── menu_geometry.py    # 圆盘半径/缩放唯一来源（运行时菜单、手势引擎、两处预览共用）
+├── qt_renderer.py      # 共享 Qt 圆盘绘制（qt_radial_menu 运行时 与 qt_config_gui/qt_settings_panel 预览共用）
+├── theme.py            # 界面配色 + 8 套圆盘外观主题（+ 自定义主色）
 ├── command_executor.py # COM SendCommand + pyautogui 回退
 ├── config_manager.py   # JSON 配置读写 + Profile管理 + 自动迁移
 ├── config_presets.py   # 预设命令库 + 默认配置
 ├── qt_config_gui.py    # Qt 配置界面（三栏 + 撤销重做 + 右键放置 + Delete 删除）
+├── qt_popup.py         # 扇区编辑浮层控制器（定位/信号接线，定位算法可单测）
+├── qt_profile_ops.py   # 方案增删改查/导入导出的纯函数（无 Qt，可单测）
 ├── updater.py          # 自动更新（版本比对/检查/下载/静默安装，纯逻辑无 Qt）
 ├── version.py          # 运行时版本号常量（发版时与 version.txt 同步）
 └── single_instance.py  # 命名互斥体单实例 + 覆盖更新
 ```
 
-事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 100ms）。
+事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 200ms）。
 每个事件包裹 `try-except`，防止单次错误崩溃整个队列循环。
 更新流程同模式：后台线程检查/下载 → 结果经 event_queue（`update_check_result` / `update_progress` / `update_download_done`）→ 主线程弹窗。
 
-**圈层判定**（gesture_engine 触发 与 qt_radial_menu hover 共用同一规则）：
-距离 ≤ `ring_radius`(100) = 内层；≤ `outer_ring_radius`(180) = 外层；> 180 = 扩展圈（命令在 `extension_sectors`）。
+**圈层判定**（半径统一取自 `menu_geometry.py` 的 `DEFAULT_RADII`，gesture_engine 触发、
+qt_radial_menu hover、配置两处预览共用）：
+距离 ≤ `ring_radius`(70) = 内层；≤ `outer_ring_radius`(135) = 外层；> `ext_ring_radius`(185) = 扩展圈
+（命令在 `extension_sectors`）。整体缩放由 `menu_scale`（50~150%）控制。
 
 ## 环境关键坑（务必先读）
 
@@ -53,13 +58,14 @@ src/
 
 | 改动内容 | 必须同步的地方 |
 |---------|---------------|
-| 圆盘配色/主题 | `theme.py` 的 `MENU_THEMES`（配置界面主题下拉自动读取，无需改界面） |
-| 字体/标签位置/扇区绘制 | `qt_renderer.py`（被 `qt_radial_menu` 运行时 和 `qt_config_gui` 预览共用，两处必须一致） |
-| 新增 `settings` 配置项 | `config_presets._default_config` + `config_manager._migrate_config`（迁移补字段） + 需要时 `qt_config_gui`/`qt_radial_menu`/`gesture_engine`/`app.py` |
+| 圆盘配色/主题 | `theme.py` 的 `MENU_THEMES`（8 套 + 自定义，配置界面主题下拉自动读取） |
+| 字体/标签位置/扇区绘制 | `qt_renderer.py`（`qt_radial_menu` 运行时、`qt_config_gui` 编辑预览、`qt_settings_panel` 尺寸预览共用，三处必须一致） |
+| 新增 `settings` 配置项 | `config_presets._default_config` + `config_manager._migrate_config`（迁移补字段） + 需要时 `qt_config_gui`/`qt_radial_menu`/`gesture_engine`/`app.py`；半径/缩放类同时改 `menu_geometry.py` |
 | 发版改版本号 | `version.txt` 4 处（filevers/prodvers/FileVersion/ProductVersion） + `src/version.py` 的 `__version__`（共 5 处，`.iss` 由 build.bat 自动注入） |
 | 新增命令预设 | `config_presets` 默认 profile + `command_executor` 的 `COMBO_TO_COMMAND` 表 |
+| 新增界面文案 | `i18n.py` 翻译表 + 界面文本用 `T()` 包裹（中文模式 key 即原文） |
 | 新增 Python 依赖 | `requirements.txt` + `cad_gesture.spec`（PySide6 由 PyInstaller 内置 hook 自动收集） |
-| 改圈层/触发阈值 | `gesture_engine`（钩子判定）与 `qt_radial_menu`（hover 显示）必须用同一半径常量 |
+| 改圈层/触发阈值 | 只改 `menu_geometry.py` 的 `DEFAULT_RADII`（gesture_engine 与 qt_radial_menu 都从它取） |
 
 ## 一键验证
 
@@ -139,7 +145,8 @@ dist\CADGesture-x64.exe
 - COM 发送前自动切换英文输入法：`PostMessage(WM_INPUTLANGCHANGEREQUEST)`
 - 钩子线程退出：`stop()` 发 `PostThreadMessageW(WM_QUIT)`
 - 事件队列格式：`("show", (x, y, window_type))` 元组嵌套
-- **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（6 套：azure/emerald/crimson/midnight/aurora/graphite），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和配置预览共用，改动必须两处一致）。
+- **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（8 套：azure/emerald/crimson/midnight/aurora/graphite/amber/mono + 自定义主色），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和两处预览共用，改动必须三处一致）。
+- **圆盘几何**：半径/缩放统一从 `menu_geometry.py` 取（`DEFAULT_RADII` + `menu_scale`），不要在各模块里各自写死半径默认值。
 - **配置自动迁移**：`config_manager._migrate_config` 自动补旧配置字段；空的 `extension_sectors` 会从默认配置按 target+name 自动补全。
 - **自动更新**：检查/下载放后台线程，结果经 event_queue 回主线程（`update_check_result`/`update_progress`/`update_download_done`），Qt 控件只在主线程操作。下载到 `%TEMP%\CADGesture-Setup.exe` 后经 `run_installer` 静默安装（`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`），主进程随即退出，Inno 的 `CloseApplications` 兜底关进程。静默安装后新版自动启动已验证（[Run] 用 `nowait` 不带 `skipifsilent`）。
 - **安装包卸载杀进程**：`cad_gesture.iss` 的 `[Code]` 节在卸载时 `taskkill /F` 终止主程序，否则运行中的 exe 被锁删不掉（卸载残留）。改 .iss 时别删这段。
@@ -158,7 +165,7 @@ dist\CADGesture-x64.exe
 
 `%APPDATA%\CADGesture\config.json` — `settings` + `profiles`（与 exe 位置无关，用户可编辑；旧版 `config/config.json` 仅用于首次迁移）。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 字段：`description` = COM 命令名，`key` = pyautogui 回退键，`target` = `autocad`|`zwcad`。
-`settings` 关键项：`menu_theme`（圆盘外观）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 15）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 true）、`update_source_url`（更新源，默认 GitHub API）、`last_update_check`（上次检查时间，24h 频率控制）。
+`settings` 关键项：`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 15）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 true）、`update_source_url`（更新源，默认 GitHub API）、`last_update_check`（上次检查时间，24h 频率控制）。
 
 ## 提交规范
 

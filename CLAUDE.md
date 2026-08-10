@@ -35,13 +35,13 @@ python scripts\verify.py                # 一键：语法检查 → pytest → �
 
 ### 圈层判定（触发与 hover 共用）
 
-`gesture_engine`（松手结算）与 `qt_radial_menu`（悬停高亮）**都从 config 的同一组 settings 键读半径**，改阈值只需改设置项，不用动两处代码：
+`gesture_engine`（松手结算）与 `qt_radial_menu`（悬停高亮）**都从 `menu_geometry.py` 取半径**（`DEFAULT_RADII` + `menu_scale` 缩放），配置编辑/尺寸预览也共用，改尺寸只动一处：
 
-- `trigger_distance`(15) 拖出此距离才呼出菜单；`hold_threshold_ms`(100) 长按时长
+- `trigger_distance`(15) 拖出此距离才呼出菜单；`hold_threshold_ms`(80) 长按时长
 - 距离 ≤ `ring_radius`(70) = 内层；≤ `outer_ring_radius`(135) = 外层；`ext_ring_radius`(185) 外 = 扩展圈
 - `dead_zone_radius`(24)：菜单已弹出时松手落在中心死区内 → 取消不触发
 
-⚠️ **现状修正**：AGENTS.md 写的 100/180 是旧值；`theme.py` 现在是 8 套圆盘主题（azure/emerald/crimson/midnight/aurora/graphite/amber/mono）+ 自定义色，不是 6 套。
+AGENTS.md 为完整规范（含打包/发版/提交流程），本文件只讲上手必需的架构与坑，冲突时以 AGENTS.md 为准。
 
 ### 命令执行优先级
 
