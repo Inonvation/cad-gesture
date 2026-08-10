@@ -1,7 +1,8 @@
 """命令执行反馈提示 — 屏幕角落短暂显示"命令名 / 快捷键"两行"""
 
 from PySide6.QtCore import (QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer)
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import (QColor, QFont, QPainter, QPen, QCursor,
+                           QGuiApplication)
 from PySide6.QtWidgets import QWidget
 
 from src.theme import get_ui, font_px
@@ -49,7 +50,9 @@ class QFeedbackTip(QWidget):
 
     def _position_for(self, pos: str, offset_x: int = 0, offset_y: int = 0) -> None:
         """按预设锚点定位，再叠加像素偏移，最后夹紧在屏幕可用区内"""
-        screen = self.screen().availableGeometry()
+        # 弹在光标所在屏幕（多显示器时提示出现在正在操作的屏，而非主屏）
+        screen = (QGuiApplication.screenAt(QCursor.pos())
+                  or self.screen()).availableGeometry()
         w, h = self.width(), self.height()
         if pos == "top_center":
             x = screen.center().x() - w // 2

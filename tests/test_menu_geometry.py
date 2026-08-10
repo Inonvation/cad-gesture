@@ -48,6 +48,7 @@ def test_geometry_consistent_across_modules():
     from src.gesture_engine import GestureEngine
     menu = QRadialMenu(cfg)
     engine = GestureEngine(config=cfg, on_gesture=lambda *a: None,
+                           on_gesture_feedback=lambda *a: None,
                            on_menu_show=lambda *a: None,
                            on_menu_hide=lambda: None,
                            on_extension_hint=lambda *a: None)

@@ -130,6 +130,7 @@ class CADGestureApp:
         self.gesture_engine = GestureEngine(
             config=self.config,
             on_gesture=self._queue_gesture,
+            on_gesture_feedback=self._queue_gesture_feedback,
             on_menu_show=self._queue_show,
             on_menu_hide=self._queue_hide,
             on_extension_hint=self._queue_extension_hint
@@ -165,6 +166,10 @@ class CADGestureApp:
 
     def _queue_gesture(self, sector: int, ring_type: str, window_type: str):
         self.event_queue.put(("gesture", (sector, ring_type, window_type)))
+
+    def _queue_gesture_feedback(self, sector: int, ring_type: str, window_type: str):
+        """松手即弹反馈事件：先于 hide 入队，弹窗不等待菜单关闭/命令执行"""
+        self.event_queue.put(("feedback", (sector, ring_type, window_type)))
 
     def _queue_show(self, x: int, y: int, window_type: str):
         self.event_queue.put(("show", (x, y, window_type)))
@@ -216,15 +221,17 @@ class CADGestureApp:
                             if self.profile is None:
                                 self.profile = get_active_profile(self.config)
                             self.menu.show(x, y, self.profile)
-                            # 屏幕边缘自适应后圆盘中心可能偏移，同步手势
-                            # 判定原点，保证高亮显示与松手结算一致
+                        elif event_type == "feedback":
                             try:
-                                pcx, pcy = self.menu.display_center_physical()
-                                self.gesture_engine.set_gesture_center(
-                                    pcx, pcy)
+                                sector, ring_type, window_type = data
+                                profile = get_profile_for_window(self.config, window_type)
+                                if profile is None:
+                                    profile = self.profile
+                                sector_cfg = get_sector_command(profile, ring_type, sector)
+                                if sector_cfg.get("key"):
+                                    self._show_feedback(sector_cfg)
                             except Exception as e:
-                                self.log.error("同步手势中心失败: %s", e,
-                                               exc_info=True)
+                                self.log.error("命令反馈错误: %s", e, exc_info=True)
                         elif event_type == "hide":
                             self.menu.hide()
                             # 钩子不拦截右键：松手时 CAD 会弹右键菜单，
@@ -247,9 +254,6 @@ class CADGestureApp:
                                 desc = sector_cfg.get("description", "")
                                 target = profile.get("target", "autocad")
                                 if key:
-                                    # 松手即弹提示：先显示再发命令，不等 COM SendCommand 返回
-                                    # （SendCommand 在 CAD 忙时可能阻塞，弹窗不能被它拖后）
-                                    self._show_feedback(sector_cfg)
                                     execute_with_cancel(key, desc, target)
                             except Exception as e:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)

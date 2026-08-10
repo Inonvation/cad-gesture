@@ -81,6 +81,7 @@ def test_trigger_button_mapping():
     def make(btn):
         eng = GestureEngine(config={"settings": {"trigger_button": btn}},
                             on_gesture=lambda *a: None,
+                            on_gesture_feedback=lambda *a: None,
                             on_menu_show=lambda *a: None,
                             on_menu_hide=lambda: None,
                             on_extension_hint=lambda *a: None)

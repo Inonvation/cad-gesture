@@ -88,12 +88,14 @@ class GestureEngine:
         self,
         config: dict,
         on_gesture: Callable[[int, str, str], None],
+        on_gesture_feedback: Callable[[int, str, str], None],
         on_menu_show: Callable[[int, int, str], None],
         on_menu_hide: Callable[[], None],
         on_extension_hint: Callable[[bool], None]
     ):
         self.config = config
         self.on_gesture = on_gesture       # (sector, ring_type, window_type)
+        self.on_gesture_feedback = on_gesture_feedback  # 松手即弹：反馈事件先于 hide 入队
         self.on_menu_show = on_menu_show   # (x, y, window_type)
         self.on_menu_hide = on_menu_hide
         self.on_extension_hint = on_extension_hint  # (is_in_extension_zone)
@@ -418,6 +420,9 @@ class GestureEngine:
                         self._in_extension_zone = False
 
         # 在锁外执行回调（避免死锁）
+        if callback and callback_args:
+            # 弹窗提示最先入队：松手那一刻就弹，不等菜单隐藏 / ESC 取消 / 命令执行
+            self.on_gesture_feedback(*callback_args)
         if should_hide:
             self.on_menu_hide()
         if callback and callback_args:
