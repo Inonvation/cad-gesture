@@ -170,7 +170,7 @@ def _shadow_for(color: QColor, alpha: int = 120) -> QColor:
 def draw_label(p: QPainter, cx: float, cy: float, inner_r: float,
                outer_r: float, n: int, i: int, text: str, color: QColor,
                bold: bool = False, label_offset: float = 0.5,
-               light: bool = False) -> None:
+               light: bool = False, font_scale: float = 1.0) -> None:
     """扇区环上的文字标签（沿角度方向居中，带投影提升对比）。
 
     light：浅色主题。浅底深字 / 主题色底白字对比已足够，去掉投影
@@ -183,7 +183,7 @@ def draw_label(p: QPainter, cx: float, cy: float, inner_r: float,
     tx = cx + tr * math.cos(mid)
     ty = cy - tr * math.sin(mid)
     avail = tr * (2 * math.pi / n) * 0.85
-    font = _fit_font(text, 12 if light else 11, avail, bold)
+    font = _fit_font(text, (12 if light else 11) * font_scale, avail, bold)
     rect = QRectF(tx - avail / 2, ty - 10, avail, 20)
     if not light:
         p.setPen(_shadow_for(color))
@@ -200,7 +200,7 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
               layer: str = INNER, hl_idx: int = -1, hl_layer=None,
               hl_fade: float = 1.0, sel=None, hov=None,
               label_offset: float = 0.5, light: bool = False,
-              placeholder: bool = False) -> None:
+              placeholder: bool = False, font_scale: float = 1.0) -> None:
     """画一层扇区环。
 
     高亮优先级：selected > hovered > 高亮层。
@@ -266,7 +266,7 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
                 color = QColor(rc.text if (is_hl or is_sel or is_hov)
                                else rc.text_dim)
             draw_label(p, cx, cy, inner_r, outer_r, n, i, label, color,
-                       bold, label_offset, light)
+                       bold, label_offset, light, font_scale)
         elif placeholder and not is_hl and not is_sel and not is_hov:
             # 空扇区占位：径向中点一个小圆点，提示该位置可放置命令（仅编辑/尺寸预览）
             mid = math.radians(i * 360 / n - 90)
@@ -297,7 +297,7 @@ def _center_line(p: QPainter, rect: QRectF, text: str, font: QFont,
 
 def draw_center(p: QPainter, cx: float, cy: float, dead_r: float,
                 theme, size: float, label: str = "",
-                sub_label: str = "") -> None:
+                sub_label: str = "", font_scale: float = 1.0) -> None:
     """中心死区（径向渐变）+ 中心文字。
 
     两行布局：主标签（命令名，加粗）+ 副标签（快捷键 / 方案名，小字暗色）。
@@ -325,20 +325,20 @@ def draw_center(p: QPainter, cx: float, cy: float, dead_r: float,
         sub_color = QColor(theme.center_text)
         sub_color.setAlpha(160)
         _center_line(p, main_rect, label,
-                     _fit_font(label, 12, dead_r * 2 * 0.85, bold=True),
+                     _fit_font(label, 12 * font_scale, dead_r * 2 * 0.85, bold=True),
                      QColor(theme.center_text), shadow=shadow)
         _center_line(p, sub_rect, sub_label,
-                     _fit_font(sub_label, 10, dead_r * 2 * 0.72),
+                     _fit_font(sub_label, 10 * font_scale, dead_r * 2 * 0.72),
                      sub_color, shadow=sub_shadow)
     elif label:
         rect = QRectF(cx - half, cy - half, size, size)
         _center_line(p, rect, label,
-                     _fit_font(label, 12, dead_r * 2 * 0.85, bold=True),
+                     _fit_font(label, 12 * font_scale, dead_r * 2 * 0.85, bold=True),
                      QColor(theme.center_text), shadow=shadow)
     else:
         rect = QRectF(cx - half, cy - half, size, size)
         sub_color = QColor(theme.center_text)
         sub_color.setAlpha(120)
         _center_line(p, rect, sub_label,
-                     _fit_font(sub_label, 10, dead_r * 2 * 0.72),
+                     _fit_font(sub_label, 10 * font_scale, dead_r * 2 * 0.72),
                      sub_color, shadow=sub_shadow)

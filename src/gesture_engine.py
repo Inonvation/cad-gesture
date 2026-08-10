@@ -440,6 +440,13 @@ class GestureEngine:
         self._log(f"触发手势: {layer} 扇区{sec} (窗口={self._window_type})")
         return (sec, ring_type, self._window_type)
 
+    def set_gesture_center(self, x: int, y: int):
+        """屏幕边缘自适应偏移圆盘中心后，同步手势判定原点（物理坐标），
+        保证高亮与松手结算以实际显示中心为准。"""
+        with self._lock:
+            self._press_pos = (x, y)
+            self._latest_pos = (x, y)
+
     def cancel_gesture(self):
         """菜单被取消（Esc/左键）时复位手势状态，阻止松键补发命令"""
         with self._lock:

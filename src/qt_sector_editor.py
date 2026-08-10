@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QFormLayout, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QVBoxLayout)
 
 from src.i18n import T
-from src.theme import FONT_SM
+from src.theme import FONT_SM, font_px
 
 
 class SectorEditorPopup(QFrame):
@@ -106,7 +106,7 @@ class SectorEditorPopup(QFrame):
         lb = QLabel(text)
         lb.setObjectName("fieldName")
         lb.setFixedWidth(72)
-        lb.setStyleSheet(f"font-size: {FONT_SM}px;")
+        lb.setStyleSheet(f"font-size: {font_px(FONT_SM)}px;")
         return lb
 
     # ========== 语言切换 ==========

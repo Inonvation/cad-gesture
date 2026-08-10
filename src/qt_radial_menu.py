@@ -47,6 +47,7 @@ class QRadialMenu(QWidget):
         self._visible = False
         self._center_x = 0
         self._center_y = 0
+        self._center_physical = (0, 0)  # 实际显示中心（物理像素，供判定同步）
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
@@ -118,24 +119,31 @@ class QRadialMenu(QWidget):
         self._profile = profile
         # 钩子回调给的是物理像素，Qt 窗口坐标是逻辑像素（高 DPI 下需换算）
         lx, ly = self._to_logical(x, y)
-        self._center_x, self._center_y = lx, ly
+        cx, cy = lx, ly
+        if self._clamp_enabled():
+            # 屏幕内显示：圆盘中心整体偏移到屏幕可用区域内，保证完整可见；
+            # 手势判定原点由 app 调 set_gesture_center 同步（见 app.py）
+            try:
+                scr = QGuiApplication.screenAt(QPoint(x, y))
+                if scr is None:
+                    scr = QGuiApplication.primaryScreen()
+                geo = scr.availableGeometry()
+                dpr = scr.devicePixelRatio()
+                half = self._size // 2
+                cx = max(geo.left() + half, min(geo.right() - half + 1, lx))
+                cy = max(geo.top() + half, min(geo.bottom() - half + 1, ly))
+                self._center_physical = (int(cx * dpr), int(cy * dpr))
+            except Exception:
+                self._center_physical = (x, y)
+        else:
+            # 关闭限制：中心始终对准鼠标按下位置，不偏移（圆盘可能被边缘遮挡）
+            self._center_physical = (x, y)
+        self._center_x, self._center_y = cx, cy
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
         self._trail_dx = self._trail_dy = None
-        # 屏幕边缘自适应：圆盘窗口不超出屏幕可用区域（贴近边缘时整体内移）
-        left = int(lx - self._size // 2)
-        top = int(ly - self._size // 2)
-        try:
-            scr = QGuiApplication.screenAt(QPoint(x, y))
-            if scr is None:
-                scr = QGuiApplication.primaryScreen()
-            geo = scr.availableGeometry()
-            left = max(geo.left(), min(geo.right() - self._size + 1, left))
-            top = max(geo.top(), min(geo.bottom() - self._size + 1, top))
-        except Exception:
-            pass
-        self.move(left, top)
+        self.move(int(cx - self._size // 2), int(cy - self._size // 2))
         super().show()
         self._visible = True
         self.update()
@@ -283,23 +291,37 @@ class QRadialMenu(QWidget):
 
         p.drawPixmap(0, 0, self._shadow_pixmap())
 
+        fs = float(self.config.get("settings", {}).get(
+            "menu_font_scale", 100)) / 100.0
         draw_ring(p, cx, cy, self.outer_ring_radius, self.ext_ring_radius,
                   n, self._profile.get("extension_sectors", {}), t.extension,
                   layer=EXTENSION, hl_idx=self._highlighted_sector,
-                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light)
+                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light,
+                  font_scale=fs)
         draw_ring(p, cx, cy, self.ring_radius, self.outer_ring_radius,
                   n, self._profile.get("outer_sectors", {}), t.outer,
                   layer=OUTER, hl_idx=self._highlighted_sector,
-                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light)
+                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light,
+                  font_scale=fs)
         draw_ring(p, cx, cy, self.dead_zone, self.ring_radius,
                   n, self._profile.get("sectors", {}), t.inner,
                   layer=INNER, hl_idx=self._highlighted_sector,
-                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light)
+                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light,
+                  font_scale=fs)
 
         draw_center(p, cx, cy, self.dead_zone, t, self._size,
-                    *self._center_texts())
+                    *self._center_texts(), font_scale=fs)
         self._draw_trail(p, cx, cy, t)
         p.end()
+
+    def _clamp_enabled(self) -> bool:
+        """显示限制在屏幕范围内开关（设置 → 圆盘尺寸）"""
+        return bool(self.config.get("settings", {}).get(
+            "menu_clamp_to_screen", True))
+
+    def display_center_physical(self) -> tuple:
+        """圆盘实际显示中心（物理像素），供手势判定原点同步"""
+        return self._center_physical
 
     def _trail_enabled(self) -> bool:
         """手势轨迹线开关（设置 → 外观）"""

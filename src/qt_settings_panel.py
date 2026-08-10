@@ -28,15 +28,10 @@ from src.i18n import T
 from src.menu_geometry import scaled_radii
 from src.theme import (get_ui, MENU_THEMES, make_custom_theme,
                        make_light_theme, theme_from_settings,
-                       effective_ui_mode, FONT_XS, _CUSTOM_ACCENT)
+                       effective_ui_mode, FONT_XS, font_px, _CUSTOM_DEFAULTS)
 from src.qt_renderer import (draw_shadow, draw_ring, draw_center,
                              INNER, OUTER, EXTENSION)
 
-# 自定义主题的预设主色板（柔和、低饱和）
-_CUSTOM_COLORS = [
-    "#6fa3d8", "#4ec9a0", "#7fb069", "#d9a545", "#e08a5e", "#d98a8a",
-    "#c084d9", "#9d8cf0", "#5aa7b4", "#4fc8d8", "#b8c4d0", "#c7c9d6",
-]
 
 
 def _tile_pixmap(t, w=96, h=96) -> QPixmap:
@@ -63,7 +58,8 @@ def _custom_tile_pixmap(w=96, h=96) -> QPixmap:
     c = w / 2
     r = 46
     grad = QRadialGradient(c, c, r)
-    for i, col in enumerate(_CUSTOM_COLORS[:8]):
+    for i, col in enumerate(("#6fa3d8", "#4ec9a0", "#7fb069", "#d9a545",
+                                 "#e08a5e", "#d98a8a", "#c084d9", "#9d8cf0")):
         grad.setColorAt(i / 8, QColor(col))
     grad.setColorAt(1, QColor("#2a3340"))
     p.setPen(Qt.NoPen)
@@ -71,7 +67,7 @@ def _custom_tile_pixmap(w=96, h=96) -> QPixmap:
     p.drawEllipse(QPointF(c, c), r, r)
     p.setPen(QColor("#ffffff"))
     f = QFont("Microsoft YaHei")
-    f.setPixelSize(26)
+    f.setPixelSize(font_px(26))
     f.setBold(True)
     p.setFont(f)
     p.drawText(QPoint(c - 14, c + 12), "自")
@@ -158,7 +154,7 @@ class _MenuPreview(QWidget):
         p.setOpacity(1.0)
         p.setPen(QColor(get_ui().text_muted))
         f = QFont("Microsoft YaHei")
-        f.setPixelSize(FONT_XS)
+        f.setPixelSize(font_px(FONT_XS))
         p.setFont(f)
         p.drawText(6, self.height() - 6,
                    T("第一圈 {inner}px · 第二圈 {outer}px · 最外圈 {ext}px   实际直径 {dia}px")
@@ -330,46 +326,33 @@ class AppearancePage(_BasePage):
         self._theme_group.buttonClicked.connect(self._on_theme_picked)
         lv.addLayout(grid)
 
-        # 自定义主题主色选择（默认隐藏，选"自定义"时显示）
-        self._custom_row = QWidget()
-        cr = QVBoxLayout(self._custom_row)
-        cr.setContentsMargins(0, 0, 0, 0)
-        cr.setSpacing(8)
-        head = QHBoxLayout()
-        self._lb_color = QLabel(T("主色"))
-        self.register_text(self._lb_color, "主色")
-        head.addWidget(self._lb_color)
-        head.addStretch(1)
-        self._btn_picker = QPushButton(T("自选颜色…"))
-        self._btn_picker.setProperty("class", "ghost")
-        self._btn_picker.clicked.connect(self._pick_color)
-        self.register_text(self._btn_picker, "自选颜色…")
-        head.addWidget(self._btn_picker)
-        cr.addLayout(head)
-        # 色点网格：6 列两行，点击即应用
-        color_grid = QGridLayout()
-        color_grid.setSpacing(8)
-        self._color_group = QButtonGroup(self)
-        self._color_group.setExclusive(True)
-        self._color_buttons = []
-        for i, col in enumerate(_CUSTOM_COLORS):
-            b = QPushButton()
-            b.setFixedSize(22, 22)
-            b.setCheckable(True)
-            b.setProperty("class", "colorDot")
-            b.setStyleSheet(
-                f"background: {col}; border-radius: 11px; border: 2px solid transparent;"
-                f" QPushButton:checked {{ border: 2px solid #6fa3d8; }}"
-                f" QPushButton:hover {{ border: 1px solid #8a94a3; }}")
-            b.setToolTip(col)
-            b.clicked.connect(lambda _=False, c=col: self._set_custom_accent(c))
-            self._color_group.addButton(b)
-            self._color_buttons.append(b)
-            color_grid.addWidget(b, i // 6, i % 6)
-        color_grid.setColumnStretch(6, 1)
-        cr.addLayout(color_grid)
-        self._custom_row.hide()
-        lv.addWidget(self._custom_row)
+        # 自定义主题四个颜色（选"自定义"时显示）
+        self._custom_color_row = QWidget()
+        cc = QVBoxLayout(self._custom_color_row)
+        cc.setContentsMargins(0, 0, 0, 0)
+        cc.setSpacing(8)
+        self._color_fields = {}   # key -> 色块按钮
+        for key, zh in (("custom_text", "文字颜色"),
+                        ("custom_highlight", "高亮颜色"),
+                        ("custom_bg", "背景颜色"),
+                        ("custom_hover", "悬浮颜色")):
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            lb = QLabel(T(zh))
+            self.register_text(lb, zh)
+            row.addWidget(lb)
+            btn = QPushButton()
+            btn.setFixedSize(28, 22)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(T("点击选择颜色"))
+            btn.clicked.connect(
+                lambda _=False, k=key: self._pick_custom_color(k))
+            self._color_fields[key] = btn
+            row.addWidget(btn)
+            row.addStretch(1)
+            cc.addLayout(row)
+        self._custom_color_row.hide()
+        lv.addWidget(self._custom_color_row)
 
         # 不透明度（加进左列）
         self._opacity_slider, self._opacity_label = self._slider_row(
@@ -384,6 +367,14 @@ class AppearancePage(_BasePage):
         self.chk_trail.toggled.connect(lambda b: self._set("gesture_trail", b))
         self.register_text(self.chk_trail, "手势轨迹线")
         lv.addWidget(self.chk_trail)
+
+        # 文字大小：圆盘 / 界面（百分比，100 = 默认）
+        self._menu_font_slider, self._menu_font_label = self._slider_row(
+            "圆盘文字大小", "menu_font_scale", 80, 130, "%",
+            on_change=self._update_preview, divisor=100.0, container=lv)
+        self._ui_font_slider, self._ui_font_label = self._slider_row(
+            "界面文字大小", "ui_font_scale", 85, 130, "%",
+            divisor=100.0, container=lv)
         lv.addStretch(1)
 
         hbox.addWidget(left, 1)
@@ -426,36 +417,43 @@ class AppearancePage(_BasePage):
     def _on_theme_picked(self, btn):
         name = self._tile_by_btn[btn]
         self.config.setdefault("settings", {})["menu_theme"] = name
-        self._custom_row.setVisible(name == "custom")
+        self._custom_color_row.setVisible(name == "custom")
         if name == "custom":
-            accent = self.config.get("settings", {}).get("custom_accent", _CUSTOM_ACCENT)
-            self._sync_color_buttons(accent)
+            self._sync_custom_colors()
             self._refresh_custom_tile()
         self._save()
         self._update_preview()
 
-    def _set_custom_accent(self, col):
-        self.config.setdefault("settings", {})["custom_accent"] = col
-        self.config.setdefault("settings", {})["menu_theme"] = "custom"
-        self._sync_color_buttons(col)
-        self._refresh_custom_tile()
-        self._save()
-        self._update_preview()
-
-    def _pick_color(self):
-        accent = self.config.get("settings", {}).get("custom_accent", _CUSTOM_ACCENT)
-        col = QColorDialog.getColor(QColor(accent), self, T("选择圆盘主色"))
+    def _pick_custom_color(self, key):
+        """点击色块：取色器选色，写入对应自定义颜色项"""
+        s = self.config.setdefault("settings", {})
+        cur = s.get(key, _CUSTOM_DEFAULTS.get(key, "#6fa3d8"))
+        col = QColorDialog.getColor(QColor(cur), self, T("选择颜色"))
         if col.isValid():
-            self._set_custom_accent(col.name())
+            s[key] = col.name()
+            s["menu_theme"] = "custom"
+            self._sync_custom_colors()
+            self._refresh_custom_tile()
+            self._save()
+            self._update_preview()
 
-    def _sync_color_buttons(self, accent):
-        for b in self._color_buttons:
-            b.setChecked(b.styleSheet().find(accent) >= 0)
+    def _sync_custom_colors(self):
+        """刷新四个色块按钮的显示颜色"""
+        s = self.config.get("settings", {})
+        for key, btn in self._color_fields.items():
+            col = s.get(key, _CUSTOM_DEFAULTS.get(key, "#6fa3d8"))
+            btn.setStyleSheet(
+                f"QPushButton {{ background: {col}; border: 1px solid"
+                f" #ffffff66; border-radius: 4px; }}")
 
     def _refresh_custom_tile(self):
-        accent = self.config.get("settings", {}).get("custom_accent", _CUSTOM_ACCENT)
-        t = make_custom_theme(accent)
-        if effective_ui_mode(self.config.get("settings", {}).get("ui_mode", "dark")) == "light":
+        s = self.config.get("settings", {})
+        t = make_custom_theme(
+            s.get("custom_text", _CUSTOM_DEFAULTS["custom_text"]),
+            s.get("custom_highlight", _CUSTOM_DEFAULTS["custom_highlight"]),
+            s.get("custom_bg", _CUSTOM_DEFAULTS["custom_bg"]),
+            s.get("custom_hover", _CUSTOM_DEFAULTS["custom_hover"]))
+        if effective_ui_mode(s.get("ui_mode", "dark")) == "light":
             t = make_light_theme(t)
         self._custom_tile.set_icon_pixmap(_tile_pixmap(t))
 
@@ -489,8 +487,9 @@ class AppearancePage(_BasePage):
         for tile, n in self._tile_by_btn.items():
             tile.setChecked(n == name)
         self._theme_group.buttonClicked.connect(self._on_theme_picked)
-        self._custom_row.setVisible(name == "custom")
-        self._sync_color_buttons(s.get("custom_accent", _CUSTOM_ACCENT))
+        self._custom_color_row.setVisible(name == "custom")
+        if name == "custom":
+            self._sync_custom_colors()
         self._refresh_theme_thumbnails()
         self._refresh_sliders()
         self.chk_trail.blockSignals(True)
@@ -576,6 +575,18 @@ class SizePage(_BasePage):
                                       container=lv)
             self._size_sliders[key] = sl
         self._apply_radius_constraints()
+
+        # 屏幕内显示开关
+        self.chk_clamp = QCheckBox(T("显示限制在屏幕范围内"))
+        self.chk_clamp.setToolTip(
+            T("开启后圆盘始终完整显示在屏幕内；关闭后圆盘中心始终对准"
+              "鼠标按下位置（可能被边缘遮挡）"))
+        self.chk_clamp.setChecked(
+            config.get("settings", {}).get("menu_clamp_to_screen", True))
+        self.chk_clamp.toggled.connect(
+            lambda b: self._set("menu_clamp_to_screen", b))
+        self.register_text(self.chk_clamp, "显示限制在屏幕范围内")
+        lv.addWidget(self.chk_clamp)
         lv.addStretch(1)
         self._hbox.addWidget(left, 1)
         self.preview = _MenuPreview(self.config)
@@ -622,6 +633,10 @@ class SizePage(_BasePage):
         self.preview.set_data(config, profile)
         self._apply_radius_constraints()
         self._refresh_sliders()
+        self.chk_clamp.blockSignals(True)
+        self.chk_clamp.setChecked(
+            config.get("settings", {}).get("menu_clamp_to_screen", True))
+        self.chk_clamp.blockSignals(False)
 
 
 class GeneralPage(_BasePage):
@@ -849,10 +864,13 @@ class FeedbackPage(_BasePage):
         self.register_text(self._lb_pos, "提示位置")
         pos_row.addWidget(self._lb_pos)
         self.pos_combo = QComboBox()
-        self.pos_combo.addItem(T("中间偏下"), "bottom_center")
+        self.pos_combo.addItem(T("下部中间偏上"), "bottom_center")
         self.pos_combo.addItem(T("屏幕中心"), "center")
         self.pos_combo.addItem(T("顶部居中"), "top_center")
         self.pos_combo.addItem(T("右下角"), "bottom_right")
+        self.pos_combo.addItem(T("左下角"), "bottom_left")
+        self.pos_combo.addItem(T("左上角"), "top_left")
+        self.pos_combo.addItem(T("右上角"), "top_right")
         cur = config.get("settings", {}).get("feedback_position", "bottom_center")
         idx = self.pos_combo.findData(cur)
         self.pos_combo.setCurrentIndex(max(0, idx))
@@ -861,6 +879,14 @@ class FeedbackPage(_BasePage):
         pos_row.addStretch(1)
         self.body.addLayout(pos_row)
 
+        # 位置微调：在所选锚点基础上再平移（像素），默认 0 不动
+        s = config.setdefault("settings", {})
+        s.setdefault("feedback_offset_x", 0)
+        s.setdefault("feedback_offset_y", 0)
+        self._ox_slider, self._ox_label = self._slider_row(
+            "水平偏移", "feedback_offset_x", -300, 300, "px")
+        self._oy_slider, self._oy_label = self._slider_row(
+            "垂直偏移", "feedback_offset_y", -300, 300, "px")
         # 显示内容：命令名称 / 快捷键
         content_row = QHBoxLayout()
         content_row.setSpacing(16)

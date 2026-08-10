@@ -32,7 +32,7 @@ from src.config_manager import (load_config, save_config,
 from src.config_presets import get_preset_commands
 from src.i18n import T, add_listener, remove_listener
 from src.theme import (get_ui, set_ui_mode, build_app_qss,
-                       current_ui_mode, set_title_bar_theme)
+                       current_ui_mode, set_title_bar_theme, font_px)
 from src.qt_preview import (CommandTree, _PanelToggleButton, QRadialPreview,
                             _layer_key, _layer_name)
 from src.qt_sector_editor import SectorEditorPopup
@@ -813,7 +813,7 @@ class QConfigGUI(QMainWindow):
             head.setForeground(QColor(get_ui().accent))
             f = head.font()
             f.setBold(True)
-            f.setPixelSize(11)
+            f.setPixelSize(font_px(11))
             head.setFont(f)
             self.profile_list.addItem(head)
             for name in names:
@@ -1222,7 +1222,7 @@ class QConfigGUI(QMainWindow):
             cat = QTreeWidgetItem([f"▸ {cat_zh}"])
             f = cat.font(0)
             f.setBold(True)
-            f.setPixelSize(11)
+            f.setPixelSize(font_px(11))
             cat.setFont(0, f)
             cat.setForeground(0, QColor(ui.text_muted))
             cat.setSizeHint(0, QSize(0, 26))

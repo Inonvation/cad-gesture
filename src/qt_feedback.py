@@ -4,7 +4,7 @@ from PySide6.QtCore import (QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer)
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
-from src.theme import get_ui
+from src.theme import get_ui, font_px
 
 
 class QFeedbackTip(QWidget):
@@ -37,13 +37,18 @@ class QFeedbackTip(QWidget):
         self._duration_ms = int(settings.get("feedback_duration_ms", 1500))
         self._fade.stop()
         self.setWindowOpacity(1.0)
-        self._position_for(settings.get("feedback_position", "bottom_center"))
+        self._position_for(
+            settings.get("feedback_position", "bottom_center"),
+            int(settings.get("feedback_offset_x", 0)),
+            int(settings.get("feedback_offset_y", 0)),
+        )
         self.update()
         self.show()
         self.raise_()
         self._hide_timer.start(self._duration_ms)
 
-    def _position_for(self, pos: str) -> None:
+    def _position_for(self, pos: str, offset_x: int = 0, offset_y: int = 0) -> None:
+        """按预设锚点定位，再叠加像素偏移，最后夹紧在屏幕可用区内"""
         screen = self.screen().availableGeometry()
         w, h = self.width(), self.height()
         if pos == "top_center":
@@ -52,12 +57,23 @@ class QFeedbackTip(QWidget):
         elif pos == "bottom_right":
             x = screen.right() - w - 20
             y = screen.bottom() - h - 20
+        elif pos == "bottom_left":
+            x = screen.left() + 20
+            y = screen.bottom() - h - 20
+        elif pos == "top_left":
+            x = screen.left() + 20
+            y = screen.top() + 20
+        elif pos == "top_right":
+            x = screen.right() - w - 20
+            y = screen.top() + 20
         elif pos == "center":
             x = screen.center().x() - w // 2
             y = screen.center().y() - h // 2
-        else:  # bottom_center 默认（用户要求"中间偏下"）
+        else:  # bottom_center 默认：下部中间偏上，避开屏幕中心挡视野
             x = screen.center().x() - w // 2
-            y = screen.top() + int(screen.height() * 0.62)
+            y = screen.top() + int(screen.height() * 0.75)
+        x = max(screen.left(), min(screen.right() - w, x + offset_x))
+        y = max(screen.top(), min(screen.bottom() - h, y + offset_y))
         self.move(x, y)
 
     def _fade_out(self):
@@ -78,12 +94,12 @@ class QFeedbackTip(QWidget):
         p.setPen(QPen(QColor(ui.border_strong), 1))
         p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 10, 10)
         f = QFont("Microsoft YaHei")
-        f.setPixelSize(16)
+        f.setPixelSize(font_px(16))
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor(ui.text))
         p.drawText(QRect(0, 8, self.width(), 24), Qt.AlignCenter, self._line1)
-        f.setPixelSize(12)
+        f.setPixelSize(font_px(12))
         f.setBold(False)
         p.setFont(f)
         p.setPen(QColor(ui.text_secondary))

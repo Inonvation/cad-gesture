@@ -223,6 +223,27 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "gesture_trail" not in settings:
         settings["gesture_trail"] = True
         migrated = True
+    if "menu_clamp_to_screen" not in settings:
+        settings["menu_clamp_to_screen"] = True
+        migrated = True
+    if "menu_font_scale" not in settings:
+        settings["menu_font_scale"] = 100
+        migrated = True
+    if "ui_font_scale" not in settings:
+        settings["ui_font_scale"] = 100
+        migrated = True
+    if "custom_text" not in settings:
+        settings["custom_text"] = "#e9edf2"
+        migrated = True
+    if "custom_highlight" not in settings:
+        settings["custom_highlight"] = "#6fa3d8"
+        migrated = True
+    if "custom_bg" not in settings:
+        settings["custom_bg"] = "#1a202b"
+        migrated = True
+    if "custom_hover" not in settings:
+        settings["custom_hover"] = "#2a3a4d"
+        migrated = True
     if "command_feedback" not in settings:
         settings["command_feedback"] = True
         migrated = True
@@ -237,6 +258,12 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         migrated = True
     if "feedback_duration_ms" not in settings:
         settings["feedback_duration_ms"] = 1500
+        migrated = True
+    if "feedback_offset_x" not in settings:
+        settings["feedback_offset_x"] = 0
+        migrated = True
+    if "feedback_offset_y" not in settings:
+        settings["feedback_offset_y"] = 0
         migrated = True
     # 为旧配置中的 profile 添加 target、outer_sectors 和 extension_sectors
     # 记录哪些 profile 原本缺少 extension_sectors 字段（区分"旧配置缺失"与"用户主动清空"）

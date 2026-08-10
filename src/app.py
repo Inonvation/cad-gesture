@@ -28,7 +28,8 @@ from src.single_instance import is_exit_requested
 from src.logger import get_logger
 from src.i18n import T, set_language, add_listener, remove_listener
 from src.theme import (build_app_qss, set_ui_mode, current_ui_mode,
-                       set_title_bar_theme, system_ui_mode)
+                       set_title_bar_theme, system_ui_mode,
+                       set_ui_font_scale)
 from src.updater import (check_for_update, download_update, run_installer,
                          UpdateCancelled, UpdateError)
 from src.version import __version__
@@ -175,7 +176,7 @@ class CADGestureApp:
         self.event_queue.put(("extension_hint", is_in_zone))
 
     def _show_feedback(self, cfg: dict):
-        """命令执行后显示反馈提示（位置/内容/时长均由设置控制）"""
+        """松手触发命令后立即显示反馈提示（位置/内容/时长均由设置控制）"""
         try:
             s = self.config.get("settings", {})
             if not s.get("command_feedback", True):
@@ -215,6 +216,15 @@ class CADGestureApp:
                             if self.profile is None:
                                 self.profile = get_active_profile(self.config)
                             self.menu.show(x, y, self.profile)
+                            # 屏幕边缘自适应后圆盘中心可能偏移，同步手势
+                            # 判定原点，保证高亮显示与松手结算一致
+                            try:
+                                pcx, pcy = self.menu.display_center_physical()
+                                self.gesture_engine.set_gesture_center(
+                                    pcx, pcy)
+                            except Exception as e:
+                                self.log.error("同步手势中心失败: %s", e,
+                                               exc_info=True)
                         elif event_type == "hide":
                             self.menu.hide()
                             # 钩子不拦截右键：松手时 CAD 会弹右键菜单，
@@ -237,8 +247,10 @@ class CADGestureApp:
                                 desc = sector_cfg.get("description", "")
                                 target = profile.get("target", "autocad")
                                 if key:
-                                    execute_with_cancel(key, desc, target)
+                                    # 松手即弹提示：先显示再发命令，不等 COM SendCommand 返回
+                                    # （SendCommand 在 CAD 忙时可能阻塞，弹窗不能被它拖后）
                                     self._show_feedback(sector_cfg)
+                                    execute_with_cancel(key, desc, target)
                             except Exception as e:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)
                         elif event_type == "update_check_result":
@@ -291,6 +303,8 @@ class CADGestureApp:
         """应用界面模式：更新全局 QSS + 所有已存在顶层窗口标题栏 + 记录生效值"""
         self._ui_mode = mode
         set_ui_mode(mode)
+        set_ui_font_scale(self.config.get("settings", {}).get(
+            "ui_font_scale", 100) / 100.0)
         self._applied_mode = current_ui_mode()
         self.app.setStyleSheet(build_app_qss(mode))
         for w in self.app.topLevelWidgets():
@@ -475,8 +489,8 @@ class CADGestureApp:
             self.menu.update_config(self.config)
             # 界面模式变化时同步全局（配置窗口已应用，这里保持模块状态一致）
             mode = self.config.get("settings", {}).get("ui_mode", "dark")
-            if mode != self._ui_mode:
-                self._apply_ui_mode(mode)
+            # 无条件刷新：界面字号（ui_font_scale）变化也需重建 QSS
+            self._apply_ui_mode(mode)
         except Exception as e:
             self.log.error("重载配置失败: %s", e, exc_info=True)
 

@@ -357,11 +357,20 @@ def _default_config() -> Dict[str, Any]:
             "ui_mode": "dark",
             "trigger_button": "right",
             "gesture_trail": True,
+            "menu_clamp_to_screen": True,
+            "menu_font_scale": 100,
+            "ui_font_scale": 100,
+            "custom_text": "#e9edf2",
+            "custom_highlight": "#6fa3d8",
+            "custom_bg": "#1a202b",
+            "custom_hover": "#2a3a4d",
             "command_feedback": True,
             "feedback_position": "bottom_center",
             "feedback_show_name": True,
             "feedback_show_key": True,
-            "feedback_duration_ms": 1500
+            "feedback_duration_ms": 1500,
+            "feedback_offset_x": 0,
+            "feedback_offset_y": 0
         },
         "profiles": {
             "AutoCAD-常用": {

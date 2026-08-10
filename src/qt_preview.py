@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QPushButton,
 from src.gesture_engine import calc_sector
 from src.menu_geometry import scaled_radii
 from src.i18n import T
-from src.theme import get_ui, theme_from_settings
+from src.theme import get_ui, theme_from_settings, font_px
 from src.qt_renderer import (INNER, OUTER, EXTENSION, draw_shadow, draw_ring,
                              draw_center)
 
@@ -67,7 +67,7 @@ class CommandTree(QTreeWidget):
         p.drawRoundedRect(1, 1, pm.width() - 2, pm.height() - 2, 6, 6)
         p.setPen(QColor("#ffffff"))
         f = QFont("Microsoft YaHei")
-        f.setPixelSize(12)
+        f.setPixelSize(font_px(12))
         p.setFont(f)
         p.drawText(pm.rect(), Qt.AlignCenter, label)
         p.end()
@@ -379,22 +379,24 @@ class QRadialPreview(QWidget):
         draw_shadow(p, cx, cy, ext, light=t.light)
         sel = self._drag_from if self._drag_from is not None else self.selected
         hov = self._drag_hover if self._drag_from is not None else self.hovered
+        fs = float(self.config.get("settings", {}).get(
+            "menu_font_scale", 100)) / 100.0
         draw_ring(p, cx, cy, outer, ext, n,
                   self.profile.get("extension_sectors", {}), t.extension,
                   layer=EXTENSION, sel=sel, hov=hov, light=t.light,
-                  placeholder=True)
+                  placeholder=True, font_scale=fs)
         draw_ring(p, cx, cy, inner, outer, n,
                   self.profile.get("outer_sectors", {}), t.outer,
                   layer=OUTER, sel=sel, hov=hov, light=t.light,
-                  placeholder=True)
+                  placeholder=True, font_scale=fs)
         draw_ring(p, cx, cy, dead, inner, n,
                   self.profile.get("sectors", {}), t.inner,
                   layer=INNER, sel=sel, hov=hov, light=t.light,
-                  placeholder=True)
+                  placeholder=True, font_scale=fs)
 
         label, sub = self._center_texts()
         draw_center(p, cx, cy, dead, t, min(self.width(), self.height()),
-                    label, sub)
+                    label, sub, font_scale=fs)
         p.end()
 
     def _center_texts(self):

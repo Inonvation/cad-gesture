@@ -13,6 +13,20 @@ from typing import Dict, Optional
 
 # ========== 布局常量（间距 / 圆角 / 字号） ==========
 
+# 界面整体字号缩放（1.0 = 默认）；由 set_ui_font_scale 设置，build_qss 读取
+_UI_FONT_SCALE = 1.0
+
+
+def set_ui_font_scale(scale: float) -> None:
+    """设置界面整体字号缩放（0.8 ~ 1.5），重建 QSS 后生效"""
+    global _UI_FONT_SCALE
+    _UI_FONT_SCALE = max(0.8, min(1.5, float(scale)))
+
+
+def font_px(px: int) -> int:
+    """按当前界面字号缩放返回像素字号（下限 6px）"""
+    return max(6, int(round(px * _UI_FONT_SCALE)))
+
 SP_SM = 4
 SP_MD = 8
 SP_LG = 12
@@ -221,7 +235,7 @@ def build_qss(t: UITheme) -> str:
     """从设计 token 生成全局样式表（界面统一风格，不再散落硬编码颜色）"""
     return f"""
 QMainWindow, QWidget {{ background: {t.bg}; color: {t.text};
-                       font-size: {FONT_BASE}px; }}
+                       font-size: {font_px(FONT_BASE)}px; }}
 QLabel {{ background: transparent; }}
 QToolTip {{ background: {t.bg_overlay}; color: {t.text};
             border: 1px solid {t.border_strong}; padding: 4px 8px; }}
@@ -385,10 +399,10 @@ QFrame#popupCard {{
 }}
 QFrame#popupCard QLabel {{ background: transparent; }}
 QLabel#popupTitle {{
-    color: {t.text}; font-size: {FONT_SM}px; font-weight: 600;
+    color: {t.text}; font-size: {font_px(FONT_SM)}px; font-weight: 600;
 }}
-QLabel#popupMeta {{ color: {t.text_muted}; font-size: {FONT_XS}px; }}
-QLabel#fieldName {{ color: {t.text_muted}; font-size: {FONT_XS}px; }}
+QLabel#popupMeta {{ color: {t.text_muted}; font-size: {font_px(FONT_XS)}px; }}
+QLabel#fieldName {{ color: {t.text_muted}; font-size: {font_px(FONT_XS)}px; }}
 QFrame#popupCard QLineEdit {{
     background: {t.bg_input}; border: 1px solid {t.border_strong};
     border-radius: 5px; padding: 4px 8px; min-height: 0;
@@ -580,43 +594,55 @@ def _reg(t: MenuTheme):
     MENU_THEMES[t.name] = t
 
 
-# 8 套主题：色相取自现主题主色，保证"天蓝还是天蓝"，但由生成器统一质感
+# 5 套预设主题（其余需求交给"自定义"直接指定颜色）
 _reg(_make_theme("azure", "天蓝", _hue_of("#38bdf8"), 0.30))
 _reg(_make_theme("emerald", "翡翠", _hue_of("#34d399"), 0.30))
 _reg(_make_theme("crimson", "绯红", _hue_of("#fb7185"), 0.30))
 _reg(_make_theme("midnight", "午夜", _hue_of("#a78bfa"), 0.34))
-# 极光保留三色特色：内层青、外层紫、扩展圈青（由色相覆盖实现）
-_reg(MenuTheme(
-    name="aurora", label="极光",
-    inner=_derive_ring(_hue_of("#22d3ee"), _INNER_L, 0.30),
-    outer=_derive_ring(_hue_of("#a78bfa"), _OUTER_L, 0.34),
-    extension=_derive_ring(_hue_of("#22d3ee"), _EXT_L, 0.30),
-    dead_zone=_hls(_hue_of("#22d3ee"), 0.075, 0.14),
-    dead_zone_outline=_hls(_hue_of("#22d3ee"), 0.20, 0.20),
-    center_text="#e9edf2",
-    selected_border=_derive_ring(_hue_of("#22d3ee"), _INNER_L, 0.30).highlight,
-    border=_hls(_hue_of("#22d3ee"), 0.06, 0.3),
-    accent_dim=_hls(_hue_of("#a78bfa"), 0.40, 0.60),
-))
 _reg(_make_theme("graphite", "石墨", _hue_of("#94a3b8"), 0.22))
-_reg(_make_theme("amber", "琥珀", _hue_of("#d9a545"), 0.32))   # 新增
-_reg(_make_theme("mono", "单色", _hue_of("#c8d0d8"), 0.0))     # 新增：无彩色
 
-# 自定义主题色相（用户主色），默认给一个柔和蓝
-_CUSTOM_ACCENT = "#6fa3d8"
-
-
-def make_custom_theme(accent: str) -> MenuTheme:
-    """由用户自选主色推导整套圆盘主题"""
-    h, _, _ = _hex_to_hls(accent)
-    return _make_theme("custom", "自定义", h, 0.32)
+# 自定义主题四个颜色项的默认值（深色界面基调）
+_CUSTOM_DEFAULTS = {
+    "custom_text": "#e9edf2",
+    "custom_highlight": "#6fa3d8",
+    "custom_bg": "#1a202b",
+    "custom_hover": "#2a3a4d",
+}
 
 
-def get_menu_theme(name: str = "azure",
-                   custom_accent: Optional[str] = None) -> MenuTheme:
-    """按名称获取圆盘主题；custom 时用自选主色生成，未知名称回退天蓝"""
-    if name == "custom":
-        return make_custom_theme(custom_accent or _CUSTOM_ACCENT)
+def make_custom_theme(text: str, highlight: str, bg: str,
+                      hover: str) -> MenuTheme:
+    """由用户指定的四个颜色构建圆盘主题（文字 / 高亮 / 背景 / 悬浮）。"""
+    h, l, s = _hex_to_hls(bg)
+    th, tl, ts = _hex_to_hls(text)
+    outline = _hls(h, max(0.0, l - 0.15), min(0.4, s + 0.12))
+
+    def ring():
+        return RingColors(
+            normal=bg,
+            empty=_hls(h, max(0.0, l - 0.05), max(0.0, s - 0.05)),
+            highlight=highlight,
+            hover=hover,
+            outline=outline,
+            outline_hl=highlight,
+            text=text,
+            text_dim=_hls(th, max(0.25, tl - 0.25), min(0.15, ts)),
+        )
+
+    return MenuTheme(
+        name="custom", label="自定义",
+        inner=ring(), outer=ring(), extension=ring(),
+        dead_zone=_hls(h, max(0.0, l + 0.06), min(0.3, s + 0.05)),
+        dead_zone_outline=outline,
+        center_text=text,
+        selected_border=highlight,
+        border=outline,
+        accent_dim=highlight,
+    )
+
+
+def get_menu_theme(name: str = "azure") -> MenuTheme:
+    """按名称获取预设圆盘主题；未知名称回退天蓝（custom 由 theme_from_settings 处理）"""
     return MENU_THEMES.get(name, MENU_THEMES["azure"])
 
 
@@ -627,8 +653,15 @@ def theme_from_settings(settings: dict, ui_mode: str = None) -> MenuTheme:
     与浅色 chrome 协调；深色模式返回原深色主题。
     """
     mode = (ui_mode or settings.get("ui_mode", "dark"))
-    t = get_menu_theme(settings.get("menu_theme", "azure"),
-                       settings.get("custom_accent"))
+    name = settings.get("menu_theme", "azure")
+    if name == "custom":
+        t = make_custom_theme(
+            settings.get("custom_text", _CUSTOM_DEFAULTS["custom_text"]),
+            settings.get("custom_highlight", _CUSTOM_DEFAULTS["custom_highlight"]),
+            settings.get("custom_bg", _CUSTOM_DEFAULTS["custom_bg"]),
+            settings.get("custom_hover", _CUSTOM_DEFAULTS["custom_hover"]))
+    else:
+        t = MENU_THEMES.get(name, MENU_THEMES["azure"])
     if effective_ui_mode(mode) == "light":
         return make_light_theme(t)
     return t
