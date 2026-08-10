@@ -284,6 +284,14 @@ class CADGestureApp:
                 timer.start()
             else:
                 timer.stop()
+        # 同步运行时圆盘主题（system 模式下系统深浅色切换时，圆盘 hover/配色
+        # 必须跟着变；__init__ 早期调用时 menu 尚未创建，需判空）
+        menu = getattr(self, "menu", None)
+        if menu is not None:
+            try:
+                menu.update_config(self.config)
+            except Exception as e:
+                self.log.error("刷新圆盘主题失败: %s", e, exc_info=True)
 
     def _poll_system_theme(self):
         """system 模式下系统主题变化时自动刷新界面 + 顶栏（5 秒轮询）"""
