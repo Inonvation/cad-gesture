@@ -147,8 +147,9 @@ a.binaries = [b for b in a.binaries
 
 # ========== 排除冗余二进制（孤儿 DLL / 用不到的扩展） ==========
 _EXCLUDE_EXTRA = {
-    "tcl86t.dll", "tk86t.dll", "tcl87t.dll", "tk87t.dll",  # tkinter 附带
-    "libcrypto-3.dll", "libssl-3.dll",  # 仅被已排除的 Qt6Network 引用
+    "tcl86t.dll", "tk86t.dll", "tcl87t.dll", "tk87t.dll",  # tkinter 依赖
+    # 注意：libcrypto-3.dll / libssl-3.dll 不能排除——Python 的 ssl 模块（_ssl.pyd）
+    # 依赖它们，排除了会导致打包版 https 请求全部失败（unknown url type: https）
 }
 a.binaries = [b for b in a.binaries
               if _os.path.basename(b[0]) not in _EXCLUDE_EXTRA

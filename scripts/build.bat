@@ -1,66 +1,97 @@
 @echo off
-chcp 65001 >nul
 echo ========================================
-echo   CADé¼ æ ‡æ‰‹åŠ¿å·¥å…· - ä¸€é”®æ‰“åŒ…è„šæœ¬
+echo   CADÊó±êÊÖÊÆ¹¤¾ß - Ò»¼ü´ò°ü½Å±¾
 echo ========================================
 echo.
 
-:: åˆ‡æ¢åˆ°é¡¹ç›®æ ¹ç›®å½•ï¼ˆè„šæœ¬åœ¨ scripts\ å­ç›®å½•ï¼‰
+:: ÇĞ»»µ½ÏîÄ¿¸ùÄ¿Â¼£¨½Å±¾ÔÚ scripts\ ×ÓÄ¿Â¼£©
 cd /d "%~dp0.."
 
-:: æ¸…ç†æ—§çš„æ„å»ºæ–‡ä»¶
-echo [1/4] æ¸…ç†æ—§çš„æ„å»ºæ–‡ä»¶...
+:: Python312 »·¾³£¨´ò°ü±ØĞëÓÃËü£¬ÆäËû»·¾³¿ÉÄÜÈ± PyInstaller£©
+set "PY312=C:\Users\cy\AppData\Local\Programs\Python\Python312\python.exe"
+:: Inno Setup 6.3+£¨ĞèÒª x64compatible / CloseApplications ÌØĞÔ£©
+set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if not exist "%ISCC%" (
+    if exist "D:\Inno Setup 6\ISCC.exe" set "ISCC=D:\Inno Setup 6\ISCC.exe"
+)
+
+:: ÇåÀí¾ÉµÄ¹¹½¨ÎÄ¼ş
+echo [1/5] ÇåÀí¾ÉµÄ¹¹½¨ÎÄ¼ş...
 if exist "build" (
     rmdir /s /q "build"
-    echo       å·²åˆ é™¤ build ç›®å½•
+    echo       ÒÑÉ¾³ı build Ä¿Â¼
 )
 if exist "dist" (
     rmdir /s /q "dist"
-    echo       å·²åˆ é™¤ dist ç›®å½•
+    echo       ÒÑÉ¾³ı dist Ä¿Â¼
 )
 echo.
 
-:: æ‰§è¡Œ PyInstaller æ‰“åŒ…
-echo [2/4] æ­£åœ¨æ‰“åŒ…ï¼ˆé¦–æ¬¡å¯èƒ½éœ€è¦ 1-2 åˆ†é’Ÿï¼‰...
-pyinstaller cad_gesture.spec --clean --noconfirm
+:: Ö´ĞĞ PyInstaller ´ò°ü
+echo [2/5] ÕıÔÚ´ò°ü£¨Ê×´Î¿ÉÄÜĞèÒª 1-2 ·ÖÖÓ£©...
+"%PY312%" -m PyInstaller cad_gesture.spec --clean --noconfirm
 if errorlevel 1 (
     echo.
-    echo [ERROR] æ‰“åŒ…å¤±è´¥ï¼è¯·æ£€æŸ¥é”™è¯¯ä¿¡æ¯ã€‚
+    echo [ERROR] ´ò°üÊ§°Ü£¡Çë¼ì²é´íÎóĞÅÏ¢¡£
     pause
     exit /b 1
 )
-echo       æ‰“åŒ…å®Œæˆï¼
+echo       ´ò°üÍê³É£¡
 echo.
 
-:: å¤åˆ¶é…ç½®æ–‡ä»¶åˆ°è¾“å‡ºç›®å½•
-echo [3/4] å¤åˆ¶é…ç½®æ–‡ä»¶...
+:: ¸´ÖÆÅäÖÃÎÄ¼şµ½Êä³öÄ¿Â¼
+echo [3/5] ¸´ÖÆÅäÖÃÎÄ¼ş...
 if not exist "dist\config" (
     mkdir "dist\config"
 )
 if exist "config\config.json" (
     copy "config\config.json" "dist\config\config.json" >nul
-    echo       å·²å¤åˆ¶ config\config.json
+    echo       ÒÑ¸´ÖÆ config\config.json
 ) else (
-    echo [WARNING] config\config.json ä¸å­˜åœ¨ï¼Œè·³è¿‡å¤åˆ¶
+    echo [WARNING] config\config.json ²»´æÔÚ£¬Ìø¹ı¸´ÖÆ
 )
 echo.
 
-:: å®Œæˆ
-echo [4/4] æ‰“åŒ…å®Œæˆï¼
+:: ±àÒë°²×°°ü£¨°æ±¾ºÅ´Ó version.txt ×Ô¶¯ÌáÈ¡×¢Èë£©
+echo [4/5] ±àÒë°²×°°ü...
+:: %PY312% ÎŞ¿Õ¸ñ£¬for /f ÃüÁîÌæ»»ÖĞ²»ÄÜ´øÒıºÅ£¨»áµ¼ÖÂ½âÎöÊ§°Ü£©
+for /f %%v in ('%PY312% scripts\read_version.py') do set VERSION=%%v
+if errorlevel 1 (
+    echo [ERROR] ¶ÁÈ¡°æ±¾ºÅÊ§°Ü£¡
+    pause
+    exit /b 1
+)
+echo       °æ±¾ºÅ: %VERSION%
+if exist "%ISCC%" (
+    "%ISCC%" /DMyAppVersion=%VERSION% cad_gesture.iss
+    if errorlevel 1 (
+        echo [ERROR] °²×°°ü±àÒëÊ§°Ü£¡
+        pause
+        exit /b 1
+    )
+    echo       °²×°°ü±àÒëÍê³É£¡
+) else (
+    echo [WARNING] Î´ÕÒµ½ Inno Setup£¨%ISCC%£©£¬Ìø¹ı°²×°°ü±àÒë
+)
+echo.
+
+:: Íê³É
+echo [5/5] ´ò°üÍê³É£¡
 echo.
 echo ========================================
-echo   è¾“å‡ºç›®å½•: dist\
-echo   ä¸»ç¨‹åº:   dist\CADGesture-x64.exe
-echo   é…ç½®æ–‡ä»¶: dist\config\config.json
+echo   Êä³öÄ¿Â¼: dist\
+echo   ÂÌÉ«°æ:   dist\CADGesture-x64.exe
+echo   °²×°°æ:   dist\Setup-CADGesture-v%VERSION%.exe
+echo   ÅäÖÃÎÄ¼ş: dist\config\config.json
 echo ========================================
 echo.
-echo   ä½¿ç”¨æ–¹æ³•: å°† dist æ–‡ä»¶å¤¹æ•´ä¸ªå¤åˆ¶åˆ°ä»»æ„ä½ç½®
-echo             åŒå‡» CADGesture-x64.exe å³å¯è¿è¡Œ
+echo   Ê¹ÓÃ·½·¨: ½« dist ÎÄ¼ş¼ĞÕû¸ö¸´ÖÆµ½ÈÎÒâÎ»ÖÃ
+echo             Ë«»÷ CADGesture-x64.exe ¼´¿ÉÔËĞĞ
 echo ========================================
 echo.
 
-:: è¯¢é—®æ˜¯å¦æ‰“å¼€è¾“å‡ºç›®å½•
-set /p OPEN_DIR="æ˜¯å¦æ‰“å¼€è¾“å‡ºç›®å½•ï¼Ÿ(Y/N): "
+:: Ñ¯ÎÊÊÇ·ñ´ò¿ªÊä³öÄ¿Â¼
+set /p OPEN_DIR="ÊÇ·ñ´ò¿ªÊä³öÄ¿Â¼£¿(Y/N): "
 if /i "%OPEN_DIR%"=="Y" (
     explorer "dist"
 )
