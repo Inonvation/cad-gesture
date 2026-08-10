@@ -893,8 +893,7 @@ class QConfigGUI(QMainWindow):
         geo = self.screen().availableGeometry()
         w, h = self._popup.width(), self._popup.height()
         cg = self.preview.mapToGlobal(self.preview.rect().center())
-        scale = min(self.preview.width(), self.preview.height()) / 560.0
-        disc_r = 240 * scale
+        disc_r = self.preview.outermost_radius_px()
         gap = 12
 
         x = cg.x() - w // 2

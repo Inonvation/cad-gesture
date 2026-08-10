@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QLabel, QPushButton,
                                QToolTip, QTreeWidget, QWidget)
 
 from src.gesture_engine import calc_sector
+from src.menu_geometry import scaled_radii
 from src.i18n import T
 from src.theme import get_ui, theme_from_settings
 from src.qt_renderer import (INNER, OUTER, EXTENSION, draw_shadow, draw_ring,
@@ -162,15 +163,21 @@ class QRadialPreview(QWidget):
 
     # ---- 几何 ----
     def _geo(self):
-        s = min(self.width(), self.height())
-        cx, cy = self.width() / 2, self.height() / 2
-        scale = s / 560.0  # 基准 560px 圆盘
-        return cx, cy, scale
+        """返回 (cx, cy, fit)：fit 按实际最外圈半径自适应，防 150% 缩放下裁切"""
+        w, h = self.width(), self.height()
+        cx, cy = w / 2, h / 2
+        ext = self._radii()["ext_ring_radius"] or 1
+        avail = min(w, h) / 2 - 24
+        return cx, cy, max(0.01, avail / ext)
 
-    def _radius(self, key, base):
-        # 配置界面预览使用固定基准半径，保证编辑时预览稳定
-        return {"dead_zone_radius": 30, "ring_radius": 100,
-                "outer_ring_radius": 180, "ext_ring_radius": 240}.get(key, base)
+    def _radii(self) -> dict:
+        """实际生效半径（配置值 × menu_scale），与运行时圆盘完全一致"""
+        return scaled_radii(self.config.get("settings", {}))
+
+    def outermost_radius_px(self) -> float:
+        """预览中实际最外圈半径（像素），供浮层定位使用"""
+        _, _, fit = self._geo()
+        return self._radii()["ext_ring_radius"] * fit
 
     def _sector_at(self, x, y):
         if self.profile is None:
@@ -178,10 +185,9 @@ class QRadialPreview(QWidget):
         cx, cy, scale = self._geo()
         dx, dy = x - cx, y - cy
         dist = math.hypot(dx, dy) / scale
-        dead = self._radius("dead_zone_radius", 30)
-        inner = self._radius("ring_radius", 100)
-        outer = self._radius("outer_ring_radius", 180)
-        ext = self._radius("ext_ring_radius", 240)
+        r = self._radii()
+        dead, inner, outer, ext = (r["dead_zone_radius"], r["ring_radius"],
+                                   r["outer_ring_radius"], r["ext_ring_radius"])
         n = self.config.get("settings", {}).get("sector_count", 8)
         if dist < dead:
             return None
@@ -364,23 +370,27 @@ class QRadialPreview(QWidget):
         cx, cy, scale = self._geo()
         t = self.theme
         n = self.config.get("settings", {}).get("sector_count", 8)
-        dead = self._radius("dead_zone_radius", 30) * scale
-        inner = self._radius("ring_radius", 100) * scale
-        outer = self._radius("outer_ring_radius", 180) * scale
-        ext = self._radius("ext_ring_radius", 240) * scale
+        r = self._radii()
+        dead, inner, outer, ext = (r["dead_zone_radius"] * scale,
+                                   r["ring_radius"] * scale,
+                                   r["outer_ring_radius"] * scale,
+                                   r["ext_ring_radius"] * scale)
 
         draw_shadow(p, cx, cy, ext, light=t.light)
         sel = self._drag_from if self._drag_from is not None else self.selected
         hov = self._drag_hover if self._drag_from is not None else self.hovered
         draw_ring(p, cx, cy, outer, ext, n,
                   self.profile.get("extension_sectors", {}), t.extension,
-                  layer=EXTENSION, sel=sel, hov=hov, light=t.light)
+                  layer=EXTENSION, sel=sel, hov=hov, light=t.light,
+                  placeholder=True)
         draw_ring(p, cx, cy, inner, outer, n,
                   self.profile.get("outer_sectors", {}), t.outer,
-                  layer=OUTER, sel=sel, hov=hov, light=t.light)
+                  layer=OUTER, sel=sel, hov=hov, light=t.light,
+                  placeholder=True)
         draw_ring(p, cx, cy, dead, inner, n,
                   self.profile.get("sectors", {}), t.inner,
-                  layer=INNER, sel=sel, hov=hov, light=t.light)
+                  layer=INNER, sel=sel, hov=hov, light=t.light,
+                  placeholder=True)
 
         label, sub = self._center_texts()
         draw_center(p, cx, cy, dead, t, min(self.width(), self.height()),

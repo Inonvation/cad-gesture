@@ -9,6 +9,7 @@ import ctypes.wintypes as wintypes
 from typing import Callable, Optional, Tuple
 
 from src.logger import get_logger
+from src.menu_geometry import menu_scale, scaled_radius
 
 # Win32 API常量
 WH_MOUSE_LL = 14
@@ -105,11 +106,11 @@ class GestureEngine:
     @property
     def menu_scale(self) -> float:
         """整体圆盘缩放比例（50% ~ 150%，默认 100%）"""
-        return self.config.get("settings", {}).get("menu_scale", 100) / 100.0
+        return menu_scale(self.config.get("settings", {}))
 
     @property
     def dead_zone(self) -> int:
-        return int(self.config.get("settings", {}).get("dead_zone_radius", 24) * self.menu_scale)
+        return scaled_radius(self.config.get("settings", {}), "dead_zone_radius")
 
     @property
     def trigger_distance(self) -> int:
@@ -118,11 +119,11 @@ class GestureEngine:
 
     @property
     def ring_radius(self) -> int:
-        return int(self.config.get("settings", {}).get("ring_radius", 70) * self.menu_scale)
+        return scaled_radius(self.config.get("settings", {}), "ring_radius")
 
     @property
     def outer_ring_radius(self) -> int:
-        return int(self.config.get("settings", {}).get("outer_ring_radius", 135) * self.menu_scale)
+        return scaled_radius(self.config.get("settings", {}), "outer_ring_radius")
 
     @property
     def hold_threshold_ms(self) -> int:

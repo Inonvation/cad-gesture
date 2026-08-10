@@ -199,7 +199,8 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
               outer_r: float, n: int, sectors: dict, rc,
               layer: str = INNER, hl_idx: int = -1, hl_layer=None,
               hl_fade: float = 1.0, sel=None, hov=None,
-              label_offset: float = 0.5, light: bool = False) -> None:
+              label_offset: float = 0.5, light: bool = False,
+              placeholder: bool = False) -> None:
     """画一层扇区环。
 
     高亮优先级：selected > hovered > 高亮层。
@@ -266,6 +267,17 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
                                else rc.text_dim)
             draw_label(p, cx, cy, inner_r, outer_r, n, i, label, color,
                        bold, label_offset, light)
+        elif placeholder and not is_hl and not is_sel and not is_hov:
+            # 空扇区占位：径向中点一个小圆点，提示该位置可放置命令（仅编辑/尺寸预览）
+            mid = math.radians(i * 360 / n - 90)
+            pr = inner_r + (outer_r - inner_r) * 0.5
+            dot_r = max(2.0, (outer_r - inner_r) * 0.10)
+            dot = QColor(rc.outline)
+            dot.setAlpha(90)
+            p.setPen(Qt.NoPen)
+            p.setBrush(dot)
+            p.drawEllipse(QPointF(cx + pr * math.cos(mid),
+                                  cy - pr * math.sin(mid)), dot_r, dot_r)
 
 
 def _center_line(p: QPainter, rect: QRectF, text: str, font: QFont,

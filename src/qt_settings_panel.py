@@ -27,6 +27,7 @@ from src.config_manager import (save_config, get_auto_start, set_auto_start,
                                 get_config_path, set_config_dir,
                                 reset_config_dir, _default_config)
 from src.i18n import T
+from src.menu_geometry import scaled_radii
 from src.theme import (get_ui, MENU_THEMES, make_custom_theme,
                        make_light_theme, theme_from_settings,
                        effective_ui_mode, FONT_XS, RADIUS_LG, _CUSTOM_ACCENT)
@@ -130,11 +131,9 @@ class _MenuPreview(QWidget):
         op = self.config.get("settings", {}).get("menu_opacity", 0.95)
         p.setOpacity(max(0.3, min(1.0, op)))
         s = self.config.get("settings", {})
-        sc = int(s.get("menu_scale", 100)) / 100.0
-        dead = int(int(s.get("dead_zone_radius", 30)) * sc)
-        inner = int(int(s.get("ring_radius", 100)) * sc)
-        outer = int(int(s.get("outer_ring_radius", 180)) * sc)
-        ext = int(int(s.get("ext_ring_radius", 240)) * sc)
+        r = scaled_radii(s)
+        dead, inner, outer, ext = (r["dead_zone_radius"], r["ring_radius"],
+                                   r["outer_ring_radius"], r["ext_ring_radius"])
         n = int(s.get("sector_count", 8))
         theme = theme_from_settings(s)
 
@@ -146,11 +145,13 @@ class _MenuPreview(QWidget):
         draw_shadow(p, cx, cy, ext * fit)
         draw_ring(p, cx, cy, outer * fit, ext * fit, n,
                   prof.get("extension_sectors", {}), theme.extension,
-                  layer=EXTENSION)
+                  layer=EXTENSION, placeholder=True)
         draw_ring(p, cx, cy, inner * fit, outer * fit, n,
-                  prof.get("outer_sectors", {}), theme.outer, layer=OUTER)
+                  prof.get("outer_sectors", {}), theme.outer,
+                  layer=OUTER, placeholder=True)
         draw_ring(p, cx, cy, dead * fit, inner * fit, n,
-                  prof.get("sectors", {}), theme.inner, layer=INNER)
+                  prof.get("sectors", {}), theme.inner,
+                  layer=INNER, placeholder=True)
         name = prof.get("name", "") if prof else ""
         draw_center(p, cx, cy, dead * fit, theme,
                     min(self.width(), self.height()), "", name)
