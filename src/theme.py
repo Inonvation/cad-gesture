@@ -9,7 +9,7 @@
 
 import colorsys
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict
 
 # ========== 布局常量（间距 / 圆角 / 字号） ==========
 
@@ -655,13 +655,14 @@ def theme_from_settings(settings: dict, ui_mode: str = None) -> MenuTheme:
     mode = (ui_mode or settings.get("ui_mode", "dark"))
     name = settings.get("menu_theme", "azure")
     if name == "custom":
-        t = make_custom_theme(
+        # 自定义主题直接使用用户四色：不再套 make_light_theme 推导，
+        # 否则用户设置的文字/高亮/背景/悬浮会被浅色推导全部覆盖
+        return make_custom_theme(
             settings.get("custom_text", _CUSTOM_DEFAULTS["custom_text"]),
             settings.get("custom_highlight", _CUSTOM_DEFAULTS["custom_highlight"]),
             settings.get("custom_bg", _CUSTOM_DEFAULTS["custom_bg"]),
             settings.get("custom_hover", _CUSTOM_DEFAULTS["custom_hover"]))
-    else:
-        t = MENU_THEMES.get(name, MENU_THEMES["azure"])
+    t = MENU_THEMES.get(name, MENU_THEMES["azure"])
     if effective_ui_mode(mode) == "light":
         return make_light_theme(t)
     return t

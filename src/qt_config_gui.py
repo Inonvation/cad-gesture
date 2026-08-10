@@ -722,6 +722,9 @@ class QConfigGUI(QMainWindow):
 
     def _on_settings_saved(self):
         self.preview.update_config(self.config)
+        # 设置页改动即时生效：通知 app 重载配置（菜单/引擎/全局 QSS 跟随更新）
+        if self.on_save:
+            self.on_save()
 
     def _set_status(self, msg: str):
         """记录最近状态消息（语言切换后按需重译显示）"""

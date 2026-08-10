@@ -47,7 +47,8 @@ class QRadialMenu(QWidget):
         self._visible = False
         self._center_x = 0
         self._center_y = 0
-        self._center_physical = (0, 0)  # 实际显示中心（物理像素，供判定同步）
+        self._center_physical = (0, 0)  # 实际显示中心（物理像素）
+        self._press_logical = (0.0, 0.0)  # 按下位置（逻辑坐标，方向判定原点）
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
@@ -139,6 +140,7 @@ class QRadialMenu(QWidget):
             # 关闭限制：中心始终对准鼠标按下位置，不偏移（圆盘可能被边缘遮挡）
             self._center_physical = (x, y)
         self._center_x, self._center_y = cx, cy
+        self._press_logical = (lx, ly)  # 方向判定始终以按下点为原点
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
@@ -187,6 +189,9 @@ class QRadialMenu(QWidget):
     def update_highlight(self, mouse_x: int, mouse_y: int):
         if not self._visible:
             return
+        # 方向/圈层判定以"圆盘显示中心"为原点：用户看到圆盘在哪，
+        # 鼠标指到圆盘哪个扇区，高亮就是哪个；与松手结算（gesture 同步
+        # 的圆盘中心）完全一致，边界 clamp 偏移也不乱
         dx, dy = mouse_x - self._center_x, mouse_y - self._center_y
         self._trail_dx, self._trail_dy = dx, dy
         dist = math.sqrt(dx * dx + dy * dy)

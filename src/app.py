@@ -221,6 +221,15 @@ class CADGestureApp:
                             if self.profile is None:
                                 self.profile = get_active_profile(self.config)
                             self.menu.show(x, y, self.profile)
+                            # 圆盘显示中心（屏幕边缘自适应后可能偏移）同步为
+                            # 手势判定原点：高亮与松手结算都以圆盘中心为准
+                            try:
+                                pcx, pcy = self.menu.display_center_physical()
+                                self.gesture_engine.set_gesture_center(
+                                    pcx, pcy)
+                            except Exception as e:
+                                self.log.error("同步手势中心失败: %s", e,
+                                               exc_info=True)
                         elif event_type == "feedback":
                             try:
                                 sector, ring_type, window_type = data

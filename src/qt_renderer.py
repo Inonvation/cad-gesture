@@ -152,11 +152,13 @@ def _fit_font(text: str, base_px: int, max_px: float,
     font = QFont("Microsoft YaHei")
     font.setBold(bold)
     size = base_px
-    font.setPixelSize(size)
+    # 取整后再设置：字号缩放后是浮点（如 11*1.08=11.88），setPixelSize 传浮点
+    # 会被截断回原值导致"调了没变化"，必须 round
+    font.setPixelSize(int(round(size)))
     fm = QFontMetrics(font)
     while size > 8 and fm.horizontalAdvance(text) > max_px:
         size -= 1
-        font.setPixelSize(size)
+        font.setPixelSize(int(round(size)))
         fm = QFontMetrics(font)
     return font
 
