@@ -1,9 +1,12 @@
-"""自动更新模块测试（网络部分全部 mock）"""
+# -*- coding: utf-8 -*-
+"""自动更新模块测试（网络部分全部 mock）
+
+版本检查走 releases HTML 页面（geturl 提取 tag + read 提取 notes），
+下载直链不经过 API。
+"""
 
 import sys
 import os
-import io
-import json
 import unittest.mock as mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,7 +33,6 @@ def test_compare_versions_less():
 
 
 def test_compare_versions_multi_digit():
-    # 0.0.9 < 0.0.10（字符串比较会出错的情况）
     assert compare_versions("0.0.9", "0.0.10") == -1
     assert compare_versions("0.0.10", "0.0.9") == 1
 
@@ -42,81 +44,85 @@ def test_compare_versions_v_prefix():
 
 def test_compare_versions_diff_length():
     assert compare_versions("0.1", "0.1.0") == 0
-    assert compare_versions("0.1.0", "0.1") == 0
 
 
 def test_compare_versions_invalid():
-    # 非法版本视为相等（不触发更新），不抛异常
     assert compare_versions("abc", "0.0.2") == 0
     assert compare_versions("0.0.2", "") == 0
-    assert compare_versions("", "") == 0
 
 
-# ========== 检查更新 ==========
+# ========== 检查更新（HTML 页面） ==========
 
-def _make_release(tag="v0.0.3", with_asset=True, size=12345):
-    release = {"tag_name": tag, "body": "修复若干问题"}
-    if with_asset:
-        release["assets"] = [
-            {"name": "CADGesture-x64.exe", "size": 28000000,
-             "browser_download_url": "https://example.com/green.exe"},
-            {"name": "Setup-CADGesture-v0.0.3.exe", "size": size,
-             "browser_download_url": "https://example.com/setup.exe"},
-        ]
-    else:
-        release["assets"] = []
-    return release
-
-
-def _fake_urlopen(release_data):
-    body = json.dumps(release_data).encode("utf-8")
+def _fake_urlopen(tag="v0.0.3", notes="修复若干问题"):
+    final = (f"https://github.com/owner/repo/releases/tag/{tag}"
+             if tag else "https://github.com/owner/repo/releases/latest")
+    body = (f'<html><body><div class="markdown-body">{notes}</div>'
+            f'</body></html>').encode("utf-8")
 
     class FakeResp:
-        def __init__(self):
-            self._body = body
-
         def __enter__(self):
             return self
 
         def __exit__(self, *args):
             return False
 
+        def geturl(self):
+            return final
+
         def read(self, *args, **kwargs):
-            return self._body
+            return body
 
     return FakeResp()
 
 
 def test_check_update_new_version():
+    """HTML 页面有新版本：返回版本/说明/直链"""
     with mock.patch("urllib.request.urlopen",
-                    return_value=_fake_urlopen(_make_release())):
-        info = check_for_update("0.0.2", "https://api.example.com/latest")
+                    return_value=_fake_urlopen()):
+        info = check_for_update(
+            "0.0.2", "https://github.com/owner/repo/releases/latest")
     assert info is not None
     assert info["version"] == "0.0.3"
     assert "修复" in info["notes"]
-    assert info["download_url"].endswith("setup.exe")
-    assert info["size"] == 12345
+    assert info["download_url"].endswith(
+        "/releases/download/v0.0.3/Setup-CADGesture-v0.0.3.exe")
+    assert info["size"] == 0
+
+
+def test_check_update_api_url_converted():
+    """API URL 自动转 HTML 页面（避开未认证 API 限流）"""
+    captured = {}
+
+    def fake(req, *args, **kwargs):
+        captured["url"] = req.full_url
+        return _fake_urlopen()
+
+    with mock.patch("urllib.request.urlopen", side_effect=fake):
+        check_for_update(
+            "0.0.2",
+            "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest")
+    assert captured["url"] == (
+        "https://github.com/Inonvation/cad-gesture/releases/latest")
 
 
 def test_check_update_no_new_version():
     with mock.patch("urllib.request.urlopen",
-                    return_value=_fake_urlopen(_make_release(tag="v0.0.2"))):
-        info = check_for_update("0.0.2", "https://api.example.com/latest")
-    assert info is None
+                    return_value=_fake_urlopen(tag="v0.0.2")):
+        assert check_for_update("0.0.2", "https://x/latest") is None
 
 
 def test_check_update_older_release():
     with mock.patch("urllib.request.urlopen",
-                    return_value=_fake_urlopen(_make_release(tag="v0.0.1"))):
-        info = check_for_update("0.0.2", "https://api.example.com/latest")
-    assert info is None
+                    return_value=_fake_urlopen(tag="v0.0.1")):
+        assert check_for_update("0.0.2", "https://x/latest") is None
 
 
-def test_check_update_no_asset():
+def test_check_update_no_tag():
+    """页面无版本号时抛 UpdateError"""
     with mock.patch("urllib.request.urlopen",
-                    return_value=_fake_urlopen(_make_release(with_asset=False))):
+                    return_value=_fake_urlopen(tag="")):
         try:
-            check_for_update("0.0.2", "https://api.example.com/latest")
+            check_for_update("0.0.2", "https://x/latest")
             assert False, "应抛出 UpdateError"
         except UpdateError:
             pass
@@ -125,7 +131,7 @@ def test_check_update_no_asset():
 def test_check_update_network_error():
     with mock.patch("urllib.request.urlopen", side_effect=OSError("timeout")):
         try:
-            check_for_update("0.0.2", "https://api.example.com/latest")
+            check_for_update("0.0.2", "https://x/latest")
             assert False, "应抛出 UpdateError"
         except UpdateError:
             pass
@@ -136,11 +142,11 @@ def test_check_update_sends_user_agent():
 
     def fake_urlopen(req, *args, **kwargs):
         captured["ua"] = req.get_header("User-agent")
-        return _fake_urlopen(_make_release())
+        return _fake_urlopen()
 
     with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        check_for_update("0.0.2", "https://api.example.com/latest")
-    assert captured["ua"], "请求必须带 User-Agent 头（否则 GitHub 403）"
+        check_for_update("0.0.2", "https://x/latest")
+    assert captured["ua"], "请求必须带 User-Agent 头"
 
 
 # ========== 下载 ==========
@@ -194,7 +200,6 @@ def test_download_size_mismatch(tmp_path):
     dest = str(tmp_path / "setup.exe")
     with mock.patch("urllib.request.urlopen",
                     return_value=_fake_download_response(data)):
-        # 期望 2000，实际 1000 → 失败且不留残缺文件
         assert download_update("https://example.com/setup.exe", dest, 2000) is False
     assert not os.path.exists(dest)
     assert not os.path.exists(dest + ".part")

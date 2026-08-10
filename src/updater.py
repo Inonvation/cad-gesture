@@ -1,13 +1,17 @@
+# -*- coding: utf-8 -*-
 """自动更新模块（纯逻辑，无 Qt 依赖）
 
 提供版本比对、GitHub Release 检查、流式下载、静默安装四个能力。
 网络检查/下载应在后台线程执行，避免阻塞 UI（见 app.py 集成方式）。
 
+版本检查走 GitHub releases HTML 页面（不受未认证 API 60 次/小时/IP 限流），
+下载用 release 资产直链（同样不经过 API）。
+
 UpdateInfo 结构:
-    {"version": "0.0.3", "notes": "...", "download_url": "...", "size": 12345}
+    {"version": "0.0.4", "notes": "...", "download_url": "...", "size": 0}
 """
 
-import json
+import html
 import os
 import re
 import subprocess
@@ -18,9 +22,6 @@ from src.version import __version__
 _USER_AGENT = f"CADGesture/{__version__}"
 _TIMEOUT = 15
 _CHUNK_SIZE = 64 * 1024
-
-# Setup 安装包的文件名约定（与 cad_gesture.iss 的 OutputBaseFilename 一致）
-_SETUP_NAME_RE = re.compile(r"^Setup-CADGesture-v\d+\.\d+\.\d+\.exe$", re.IGNORECASE)
 
 
 class UpdateError(Exception):
@@ -69,22 +70,23 @@ def compare_versions(a: str, b: str) -> int:
 
 
 def check_for_update(current_version: str, update_url: str) -> dict | None:
-    """检查 GitHub Release 是否有新版本
+    """检查 GitHub Release 是否有新版本（走 releases HTML 页面，不受 API 限流）
+
+    GitHub 未认证 API 限 60 次/小时/IP，共享 IP 下很快耗尽（表现为 403）。
+    releases HTML 页面与下载直链不经过 API，无此限制。update_url 支持：
+    - api.github.com/repos/{owner}/{repo}/releases/latest（自动转为 HTML 页面）
+    - github.com/{owner}/{repo}/releases/latest
 
     Returns:
         有新版本: {"version", "notes", "download_url", "size"}
         无新版本: None
     Raises:
-        UpdateError: 网络失败 / JSON 解析失败 / 找不到 Setup 附件
+        UpdateError: 网络失败 / 页面无版本号
     """
-    try:
-        req = urllib.request.Request(update_url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        raise UpdateError(f"检查更新失败（网络或 API 错误）: {e}") from e
-
-    tag = data.get("tag_name", "")
+    html_url = _to_releases_html_url(update_url)
+    tag, page_html = _fetch_latest_release(html_url)
+    if not tag:
+        raise UpdateError("检查更新失败（无法从 Release 页面获取版本号）")
     version = tag.lstrip("vV")
     if not version:
         raise UpdateError("Release 数据缺少版本号")
@@ -92,21 +94,54 @@ def check_for_update(current_version: str, update_url: str) -> dict | None:
     if compare_versions(version, current_version) <= 0:
         return None
 
-    asset = None
-    for a in data.get("assets", []) or []:
-        name = a.get("name", "")
-        if _SETUP_NAME_RE.match(name):
-            if asset is None or a.get("size", 0) > asset.get("size", 0):
-                asset = a
-    if asset is None:
-        raise UpdateError("Release 中找不到安装包附件")
-
+    # 资产直链（release 下载不走 API，不受限流）
+    base = html_url.rsplit("/releases/latest", 1)[0]
+    download_url = (f"{base}/releases/download/{tag}/"
+                    f"Setup-CADGesture-v{version}.exe")
     return {
         "version": version,
-        "notes": data.get("body", "") or "",
-        "download_url": asset.get("browser_download_url", ""),
-        "size": asset.get("size", 0),
+        "notes": _extract_notes(page_html),
+        "download_url": download_url,
+        "size": 0,  # 下载时从响应头实时读取 Content-Length
     }
+
+
+def _to_releases_html_url(url: str) -> str:
+    """api.github.com/repos/{owner}/{repo}/releases/latest → github.com HTML 页面"""
+    m = re.match(
+        r"https?://api\.github\.com/repos/([^/]+)/([^/]+)/releases/latest",
+        url)
+    if m:
+        return f"https://github.com/{m.group(1)}/{m.group(2)}/releases/latest"
+    return url
+
+
+def _fetch_latest_release(html_url: str) -> tuple:
+    """请求 releases/latest 页面；返回 (tag, html)；失败返回 ("", "")"""
+    try:
+        req = urllib.request.Request(html_url,
+                                     headers={"User-Agent": _USER_AGENT})
+        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+            final = resp.geturl()
+            page_html = resp.read().decode("utf-8", errors="ignore")
+        m = re.search(r"/releases/tag/([^/?#]+)", final)
+        return (m.group(1), page_html) if m else ("", "")
+    except Exception:
+        return "", ""
+
+
+def _extract_notes(page_html: str) -> str:
+    """从 release 页面 HTML 提取 markdown-body 描述文本；失败返回空串"""
+    try:
+        m = re.search(
+            r'<div[^>]*class="[^"]*markdown-body[^"]*"[^>]*>(.*?)</div>',
+            page_html, re.S)
+        if not m:
+            return ""
+        body = re.sub(r"<[^>]+>", "", m.group(1))
+        return html.unescape(body).strip()[:2000]
+    except Exception:
+        return ""
 
 
 def download_update(url: str, dest: str, expected_size: int = 0,

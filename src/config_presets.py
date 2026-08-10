@@ -351,7 +351,7 @@ def _default_config() -> Dict[str, Any]:
             "open_config_on_start": False,
             "menu_theme": "azure",
             "check_update_on_start": True,
-            "update_source_url": "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest",
+            "update_source_url": "https://github.com/Inonvation/cad-gesture/releases/latest",
             "last_update_check": "",
             "language": "zh",
             "ui_mode": "dark",

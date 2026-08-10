@@ -206,7 +206,7 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         settings["check_update_on_start"] = True
         migrated = True
     if "update_source_url" not in settings:
-        settings["update_source_url"] = "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest"
+        settings["update_source_url"] = "https://github.com/Inonvation/cad-gesture/releases/latest"
         migrated = True
     if "last_update_check" not in settings:
         settings["last_update_check"] = ""
