@@ -4,7 +4,8 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.gesture_engine import should_trigger_on_release, calc_sector
+from src.gesture_engine import (should_trigger_on_release,
+                                should_trigger_now, calc_sector)
 
 DEAD = 24.0
 TRIG = 15.0
@@ -50,3 +51,23 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print(f"[OK] {name}")
+
+
+
+def test_should_trigger_now_slide_immediate():
+    """滑动超过触发距离立即弹出，不要求长按时间（Quicker 风格）"""
+    assert should_trigger_now(10.0, 5.0, 10.0, 80.0)      # 距离达标，时间很短也触发
+    assert should_trigger_now(50.0, 0.0, 10.0, 80.0)
+    assert not should_trigger_now(9.9, 50.0, 10.0, 80.0)  # 距离不足且未到长按延迟不触发
+
+
+def test_should_trigger_now_long_press():
+    """按住超过长按延迟且有轻微位移（去手抖）时触发"""
+    assert should_trigger_now(3.0, 80.0, 10.0, 80.0)
+    assert should_trigger_now(5.0, 120.0, 10.0, 80.0)
+    assert not should_trigger_now(2.9, 120.0, 10.0, 80.0)  # 位移太小视为手抖
+
+
+def test_should_trigger_now_hold_without_move():
+    """按住不动（位移 0）不触发"""
+    assert not should_trigger_now(0.0, 500.0, 10.0, 80.0)

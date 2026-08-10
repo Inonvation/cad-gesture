@@ -39,7 +39,10 @@ src/
 每个事件包裹 `try-except`，防止单次错误崩溃整个队列循环。
 更新流程同模式：后台线程检查/下载 → 结果经 event_queue（`update_check_result` / `update_progress` / `update_download_done`）→ 主线程弹窗。
 
-**圈层判定**（半径统一取自 `menu_geometry.py` 的 `DEFAULT_RADII`，gesture_engine 触发、
+**触发与圈层判定**：触发 = 右键按下后滑动超过 `trigger_distance` 立即弹出（对齐 Quicker，
+不等长按时间），或按住超过 `hold_threshold_ms` 且有轻微位移时弹出。判定在独立轮询线程
+（每 15ms），不受鼠标事件频率影响，鼠标停住也能按时触发。
+圈层判定（半径统一取自 `menu_geometry.py` 的 `DEFAULT_RADII`，gesture_engine 触发、
 qt_radial_menu hover、配置两处预览共用）：
 距离 ≤ `ring_radius`(70) = 内层；≤ `outer_ring_radius`(135) = 外层；> `ext_ring_radius`(185) = 扩展圈
 （命令在 `extension_sectors`）。整体缩放由 `menu_scale`（50~150%）控制。
@@ -165,7 +168,7 @@ dist\CADGesture-x64.exe
 
 `%APPDATA%\CADGesture\config.json` — `settings` + `profiles`（与 exe 位置无关，用户可编辑；旧版 `config/config.json` 仅用于首次迁移）。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 字段：`description` = COM 命令名，`key` = pyautogui 回退键，`target` = `autocad`|`zwcad`。
-`settings` 关键项：`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 15）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 true）、`update_source_url`（更新源，默认 GitHub API）、`last_update_check`（上次检查时间，24h 频率控制）。
+`settings` 关键项：`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 true）、`update_source_url`（更新源，默认 GitHub API）、`last_update_check`（上次检查时间，24h 频率控制）。
 
 ## 提交规范
 

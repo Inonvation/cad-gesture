@@ -335,7 +335,7 @@ def _default_config() -> Dict[str, Any]:
         "settings": {
             "version": 1,
             "hold_threshold_ms": 80,
-            "trigger_distance": 15,
+            "trigger_distance": 10,
             "dead_zone_radius": 24,
             "ring_radius": 70,
             "outer_ring_radius": 135,

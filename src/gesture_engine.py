@@ -43,6 +43,22 @@ def calc_sector(dx: int, dy: int, sector_count: int) -> int:
     return int(adjusted / sec_angle) % sector_count
 
 
+
+# 长按触发所需的最小位移（px）：去手抖，按住不动不算长按
+_LONG_PRESS_MIN_DIST = 3
+
+
+def should_trigger_now(dist: float, held_ms: float,
+                       trigger_distance: float,
+                       hold_threshold_ms: float) -> bool:
+    """按住期间是否立即弹出圆盘（轮询判定用）。
+
+    对齐 Quicker：滑动超过触发距离立即弹出，不等长按时间；
+    或按住超过长按延迟且有轻微位移（去手抖）时也弹出。
+    """
+    if dist >= trigger_distance:
+        return True
+    return held_ms >= hold_threshold_ms and dist >= _LONG_PRESS_MIN_DIST
 def should_trigger_on_release(menu_shown: bool, dist: float, dead_zone: float,
                               trigger_distance: float, held_ms: float,
                               hold_threshold_ms: float) -> bool:
@@ -83,6 +99,8 @@ class GestureEngine:
         self._in_extension_zone: bool = False
         self._window_type: str = "autocad"
         self._window_cache: Tuple[str, float] = ("", 0.0)
+        self._latest_pos: Tuple[int, int] = (0, 0)  # 最新鼠标位置（轮询判定用）
+        self._trigger_thread = None  # 触发判定轮询线程（按住期间运行）
         self._lock = threading.Lock()
         self._hook = None
         self._hook_thread = None
@@ -129,7 +147,7 @@ class GestureEngine:
     @property
     def trigger_distance(self) -> int:
         """弹出圆盘所需的拖动距离（px），独立于死区，可自定义"""
-        return self.config.get("settings", {}).get("trigger_distance", 15)
+        return self.config.get("settings", {}).get("trigger_distance", 10)
 
     @property
     def ring_radius(self) -> int:
@@ -183,23 +201,9 @@ class GestureEngine:
         try:
             user32 = ctypes.windll.user32
             hwnd = user32.GetForegroundWindow()
-            class_name = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(hwnd, class_name, 256)
-            title = ctypes.create_unicode_buffer(256)
-            user32.GetWindowTextW(hwnd, title, 256)
-            cs, ts = class_name.value.lower(), title.value.lower()
-            self._log(f"前台窗口: title=[{ts[:60]}] class=[{cs[:40]}]")
-            
-            if "zwcad" in ts or "中望" in ts or "zwcad" in cs:
-                self._window_cache = ("zwcad", now)
-                return "zwcad"
-            
-            if "autocad" in ts:
-                self._window_cache = ("autocad", now)
-                return "autocad"
-
-            # 标题/类名未命中时按进程名判断（AutoCAD=acad.exe，中望=zwcad.exe），
-            # 避免中望CAD 标题不含"zwcad/中望"时被 afx 类名兜底误判成 AutoCAD
+            # 进程名判断最可靠且不跨进程发消息：GetWindowTextW 是跨进程
+            # WM_GETTEXT 同步调用，CAD 繁忙时可能阻塞整个鼠标钩子链，
+            # 因此进程名命中就直接返回，标题/类名仅作兜底
             exe = self._foreground_exe(hwnd)
             if exe:
                 if "zwcad" in exe:
@@ -208,7 +212,21 @@ class GestureEngine:
                 if "acad" in exe:
                     self._window_cache = ("autocad", now)
                     return "autocad"
-            
+            class_name = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, class_name, 256)
+            title = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(hwnd, title, 256)
+            cs, ts = class_name.value.lower(), title.value.lower()
+            self._log(f"前台窗口: title=[{ts[:60]}] class=[{cs[:40]}]")
+
+            if "zwcad" in ts or "中望" in ts or "zwcad" in cs:
+                self._window_cache = ("zwcad", now)
+                return "zwcad"
+
+            if "autocad" in ts:
+                self._window_cache = ("autocad", now)
+                return "autocad"
+
             if "afx" in cs and "zwcad" not in cs:
                 self._window_cache = ("autocad", now)
                 return "autocad"
@@ -241,6 +259,45 @@ class GestureEngine:
                 kernel32.CloseHandle(h)
         except Exception:
             return ""
+
+    def _start_trigger_monitor(self):
+        """右键按下后启动触发判定轮询线程（幂等）"""
+        with self._lock:
+            if self._trigger_thread is not None:
+                return
+            self._trigger_thread = threading.Thread(
+                target=self._trigger_loop, daemon=True)
+            self._trigger_thread.start()
+
+    def _trigger_loop(self):
+        """每 15ms 检查一次是否弹出圆盘：滑动达标立即触发，或长按轻微位移触发。
+
+        用独立线程轮询而不是在 mousemove 回调里判定：鼠标停住后
+        mousemove 不再产生，原实现会永远等不到触发（快速甩动后停住
+        必须继续滑动才出菜单）。"""
+        while True:
+            time.sleep(0.015)
+            cb = None
+            cb_args = None
+            with self._lock:
+                if not self._is_pressed or self._menu_shown:
+                    break
+                dx = self._latest_pos[0] - self._press_pos[0]
+                dy = self._latest_pos[1] - self._press_pos[1]
+                dist = math.sqrt(dx * dx + dy * dy)
+                held_ms = (time.monotonic() - self._press_time) * 1000
+                if should_trigger_now(dist, held_ms,
+                                      self.trigger_distance,
+                                      self.hold_threshold_ms):
+                    self._menu_shown = True
+                    cb = self.on_menu_show
+                    cb_args = (self._press_pos[0], self._press_pos[1],
+                               self._window_type)
+            if cb:
+                cb(*cb_args)
+                break
+        with self._lock:
+            self._trigger_thread = None
 
     def _hook_proc(self, nCode: int, wParam: wintypes.WPARAM,
                    lParam: wintypes.LPARAM) -> ctypes.c_ssize_t:
@@ -281,29 +338,26 @@ class GestureEngine:
                 with self._lock:
                     self._press_pos = (x, y)
                     self._press_time = time.monotonic()
+                    self._latest_pos = (x, y)
                     self._is_pressed = True
                     self._menu_shown = False
                     self._window_type = win_type
+                self._start_trigger_monitor()
 
         elif wParam == WM_MOUSEMOVE:
             with self._lock:
-                if self._is_pressed and not self._menu_shown:
-                    dx, dy = x - self._press_pos[0], y - self._press_pos[1]
-                    dist = math.sqrt(dx * dx + dy * dy)
-                    held_ms = (time.monotonic() - self._press_time) * 1000
-                    if dist >= self.trigger_distance and held_ms >= self.hold_threshold_ms:
-                        self._menu_shown = True
-                        callback = self.on_menu_show
-                        callback_args = (self._press_pos[0], self._press_pos[1],
-                                         self._window_type)
-                elif self._is_pressed and self._menu_shown:
-                    dx, dy = x - self._press_pos[0], y - self._press_pos[1]
-                    dist = math.sqrt(dx * dx + dy * dy)
-                    is_ext = dist > self.outer_ring_radius
-                    if is_ext != self._in_extension_zone:
-                        self._in_extension_zone = is_ext
-                        ext_hint_cb = self.on_extension_hint
-                        ext_hint_args = (is_ext,)
+                if self._is_pressed:
+                    # 只记录最新位置；触发判定由 _trigger_loop 轮询（不再受
+                    # mousemove 事件频率影响，鼠标停住也能按时触发）
+                    self._latest_pos = (x, y)
+                    if self._menu_shown:
+                        dx, dy = x - self._press_pos[0], y - self._press_pos[1]
+                        dist = math.sqrt(dx * dx + dy * dy)
+                        is_ext = dist > self.outer_ring_radius
+                        if is_ext != self._in_extension_zone:
+                            self._in_extension_zone = is_ext
+                            ext_hint_cb = self.on_extension_hint
+                            ext_hint_args = (is_ext,)
 
         elif wParam == WM_RBUTTONUP:
             ext_hint_cb = None

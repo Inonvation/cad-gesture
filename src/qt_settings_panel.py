@@ -497,7 +497,7 @@ class TriggerPage(_BasePage):
         self._hold_slider, self._hold_label = self._slider_row(
             "长按延迟", "hold_threshold_ms", 0, 200, "ms")
         self._trig_slider, self._trig_label = self._slider_row(
-            "触发距离", "trigger_distance", 8, 40, "px")
+            "触发距离", "trigger_distance", 5, 40, "px")
         self.body.addStretch(1)
 
 
