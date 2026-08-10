@@ -197,6 +197,9 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "menu_opacity" not in settings:
         settings["menu_opacity"] = 0.95
         migrated = True
+    if "menu_scale" not in settings:
+        settings["menu_scale"] = 100
+        migrated = True
     if "check_update_on_start" not in settings:
         settings["check_update_on_start"] = True
         migrated = True

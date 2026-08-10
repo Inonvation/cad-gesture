@@ -103,8 +103,13 @@ class GestureEngine:
         user32.CallNextHookEx.restype = ctypes.c_ssize_t
 
     @property
+    def menu_scale(self) -> float:
+        """整体圆盘缩放比例（50% ~ 150%，默认 100%）"""
+        return self.config.get("settings", {}).get("menu_scale", 100) / 100.0
+
+    @property
     def dead_zone(self) -> int:
-        return self.config.get("settings", {}).get("dead_zone_radius", 24)
+        return int(self.config.get("settings", {}).get("dead_zone_radius", 24) * self.menu_scale)
 
     @property
     def trigger_distance(self) -> int:
@@ -113,15 +118,15 @@ class GestureEngine:
 
     @property
     def ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("ring_radius", 70)
+        return int(self.config.get("settings", {}).get("ring_radius", 70) * self.menu_scale)
 
     @property
     def outer_ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("outer_ring_radius", 135)
+        return int(self.config.get("settings", {}).get("outer_ring_radius", 135) * self.menu_scale)
 
     @property
     def hold_threshold_ms(self) -> int:
-        return self.config.get("settings", {}).get("hold_threshold_ms", 100)
+        return self.config.get("settings", {}).get("hold_threshold_ms", 80)
 
     @property
     def sector_count(self) -> int:

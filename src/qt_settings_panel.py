@@ -29,7 +29,7 @@ from src.config_manager import (save_config, get_auto_start, set_auto_start,
 from src.i18n import T
 from src.theme import (get_ui, MENU_THEMES, make_custom_theme,
                        make_light_theme, theme_from_settings,
-                       FONT_XS, RADIUS_LG, _CUSTOM_ACCENT)
+                       effective_ui_mode, FONT_XS, RADIUS_LG, _CUSTOM_ACCENT)
 from src.qt_renderer import (draw_shadow, draw_ring, draw_center,
                              INNER, OUTER, EXTENSION)
 
@@ -130,28 +130,29 @@ class _MenuPreview(QWidget):
         op = self.config.get("settings", {}).get("menu_opacity", 0.95)
         p.setOpacity(max(0.3, min(1.0, op)))
         s = self.config.get("settings", {})
-        dead = int(s.get("dead_zone_radius", 30))
-        inner = int(s.get("ring_radius", 100))
-        outer = int(s.get("outer_ring_radius", 180))
-        ext = int(s.get("ext_ring_radius", 240))
+        sc = int(s.get("menu_scale", 100)) / 100.0
+        dead = int(int(s.get("dead_zone_radius", 30)) * sc)
+        inner = int(int(s.get("ring_radius", 100)) * sc)
+        outer = int(int(s.get("outer_ring_radius", 180)) * sc)
+        ext = int(int(s.get("ext_ring_radius", 240)) * sc)
         n = int(s.get("sector_count", 8))
         theme = theme_from_settings(s)
 
         avail = min(self.width(), self.height()) / 2 - 24
-        scale = avail / ext if ext else 1.0
+        fit = avail / ext if ext else 1.0
         cx, cy = self.width() / 2, self.height() / 2
         prof = self.profile or {}
 
-        draw_shadow(p, cx, cy, ext * scale)
-        draw_ring(p, cx, cy, outer * scale, ext * scale, n,
+        draw_shadow(p, cx, cy, ext * fit)
+        draw_ring(p, cx, cy, outer * fit, ext * fit, n,
                   prof.get("extension_sectors", {}), theme.extension,
                   layer=EXTENSION)
-        draw_ring(p, cx, cy, inner * scale, outer * scale, n,
+        draw_ring(p, cx, cy, inner * fit, outer * fit, n,
                   prof.get("outer_sectors", {}), theme.outer, layer=OUTER)
-        draw_ring(p, cx, cy, dead * scale, inner * scale, n,
+        draw_ring(p, cx, cy, dead * fit, inner * fit, n,
                   prof.get("sectors", {}), theme.inner, layer=INNER)
         name = prof.get("name", "") if prof else ""
-        draw_center(p, cx, cy, dead * scale, theme,
+        draw_center(p, cx, cy, dead * fit, theme,
                     min(self.width(), self.height()), "", name)
 
         # 底部标注各层半径与实际直径
@@ -161,7 +162,7 @@ class _MenuPreview(QWidget):
         f.setPixelSize(FONT_XS)
         p.setFont(f)
         p.drawText(6, self.height() - 6,
-                   T("内 {inner}px · 外 {outer}px · 扩展 {ext}px   实际直径 {dia}px")
+                   T("第一圈 {inner}px · 第二圈 {outer}px · 最外圈 {ext}px   实际直径 {dia}px")
                    .format(inner=inner, outer=outer, ext=ext, dia=ext * 2))
         p.end()
 
@@ -299,6 +300,7 @@ class AppearancePage(_BasePage):
         self.mode_combo = QComboBox()
         self.mode_combo.addItem(T("深色"), "dark")
         self.mode_combo.addItem(T("浅色"), "light")
+        self.mode_combo.addItem(T("跟随系统"), "system")
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_combo)
         mode_row.addStretch(1)
@@ -398,7 +400,7 @@ class AppearancePage(_BasePage):
 
     def _tile_pixmap_for(self, th):
         """按当前界面模式生成主题缩略图（浅色模式显示浅色版圆盘）"""
-        if self.config.get("settings", {}).get("ui_mode", "dark") == "light":
+        if effective_ui_mode(self.config.get("settings", {}).get("ui_mode", "dark")) == "light":
             return _tile_pixmap(make_light_theme(th))
         return _tile_pixmap(th)
 
@@ -443,15 +445,16 @@ class AppearancePage(_BasePage):
     def _refresh_custom_tile(self):
         accent = self.config.get("settings", {}).get("custom_accent", _CUSTOM_ACCENT)
         t = make_custom_theme(accent)
-        if self.config.get("settings", {}).get("ui_mode", "dark") == "light":
+        if effective_ui_mode(self.config.get("settings", {}).get("ui_mode", "dark")) == "light":
             t = make_light_theme(t)
         self._custom_tile.set_icon_pixmap(_tile_pixmap(t))
 
     def retranslate(self):
         super().retranslate()
         # 界面模式下拉项
-        for i, mode in enumerate(("dark", "light")):
-            self.mode_combo.setItemText(i, T("深色") if mode == "dark" else T("浅色"))
+        _mode_text = {"dark": T("深色"), "light": T("浅色"), "system": T("跟随系统")}
+        for i, mode in enumerate(("dark", "light", "system")):
+            self.mode_combo.setItemText(i, _mode_text[mode])
         # 主题色板名称
         for name, tile in self._theme_tiles.items():
             tile.set_label(T(MENU_THEMES[name].label))
@@ -491,14 +494,20 @@ class TriggerPage(_BasePage):
         super().__init__(config, parent)
         self.title.setText(T(self.title_zh))
         self._hold_slider, self._hold_label = self._slider_row(
-            "长按延迟", "hold_threshold_ms", 10, 200, "ms")
+            "长按延迟", "hold_threshold_ms", 0, 200, "ms")
         self._trig_slider, self._trig_label = self._slider_row(
             "触发距离", "trigger_distance", 8, 40, "px")
         self.body.addStretch(1)
 
 
 class SizePage(_BasePage):
-    """圆盘尺寸：5 个滑杆 + 右侧实时预览"""
+    """圆盘尺寸：整体大小 + 4 个半径滑杆（带顺序约束）+ 扇区数量 + 右侧实时预览"""
+
+    _RADIUS_KEYS = ("dead_zone_radius", "ring_radius",
+                    "outer_ring_radius", "ext_ring_radius")
+    _RADIUS_GAP = 10  # 相邻圈层最小间隔（px）
+    _RADIUS_DEFAULTS = {"dead_zone_radius": 24, "ring_radius": 70,
+                        "outer_ring_radius": 135, "ext_ring_radius": 185}
 
     def __init__(self, config, parent=None):
         self.title_zh = "圆盘尺寸"
@@ -512,27 +521,62 @@ class SizePage(_BasePage):
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(12)
         self._size_sliders = {}
-        for key, text, lo, hi, unit in (("dead_zone_radius", "中心死区", 8, 60, "px"),
-                                        ("ring_radius", "内层半径", 40, 160, "px"),
-                                        ("outer_ring_radius", "外层半径", 90, 260, "px"),
-                                        ("ext_ring_radius", "扩展圈", 140, 360, "px"),
+        for key, text, lo, hi, unit in (("menu_scale", "整体圆盘大小", 50, 150, "%"),
+                                        ("dead_zone_radius", "中心圆半径", 8, 60, "px"),
+                                        ("ring_radius", "第一圈半径", 40, 160, "px"),
+                                        ("outer_ring_radius", "第二圈半径", 90, 260, "px"),
+                                        ("ext_ring_radius", "最外圈半径", 140, 360, "px"),
                                         ("sector_count", "扇区数量", 4, 16, "")):
             sl, lb = self._slider_row(text, key, lo, hi, unit,
-                                      on_change=self._update_preview,
+                                      on_change=self._on_size_changed,
                                       container=lv)
             self._size_sliders[key] = sl
+        self._apply_radius_constraints()
         lv.addStretch(1)
         self._hbox.addWidget(left, 1)
         self.preview = _MenuPreview(self.config)
         self._hbox.addWidget(self.preview, 0, Qt.AlignHCenter)
         self.body.addLayout(self._hbox)
 
-    def _update_preview(self):
+    def _on_size_changed(self):
+        self._apply_radius_constraints()
         self.preview.update()
+
+    def _apply_radius_constraints(self):
+        """按顺序夹紧四个半径：中心圆半径 < 第一圈半径 < 第二圈半径 < 最外圈半径。
+        更新滑块范围并写回夹紧后的配置值，避免圈层重叠或倒序。"""
+        s = self.config.setdefault("settings", {})
+        d = self._RADIUS_DEFAULTS
+        keys = self._RADIUS_KEYS
+        vals = {k: int(s.get(k, d[k])) for k in keys}
+        bounds = {}
+        for i, k in enumerate(keys):
+            if i == 0:
+                v_min, v_max = 8, vals[keys[1]] - self._RADIUS_GAP
+            elif i == len(keys) - 1:
+                v_min, v_max = vals[keys[i - 1]] + self._RADIUS_GAP, 360
+            else:
+                v_min, v_max = (vals[keys[i - 1]] + self._RADIUS_GAP,
+                                vals[keys[i + 1]] - self._RADIUS_GAP)
+            v_max = max(v_min, v_max)
+            vals[k] = max(v_min, min(v_max, vals[k]))
+            bounds[k] = (v_min, v_max)
+        for k in keys:
+            s[k] = vals[k]
+            sl = self._size_sliders.get(k)
+            if sl is None:
+                continue
+            v_min, v_max = bounds[k]
+            sl.blockSignals(True)
+            sl.setRange(v_min, v_max)
+            sl.setValue(vals[k])
+            sl.blockSignals(False)
+            self._slider_labels[k][2].setText(f"{vals[k]}px")
 
     def refresh(self, config, profile=None):
         self.config = config
         self.preview.set_data(config, profile)
+        self._apply_radius_constraints()
         self._refresh_sliders()
 
 

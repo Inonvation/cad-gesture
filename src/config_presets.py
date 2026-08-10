@@ -340,6 +340,7 @@ def _default_config() -> Dict[str, Any]:
             "ring_radius": 70,
             "outer_ring_radius": 135,
             "ext_ring_radius": 185,
+            "menu_scale": 100,
             "sector_count": 8,
             "menu_opacity": 0.95,
             "active_profile": "AutoCAD-常用",

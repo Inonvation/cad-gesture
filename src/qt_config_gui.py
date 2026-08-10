@@ -7,7 +7,6 @@
 中英文切换、浅色/深色界面模式。
 """
 
-import ctypes
 import copy
 import json
 import math
@@ -30,7 +29,8 @@ from src.config_manager import (load_config, save_config,
                                 get_profile_for_window, set_profile_for_target,
                                 _default_config)
 from src.i18n import T, add_listener, remove_listener
-from src.theme import get_ui, set_ui_mode, build_app_qss
+from src.theme import (get_ui, set_ui_mode, build_app_qss,
+                       current_ui_mode, set_title_bar_theme)
 from src.qt_preview import (CommandTree, _PanelToggleButton, QRadialPreview,
                             _layer_key, _layer_name)
 from src.qt_sector_editor import SectorEditorPopup
@@ -41,36 +41,6 @@ from src.qt_settings_panel import (AppearancePage, TriggerPage, SizePage,
 _SETTINGS_PAGES = (("appearance", "外观"), ("trigger", "触发手感"),
                    ("size", "圆盘尺寸"), ("general", "常规"),
                    ("maintenance", "维护"))
-
-
-def _enable_dark_titlebar(win, dark: bool = True) -> None:
-    """让窗口标题栏跟随深色/浅色主题（Windows 10 1809+，兼容 19/20 属性）"""
-    try:
-        import ctypes.wintypes as wintypes
-        hwnd = int(win.winId())
-        while True:
-            parent = ctypes.windll.user32.GetParent(hwnd)
-            if parent == 0:
-                break
-            hwnd = parent
-        val = ctypes.c_int(1 if dark else 0)
-        # Win10 1809~1909 用属性 19，2004+ / Win11 用 20；两个都设置以兼容
-        # 所有版本，且 DWM 属性在锁屏/远程桌面重连后可能丢失，调用方可重复设置
-        for attr in (20, 19):
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                ctypes.c_void_p(hwnd), attr,
-                ctypes.byref(val), ctypes.sizeof(val))
-        # 强制刷新窗口非客户区（标题栏）：深色→浅色切换时 DWM 属性不会
-        # 立即重绘，SWP_FRAMECHANGED 触发重绘保证立即生效
-        user32 = ctypes.windll.user32
-        user32.SetWindowPos.argtypes = [
-            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-            ctypes.c_int, ctypes.c_int, wintypes.UINT]
-        user32.SetWindowPos(
-            hwnd, None, 0, 0, 0, 0,
-            0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020)  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
-    except Exception:
-        pass
 
 
 class QConfigGUI(QMainWindow):
@@ -174,15 +144,15 @@ class QConfigGUI(QMainWindow):
 
     def showEvent(self, e):
         super().showEvent(e)
-        _enable_dark_titlebar(self, self._ui_mode == "dark")
+        set_title_bar_theme(self, current_ui_mode() == "dark")
         # 窗口完全显示后 DWM 属性更稳定，延迟再应用一次（覆盖显示时序问题）
         QTimer.singleShot(150,
-                          lambda: _enable_dark_titlebar(self, self._ui_mode == "dark"))
+                          lambda: set_title_bar_theme(self, current_ui_mode() == "dark"))
 
     def event(self, e):
         # DWM 标题栏属性在锁屏/远程桌面重连后可能丢失，窗口重新激活时重设
         if e.type() == QEvent.WindowActivate:
-            _enable_dark_titlebar(self, self._ui_mode == "dark")
+            set_title_bar_theme(self, current_ui_mode() == "dark")
         return super().event(e)
 
     # ========== 界面模式 / 语言 ==========
@@ -199,7 +169,7 @@ class QConfigGUI(QMainWindow):
         self._ui_mode = mode
         set_ui_mode(mode)
         QApplication.instance().setStyleSheet(build_app_qss(mode))
-        _enable_dark_titlebar(self, mode == "dark")
+        set_title_bar_theme(self, current_ui_mode() == "dark")
 
     def _on_language_changed(self, lang: str):
         """语言切换（常规页）：保存配置 + 通知全局刷新"""

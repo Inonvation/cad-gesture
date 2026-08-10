@@ -56,7 +56,7 @@ class QRadialMenu(QWidget):
 
         # 窗口淡入动画
         self._fade_anim = QPropertyAnimation(self, b"windowOpacity", self)
-        self._fade_anim.setDuration(70)
+        self._fade_anim.setDuration(30)
         self._fade_anim.setEasingCurve(QEasingCurve.InOutQuad)
 
         # 高亮淡入动画（颜色平滑过渡，约 120ms）
@@ -76,16 +76,21 @@ class QRadialMenu(QWidget):
         self.setFixedSize(self._size, self._size)
 
     @property
+    def menu_scale(self) -> float:
+        """整体圆盘缩放比例（50% ~ 150%，默认 100%）"""
+        return self.config.get("settings", {}).get("menu_scale", 100) / 100.0
+
+    @property
     def ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("ring_radius", 70)
+        return int(self.config.get("settings", {}).get("ring_radius", 70) * self.menu_scale)
 
     @property
     def outer_ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("outer_ring_radius", 135)
+        return int(self.config.get("settings", {}).get("outer_ring_radius", 135) * self.menu_scale)
 
     @property
     def ext_ring_radius(self) -> int:
-        return self.config.get("settings", {}).get("ext_ring_radius", 185)
+        return int(self.config.get("settings", {}).get("ext_ring_radius", 185) * self.menu_scale)
 
     @property
     def sector_count(self) -> int:
@@ -93,7 +98,7 @@ class QRadialMenu(QWidget):
 
     @property
     def dead_zone(self) -> int:
-        return self.config.get("settings", {}).get("dead_zone_radius", 24)
+        return int(self.config.get("settings", {}).get("dead_zone_radius", 24) * self.menu_scale)
 
     @property
     def menu_opacity(self) -> float:
@@ -211,9 +216,10 @@ class QRadialMenu(QWidget):
     # ========== 动画 ==========
 
     def _fade_in(self):
+        # 从 0.6 起播、30ms 到全显：圆盘按下即现，不再有 70ms 慢慢浮现的迟钝感
         self._fade_anim.stop()
-        self.setWindowOpacity(0.0)
-        self._fade_anim.setStartValue(0.0)
+        self.setWindowOpacity(0.6)
+        self._fade_anim.setStartValue(0.6)
         self._fade_anim.setEndValue(1.0)
         self._fade_anim.start()
 

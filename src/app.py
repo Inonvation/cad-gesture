@@ -8,9 +8,9 @@ import threading
 import tempfile
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QPointF, QTimer
+from PySide6.QtCore import Qt, QPointF, QTimer, QEvent, QObject
 from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QApplication, QMenu, QMessageBox,
+from PySide6.QtWidgets import (QApplication, QMenu, QMessageBox, QWidget,
                                QProgressDialog, QSystemTrayIcon)
 
 from src.config_manager import (
@@ -25,13 +25,33 @@ from src.command_executor import execute_with_cancel
 from src.single_instance import is_exit_requested
 from src.logger import get_logger
 from src.i18n import T, set_language, add_listener, remove_listener
-from src.theme import build_app_qss, set_ui_mode
+from src.theme import (build_app_qss, set_ui_mode, current_ui_mode,
+                       set_title_bar_theme, system_ui_mode)
 from src.updater import (check_for_update, download_update, run_installer,
                          UpdateCancelled, UpdateError)
 from src.version import __version__
 
 _CHECK_INTERVAL_SEC = 24 * 3600  # 启动自动检查的最小间隔
 _UPDATE_NOTES_MAX = 800
+
+
+class _TitleBarFilter(QObject):
+    """全局事件过滤器：任何带原生标题栏的顶层窗口显示/激活时自动应用深色标题栏。
+
+    无边框窗口（QRadialMenu、扇区编辑浮层）跳过——它们没有系统标题栏，
+    DWM 属性对其无效。只在 Show / WindowActivate 时动作，其余事件零开销放行。
+    """
+
+    def eventFilter(self, obj, event):
+        et = event.type()
+        if et == QEvent.Show or et == QEvent.WindowActivate:
+            if isinstance(obj, QWidget) and obj.isWindow():
+                if not (obj.windowFlags() & Qt.FramelessWindowHint):
+                    try:
+                        set_title_bar_theme(obj, current_ui_mode() == "dark")
+                    except Exception:
+                        pass
+        return False
 
 
 class CADGestureApp:
@@ -50,9 +70,10 @@ class CADGestureApp:
         # 界面语言 / 模式初始化
         s = self.config.get("settings", {})
         set_language(s.get("language", "zh"))
-        self._ui_mode = s.get("ui_mode", "dark")
-        set_ui_mode(self._ui_mode)
-        self.app.setStyleSheet(build_app_qss(self._ui_mode))
+        self._apply_ui_mode(s.get("ui_mode", "dark"))
+        # 全局事件过滤器：新建的原生标题栏窗口（弹窗/进度框/取色器）自动跟随深色主题
+        self._titlebar_filter = _TitleBarFilter()
+        self.app.installEventFilter(self._titlebar_filter)
 
         # 语言切换时重建托盘菜单文本
         self._lang_listener = self._rebuild_tray
@@ -89,6 +110,11 @@ class CADGestureApp:
         self._timer = QTimer()
         self._timer.timeout.connect(self._process_queue)
         self._timer.start(16)
+
+        # 跟随系统：轮询系统主题变化（仅 system 模式生效，每次一次注册表读，3 秒间隔）
+        self._theme_poll_timer = QTimer()
+        self._theme_poll_timer.timeout.connect(self._poll_system_theme)
+        self._theme_poll_timer.start(3000)
 
     # ========== 事件入队 ==========
 
@@ -189,6 +215,30 @@ class CADGestureApp:
             if not self._quitting:
                 delay = 16 if self.menu.is_visible() else 100
                 self._timer.setInterval(delay)
+
+    # ========== 界面模式 ==========
+
+    def _apply_ui_mode(self, mode: str):
+        """应用界面模式：更新全局 QSS + 所有已存在顶层窗口标题栏 + 记录生效值"""
+        self._ui_mode = mode
+        set_ui_mode(mode)
+        self._applied_mode = current_ui_mode()
+        self.app.setStyleSheet(build_app_qss(mode))
+        for w in self.app.topLevelWidgets():
+            try:
+                if w.isWindow() and not (w.windowFlags() & Qt.FramelessWindowHint):
+                    set_title_bar_theme(w, self._applied_mode == "dark")
+            except Exception:
+                pass
+
+    def _poll_system_theme(self):
+        """system 模式下系统主题变化时自动刷新界面 + 顶栏（3 秒轮询）"""
+        if self.config.get("settings", {}).get("ui_mode", "dark") != "system":
+            return
+        # 必须主动读注册表：current_ui_mode() 是缓存值，只在 set_ui_mode 时
+        # 更新，无法反映用户改系统主题后的变化
+        if system_ui_mode() != self._applied_mode:
+            self._apply_ui_mode("system")
 
     # ========== 托盘 ==========
 
@@ -342,9 +392,7 @@ class CADGestureApp:
             # 界面模式变化时同步全局（配置窗口已应用，这里保持模块状态一致）
             mode = self.config.get("settings", {}).get("ui_mode", "dark")
             if mode != self._ui_mode:
-                self._ui_mode = mode
-                set_ui_mode(mode)
-                self.app.setStyleSheet(build_app_qss(mode))
+                self._apply_ui_mode(mode)
         except Exception as e:
             self.log.error("重载配置失败: %s", e, exc_info=True)
 

@@ -112,24 +112,109 @@ UI_LIGHT = UITheme(
 # 兼容旧引用（模块级 UI 即深色主题）
 UI = UI_DARK
 
-# 当前界面模式（模块级，供 paintEvent 等无参取色的地方使用）
+# 当前界面模式：_CONFIGURED_MODE 存用户配置值（dark/light/system），
+# _CURRENT_MODE 存解析后的实际生效值（仅 dark/light），供无参取色的地方使用
+_CONFIGURED_MODE = "dark"
 _CURRENT_MODE = "dark"
 
 
+def system_ui_mode() -> str:
+    """读取 Windows 系统深浅色设置（注册表 AppsUseLightTheme）。
+
+    1=浅色 0=深色；读取失败回退深色（与默认界面模式一致）。
+    """
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        try:
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return "light" if val == 1 else "dark"
+        finally:
+            winreg.CloseKey(key)
+    except OSError:
+        return "dark"
+
+
+def effective_ui_mode(mode: str) -> str:
+    """把界面模式配置值解析为实际生效的 "dark"/"light"。
+
+    - "system" → 读系统当前主题
+    - "light" → "light"
+    - 其余（"dark" / 未知值）→ "dark"
+    """
+    if mode == "system":
+        return system_ui_mode()
+    return "light" if mode == "light" else "dark"
+
+
 def set_ui_mode(mode: str) -> None:
-    """记录当前界面模式（切换浅/深时由主窗口调用）"""
-    global _CURRENT_MODE
-    _CURRENT_MODE = "light" if mode == "light" else "dark"
+    """记录当前界面模式（切换浅/深/跟随系统时由主窗口调用）。
+
+    保存原始配置值，并把解析后的生效值写入 _CURRENT_MODE。
+    """
+    global _CONFIGURED_MODE, _CURRENT_MODE
+    _CONFIGURED_MODE = mode
+    _CURRENT_MODE = effective_ui_mode(mode)
+
+
+def current_ui_mode() -> str:
+    """返回当前实际生效的界面模式（"dark"/"light"，system 已解析）。"""
+    return _CURRENT_MODE
 
 
 def get_ui(mode: str = None) -> UITheme:
-    """按界面模式返回 UI 主题（"light" / "dark"）。
+    """按界面模式返回 UI 主题（"dark"/"light"，system 自动解析）。
 
-    不传 mode 时使用模块级当前模式——供 paintEvent 等需要
+    不传 mode 时使用模块级当前生效模式——供 paintEvent 等需要
     跟随主题的绘制代码调用（折叠按钮、拖拽卡片、预览标注等）。
     """
-    m = _CURRENT_MODE if mode is None else mode
+    m = _CURRENT_MODE if mode is None else effective_ui_mode(mode)
     return UI_LIGHT if m == "light" else UI_DARK
+
+
+def set_title_bar_theme(win, dark: bool = True) -> None:
+    """让窗口标题栏跟随深色/浅色主题（Windows 10 1809+，兼容 19/20 属性）。
+
+    只对带原生标题栏的窗口有效；无边框窗口（Frameless）调用无害但无效果。
+    已显示的窗口设置 DWM 属性后标题栏不会自动重绘——SWP_FRAMECHANGED、
+    WM_NCPAINT、RedrawWindow 等常规手段实测均无效，唯一可靠且几乎无闪烁的
+    触发方式是"宽度 ±2px 再还原"强制 DWM 重绘非客户区。DWM 属性在锁屏/
+    远程桌面重连后可能丢失，调用方可在窗口激活时重复设置。
+    """
+    try:
+        import ctypes
+        import ctypes.wintypes as wintypes
+        hwnd = int(win.winId())
+        while True:
+            parent = ctypes.windll.user32.GetParent(hwnd)
+            if parent == 0:
+                break
+            hwnd = parent
+        val = ctypes.c_int(1 if dark else 0)
+        # Win10 1809~1909 用属性 19，2004+ / Win11 用 20；两个都设置以兼容所有版本
+        for attr in (20, 19):
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                ctypes.c_void_p(hwnd), attr,
+                ctypes.byref(val), ctypes.sizeof(val))
+        # 已显示窗口：改宽 2px 再还原，强制 DWM 重绘标题栏
+        if getattr(win, "isVisible", lambda: False)():
+            user32 = ctypes.windll.user32
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int, wintypes.UINT]
+            r = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(r))
+            wpx = r.right - r.left
+            hpx = r.bottom - r.top
+            # 保持位置不变，只增宽再还原（NOZORDER | NOACTIVATE）
+            user32.SetWindowPos(hwnd, None, r.left, r.top, wpx + 2, hpx,
+                                0x0004 | 0x0010)
+            user32.SetWindowPos(hwnd, None, r.left, r.top, wpx, hpx,
+                                0x0004 | 0x0010)
+    except Exception:
+        pass
 
 
 def build_qss(t: UITheme) -> str:
@@ -542,6 +627,6 @@ def theme_from_settings(settings: dict, ui_mode: str = None) -> MenuTheme:
     mode = (ui_mode or settings.get("ui_mode", "dark"))
     t = get_menu_theme(settings.get("menu_theme", "azure"),
                        settings.get("custom_accent"))
-    if mode == "light":
+    if effective_ui_mode(mode) == "light":
         return make_light_theme(t)
     return t
