@@ -12,6 +12,7 @@
 - **现代深色配置界面**（PySide6/Qt）：导航式布局、圆盘预览 + 点击扇区就地编辑浮层、命令库搜索 / 拖放 / 放置模式、撤销/重做（Ctrl+Z / Ctrl+Y）
 - **不影响十字光标**：命令优先通过 COM `SendCommand` 发送，钩子只监听不拦截
 - **单实例运行**：重复启动自动替换旧实例，不产生多余托盘图标
+- **一键更新**：托盘"检查更新"或启动时自动检查，下载新版自动静默覆盖安装
 
 ## 支持环境
 
@@ -23,7 +24,14 @@
 
 ### 方式一：使用打包版
 
-1. 下载最新 [Release](https://github.com/Inonvation/cad-gesture/releases) 的 `CADGesture-x64.exe`
+两种形态任选其一（配置保存在 `%APPDATA%`，两种形态可无缝互换）：
+
+| 形态 | 文件 | 说明 |
+|------|------|------|
+| 安装版（推荐） | `Setup-CADGesture-vX.Y.Z.exe` | 标准安装向导，开始菜单 / 卸载入口，支持程序内一键更新 |
+| 绿色版 | `CADGesture-x64.exe` | 免安装，双击即用 |
+
+1. 下载最新 [Release](https://github.com/Inonvation/cad-gesture/releases) 中的安装包或绿色版
 2. 双击运行，右下角出现托盘图标
 3. 打开 CAD，**长按鼠标右键拖动**即可使用
 
@@ -46,7 +54,24 @@ python main.py
 | 内层 | 高频绘图命令（直线、圆、复制…） |
 | 外层 | 编辑命令（圆弧、旋转、缩放…） |
 | 扩展圈 | 延伸命令，拖出第二圈边界即可触发 |
-| 托盘 | 右键托盘图标 → 配置 / 切换方案 / 退出 |
+| 托盘 | 右键托盘图标 → 配置 / 检查更新 / 切换方案 / 退出 |
+
+## 自动更新
+
+- **检查更新**：托盘右键 → 检查更新，立即查询最新版本；有新版本弹出更新说明，点击"立即更新"自动下载并静默安装
+- **启动时自动检查**：默认开启（设置界面可关），启动后后台静默检查，距上次检查超过 24 小时才会再次检查；发现新版本会弹出提示
+- 更新不丢失配置：配置保存在 `%APPDATA%\CADGesture`，安装/覆盖/卸载均不影响
+
+> **遇到 SmartScreen 提示？** 安装包/绿色版未做代码签名，Windows 可能显示"未知发布者"。点击"更多信息"→"仍要运行"即可，程序本身是安全的开源工具。
+
+## FAQ
+
+| 问题 | 解答 |
+|------|------|
+| 如何更新？ | 托盘右键 → 检查更新（或启动时自动检查），按提示点击"立即更新"即可 |
+| 更新会丢配置吗？ | 不会。配置在 `%APPDATA%\CADGesture`，与安装目录无关 |
+| 绿色版可以更新吗？ | 可以，更新时会自动安装到用户目录并建立卸载入口 |
+| 国内下载慢 / 更新失败？ | 检查更新走 GitHub API，下载失败请稍后重试；可手动到 Release 页下载最新版
 
 ## 配置
 
@@ -65,10 +90,13 @@ python main.py
 ## 打包发布
 
 ```powershell
-# 用 Python312 打包（或直接双击 scripts\build.bat）
+# 用 Python312 打包（或直接双击 scripts\build.bat，自动执行 PyInstaller + Inno Setup）
 python -m PyInstaller cad_gesture.spec --clean --noconfirm
 
-# 输出 dist/CADGesture-x64.exe（单文件），配置文件复制到 dist/config/
+# 产物：
+#   dist/CADGesture-x64.exe                绿色版（单文件）
+#   dist/Setup-CADGesture-vX.Y.Z.exe       安装版（Inno Setup，需先安装 Inno Setup 6.3+）
+#   dist/config/config.json                配置文件
 ```
 
 ## 技术栈
@@ -83,8 +111,9 @@ python -m PyInstaller cad_gesture.spec --clean --noconfirm
 ```
 main.py                 # 入口（含单实例检查）
 start.bat / start.vbs   # 一键启动（静默/带窗口）
+cad_gesture.iss         # Inno Setup 安装包脚本（构建 Setup-CADGesture-vX.Y.Z.exe）
 src/                    # 程序代码
-├── app.py               # 主程序（Qt）：事件队列、托盘、配置入口
+├── app.py               # 主程序（Qt）：事件队列、托盘、配置入口、更新流程
 ├── gesture_engine.py    # 鼠标钩子与手势/圈层判定
 ├── qt_radial_menu.py    # Qt 透明悬浮圆盘菜单（运行时）
 ├── qt_renderer.py       # 共享圆盘绘制（菜单与配置预览共用）
@@ -96,9 +125,12 @@ src/                    # 程序代码
 ├── command_executor.py  # COM 命令执行 + pyautogui 回退
 ├── config_manager.py    # 配置读写与自动迁移
 ├── config_presets.py    # 预设命令库与默认配置
+├── updater.py           # 自动更新（版本检查 / 下载 / 静默安装）
+├── version.py           # 运行时版本号（与 version.txt 同步）
 └── single_instance.py   # 单实例与覆盖更新
 scripts/                # 开发脚本
-├── build.bat            # 一键打包（PyInstaller）
+├── build.bat            # 一键打包（PyInstaller + Inno Setup）
+├── read_version.py      # 从 version.txt 提取版本号（构建用）
 ├── verify.py / verify.bat  # 一键验证：语法 + 测试 + 重启程序
 └── generate_icon.py     # 生成 assets/icon.ico
 config/                 # 配置（config.json 运行时生成，example 为模板）

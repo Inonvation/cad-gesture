@@ -16,8 +16,9 @@
 ```
 main.py                 # 入口（含单实例检查）
 config/config.json      # 旧版配置位置（0.0.2-：仅迁移用，现配置在 %APPDATA%\CADGesture）
+cad_gesture.iss         # Inno Setup 安装包脚本（产出 Setup-CADGesture-vX.Y.Z.exe）
 src/
-├── app.py              # 主类（Qt）：事件队列、托盘(QSystemTrayIcon)、Profile切换、配置入口
+├── app.py              # 主类（Qt）：事件队列、托盘(QSystemTrayIcon)、Profile切换、配置入口、更新流程
 ├── gesture_engine.py   # [核心] WH_MOUSE_LL 钩子 → 方向/圈层判定
 ├── qt_radial_menu.py   # [核心] Qt 透明悬浮圆盘菜单（三层绘制 + 淡入/高亮动画）
 ├── qt_renderer.py      # 共享 Qt 圆盘绘制（qt_radial_menu 运行时 与 qt_config_gui 预览共用）
@@ -26,11 +27,14 @@ src/
 ├── config_manager.py   # JSON 配置读写 + Profile管理 + 自动迁移
 ├── config_presets.py   # 预设命令库 + 默认配置
 ├── qt_config_gui.py    # Qt 配置界面（三栏 + 撤销重做 + 右键放置 + Delete 删除）
+├── updater.py          # 自动更新（版本比对/检查/下载/静默安装，纯逻辑无 Qt）
+├── version.py          # 运行时版本号常量（发版时与 version.txt 同步）
 └── single_instance.py  # 命名互斥体单实例 + 覆盖更新
 ```
 
 事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 100ms）。
 每个事件包裹 `try-except`，防止单次错误崩溃整个队列循环。
+更新流程同模式：后台线程检查/下载 → 结果经 event_queue（`update_check_result` / `update_progress` / `update_download_done`）→ 主线程弹窗。
 
 **圈层判定**（gesture_engine 触发 与 qt_radial_menu hover 共用同一规则）：
 距离 ≤ `ring_radius`(100) = 内层；≤ `outer_ring_radius`(180) = 外层；> 180 = 扩展圈（命令在 `extension_sectors`）。
@@ -40,6 +44,7 @@ src/
 - **Python 双解释器**：`python` 命令可能命中多个环境。hermes venv 的 `python.exe` 是 uv launcher，运行 `main.py` 时会 spawn 真解释器（uv cpython）——启动后看到"一对 python 进程"是**正常现象**。启动/验证统一用 hermes venv 的 python：
   `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`
 - **绝不用 PowerShell 改中文文件**：PowerShell 的 `Get-Content`/`Set-Content` 按 GBK 读 UTF-8 会永久损坏中文（乱码不可逆）。改含中文的 .py/.json 必须用 edit/write 工具；批量替换用 python 脚本（`open(path, encoding='utf-8')`）。
+- **`scripts\build.bat` 必须保持 GBK 编码 + CRLF 行尾**：cmd 按系统代码页（GBK）解析 bat，UTF-8/LF 会让中文行被拆成碎片命令（曾经踩坑）。**绝不用 edit/write 工具改它**（会写成 UTF-8）；如需修改：先用 edit 改一个 UTF-8 副本，再跑 `python -c "d=open(p,'rb').read().decode('utf-8');d=d.replace('\r\n','\n').replace('\n','\r\n');open(p,'wb').write(d.encode('gbk'))"` 转回 GBK+CRLF。同理 `scripts\verify.bat`。
 - **Qt 单应用单线程**：主程序是 `QApplication`（`app.py` 创建）。Qt 控件只能在主线程操作（QObject 非线程安全）；托盘/菜单回调都运行在主线程，无需跨线程投递。配置界面 `qt_config_gui.open_config_gui(on_save=...)` 返回独立 `QMainWindow`（非模态），app 用 `self._config_win` 持有引用防 GC。
 - **Qt 坐标是逻辑像素，钩子给物理像素**：`QRadialMenu.show(x, y)` 内部用 `_to_logical` 按所在屏幕 DPI 换算，圆盘中心才对准鼠标。别直接拿钩子的 `pt.x/pt.y` 去 `move()`（DPI 缩放≠100% 时圆盘会偏移）。
 - **单实例机制**：`main.py` 开头 `ensure_single_instance()` 用命名互斥体判断，新实例会置位命名事件请求旧实例优雅退出（覆盖更新，避免多托盘图标）。app.py 主循环每 32 帧轮询 `is_exit_requested()`。启动逻辑别改坏这两处。
@@ -50,7 +55,8 @@ src/
 |---------|---------------|
 | 圆盘配色/主题 | `theme.py` 的 `MENU_THEMES`（配置界面主题下拉自动读取，无需改界面） |
 | 字体/标签位置/扇区绘制 | `qt_renderer.py`（被 `qt_radial_menu` 运行时 和 `qt_config_gui` 预览共用，两处必须一致） |
-| 新增 `settings` 配置项 | `config_presets._default_config` + `config_manager._migrate_config`（迁移补字段） + 需要时 `qt_config_gui`/`qt_radial_menu`/`gesture_engine` |
+| 新增 `settings` 配置项 | `config_presets._default_config` + `config_manager._migrate_config`（迁移补字段） + 需要时 `qt_config_gui`/`qt_radial_menu`/`gesture_engine`/`app.py` |
+| 发版改版本号 | `version.txt` 4 处（filevers/prodvers/FileVersion/ProductVersion） + `src/version.py` 的 `__version__`（共 5 处，`.iss` 由 build.bat 自动注入） |
 | 新增命令预设 | `config_presets` 默认 profile + `command_executor` 的 `COMBO_TO_COMMAND` 表 |
 | 新增 Python 依赖 | `requirements.txt` + `cad_gesture.spec`（PySide6 由 PyInstaller 内置 hook 自动收集） |
 | 改圈层/触发阈值 | `gesture_engine`（钩子判定）与 `qt_radial_menu`（hover 显示）必须用同一半径常量 |
@@ -78,17 +84,21 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 **打包必须用 Python312**（`<USER>\AppData\Local\Programs\Python\Python312\python.exe`），其他 Python 环境可能缺 PyInstaller。
 
-**onefile 单文件打包**：输出 `dist/CADGesture-x64.exe`。
+**统一入口：双击 `scripts\build.bat`**，一次产出双形态：
+- 绿色版：`dist/CADGesture-x64.exe`
+- 安装版：`dist/Setup-CADGesture-vX.Y.Z.exe`（需先安装 Inno Setup 6.3+，`C:\Program Files (x86)\Inno Setup 6\ISCC.exe`）
 
+build.bat 流程：清理 → PyInstaller（Python312）→ 复制配置 → `scripts\read_version.py` 提取版本号 → `ISCC /DMyAppVersion=...` 编译安装包。
+
+手动打包（等价）：
 ```powershell
 cd F:\cad-gesture
 Get-Process CADGesture-x64 -ErrorAction SilentlyContinue | Stop-Process -Force
 & "<USER>\AppData\Local\Programs\Python\Python312\python.exe" -m PyInstaller cad_gesture.spec --clean --noconfirm
 Copy-Item config\config.example.json dist\config\config.example.json -Force  # 发版用模板；本地自测可复制 config.json
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.0.2 cad_gesture.iss
 dist\CADGesture-x64.exe
 ```
-
-或直接运行 `scripts\build.bat`（双击即可）。
 
 ### 打包前检查清单
 
@@ -110,13 +120,15 @@ dist\CADGesture-x64.exe
 
 ## 发版流程（打 tag 发布 GitHub Release）
 
-1. 更新 `version.txt` 版本号（4 处：`filevers`/`prodvers`/`FileVersion`/`ProductVersion`）
-2. 打包 exe：Python312 `-m PyInstaller cad_gesture.spec --clean --noconfirm`（UPX 已在用户 PATH）
-3. 提交 version.txt，打 annotated tag：`git tag -a vX.Y.Z -m "vX.Y.Z"`
+1. 更新 `version.txt` 版本号（4 处：`filevers`/`prodvers`/`FileVersion`/`ProductVersion`）+ `src/version.py` 的 `__version__`（共 5 处）
+2. 打包双产物：双击 `scripts\build.bat`（PyInstaller + ISCC，UPX 已在用户 PATH）
+   - 产物：`dist/CADGesture-x64.exe` + `dist/Setup-CADGesture-vX.Y.Z.exe`
+3. 提交 version.txt + 本次改动，打 annotated tag：`git tag -a vX.Y.Z -m "vX.Y.Z"`
 4. `git push origin master --tags`
-5. **创建 Release 前，必须先向用户展示待发布内容（版本号、exe 路径/体积、Release notes、附件清单）并等待用户确认**，确认后再执行下一步
-6. `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..." dist/CADGesture-x64.exe config/config.example.json`
-   - 附件用 exe + `config.example.json`（模板），**绝不打包用户私有 `config/config.json`**
+5. **创建 Release 前，必须先向用户展示待发布内容（版本号、两个 exe 路径/体积、Release notes、附件清单）并等待用户确认**，确认后再执行下一步
+6. `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..." dist/CADGesture-x64.exe dist/Setup-CADGesture-vX.Y.Z.exe config/config.example.json`
+   - 附件 3 个：绿色版 + 安装版 + `config.example.json`（模板），**绝不打包用户私有 `config/config.json`**
+7. 发布后实测更新链路：托盘"检查更新" → 检测到新版 → 下载 → 静默安装 → 新版自动启动
 
 ## 关键技术细节
 
@@ -129,6 +141,9 @@ dist\CADGesture-x64.exe
 - 事件队列格式：`("show", (x, y, window_type))` 元组嵌套
 - **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（6 套：azure/emerald/crimson/midnight/aurora/graphite），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和配置预览共用，改动必须两处一致）。
 - **配置自动迁移**：`config_manager._migrate_config` 自动补旧配置字段；空的 `extension_sectors` 会从默认配置按 target+name 自动补全。
+- **自动更新**：检查/下载放后台线程，结果经 event_queue 回主线程（`update_check_result`/`update_progress`/`update_download_done`），Qt 控件只在主线程操作。下载到 `%TEMP%\CADGesture-Setup.exe` 后经 `run_installer` 静默安装（`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`），主进程随即退出，Inno 的 `CloseApplications` 兜底关进程。静默安装后新版自动启动已验证（[Run] 用 `nowait` 不带 `skipifsilent`）。
+- **安装包卸载杀进程**：`cad_gesture.iss` 的 `[Code]` 节在卸载时 `taskkill /F` 终止主程序，否则运行中的 exe 被锁删不掉（卸载残留）。改 .iss 时别删这段。
+- **onefile 下不能读 exe 同级文件**：`sys.executable` 在 PyInstaller onefile 运行时指向临时解压目录（`%TEMP%\_MEIxxxx`），当前版本号必须用 `src/version.py` 的内置常量，不要运行时读文件。
 
 ## 命令执行优先级
 
@@ -143,7 +158,7 @@ dist\CADGesture-x64.exe
 
 `%APPDATA%\CADGesture\config.json` — `settings` + `profiles`（与 exe 位置无关，用户可编辑；旧版 `config/config.json` 仅用于首次迁移）。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 字段：`description` = COM 命令名，`key` = pyautogui 回退键，`target` = `autocad`|`zwcad`。
-`settings` 关键项：`menu_theme`（圆盘外观）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 15）、`open_config_on_start`、`auto_switch_profile`。
+`settings` 关键项：`menu_theme`（圆盘外观）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 15）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 true）、`update_source_url`（更新源，默认 GitHub API）、`last_update_check`（上次检查时间，24h 频率控制）。
 
 ## 提交规范
 

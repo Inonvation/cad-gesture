@@ -12,6 +12,7 @@ Press and hold the **right mouse button** and drag inside CAD to pick a command 
 - **Modern dark config UI** (PySide6/Qt): three-column draggable layout, command library with drag & drop onto the radial menu, Delete to remove, undo/redo (Ctrl+Z / Ctrl+Y)
 - **No interference with CAD operations**: commands are sent via COM `SendCommand`; the hook only listens, never blocks
 - **Single instance**: relaunching replaces the old instance
+- **One-click update**: check for updates from the tray menu or automatically at startup; downloads the new version and installs it silently
 
 ## Requirements
 
@@ -23,11 +24,18 @@ Press and hold the **right mouse button** and drag inside CAD to pick a command 
 
 ### Option 1: Packaged build
 
-1. Download `CADGesture-x64.exe` from the latest [Release](https://github.com/Inonvation/cad-gesture/releases)
+Two forms are available (config is stored in `%APPDATA%`, so both forms are interchangeable):
+
+| Form | File | Notes |
+|------|------|-------|
+| Installer (recommended) | `Setup-CADGesture-vX.Y.Z.exe` | Standard install wizard, Start Menu / uninstall entry, supports in-app one-click update |
+| Portable | `CADGesture-x64.exe` | No install needed, double-click to run |
+
+1. Download either form from the latest [Release](https://github.com/Inonvation/cad-gesture/releases)
 2. Double-click to run; the app is ready once the tray icon appears
 3. Open CAD, **press and hold the right mouse button and drag** to use
 
-> If no installer is available in Releases yet, use Option 2 instead.
+> **SmartScreen warning?** The binaries are unsigned, so Windows may show "Unknown publisher". Click "More info" → "Run anyway" — the app is open source and safe.
 
 ### Option 2: Run from source
 
@@ -48,7 +56,13 @@ python main.py
 | Inner ring | High-frequency drawing commands (line, circle, copy, etc.) |
 | Outer ring | Editing commands (arc, rotate, scale, etc.) |
 | Extension ring | Low-frequency extension commands, triggered past the second ring boundary |
-| Tray icon | Right-click → config / switch profile / quit |
+| Tray icon | Right-click → config / check for updates / switch profile / quit |
+
+## Auto Update
+
+- **Check for updates**: tray menu → "Check for updates" queries the latest release immediately; if a new version exists, click "Update now" to download and install it silently
+- **Auto-check at startup**: enabled by default (toggle in Settings), runs silently in the background at most once per 24 hours
+- Updates never touch your config: it lives in `%APPDATA%\CADGesture`, independent of the install directory
 
 ## Configuration
 
@@ -73,16 +87,20 @@ Config is stored in `config/config.json` (auto-generated with defaults on first 
 ```
 main.py                  # Entry point (single-instance check + DPI awareness)
 requirements.txt         # Dependencies
+cad_gesture.iss          # Inno Setup script (builds Setup-CADGesture-vX.Y.Z.exe)
 config/                  # Config (auto-generated on first run; template: config.example.json)
 src/                     # Source code
-├── app.py               # Main app: event queue, tray, config entry
+├── app.py               # Main app: event queue, tray, config entry, update flow
 ├── gesture_engine.py    # Mouse hook, gesture / ring detection
 ├── qt_radial_menu.py    # Qt transparent overlay radial menu
 ├── qt_renderer.py       # Shared Qt disc drawing (runtime + config preview)
 ├── command_executor.py  # COM command execution + fallback
 ├── qt_config_gui.py     # Qt config UI
 ├── theme.py             # UI colors + 6 disc appearance themes
+├── updater.py           # Auto update (check / download / silent install)
+├── version.py           # Runtime version (kept in sync with version.txt)
 └── ...                  # Config manager, presets, logging, single-instance, etc.
+scripts/                 # Dev scripts (build.bat, verify, icon generator)
 assets/                  # App icon
 tests/                   # Unit tests
 ```
