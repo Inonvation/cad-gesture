@@ -188,11 +188,11 @@ def _send_via_com(key: str, cmd_name: str = "", target: str = "autocad") -> bool
     return _send_com_command(f"{key}\n", target)
 
 
-def _cancel_context_menu():
+def cancel_context_menu():
     """连发两次 ESC 取消 CAD 的右键上下文菜单。
 
-    钩子不拦截右键，CAD 收到释放会弹菜单；必须在 COM 命令之前发，
-    否则命令进入命令行后 ESC 会把它取消。
+    钩子不拦截右键，CAD 收到右键释放会弹菜单；在松手时刻统一调用
+    （app 的 hide 事件处理），无论是否触发命令都取消，避免菜单残留。
     """
     pyautogui.press('esc', _pause=False)
     time.sleep(0.02)
@@ -201,7 +201,10 @@ def _cancel_context_menu():
 
 
 def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -> str:
-    """执行 CAD 命令 — 先 ESC 取消右键菜单，再优先 COM，失败回退 pyautogui
+    """执行 CAD 命令 — 优先 COM，失败回退 pyautogui
+
+    右键菜单的 ESC 取消由调用方在松手时刻统一处理（cancel_context_menu），
+    这里不再重复发送，避免连发两次 ESC 误伤其他对话框。
 
     Returns:
         "ok": 通过 COM 成功发送
@@ -210,10 +213,6 @@ def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -
     """
     if not key:
         return "failed"
-
-    # 先取消 CAD 可能弹出的右键菜单（快速甩动未显示圆盘时同样需要取消）。
-    # 顺序必须在 COM 之前：COM 命令进入命令行后，ESC 会取消该命令。
-    _cancel_context_menu()
 
     # COM 路径（最快，不干扰鼠标）
     if _send_via_com(key, cmd_name, target):

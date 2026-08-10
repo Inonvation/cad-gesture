@@ -17,12 +17,12 @@ from PySide6.QtWidgets import (QApplication, QMenu, QMessageBox, QWidget,
 from src.config_manager import (
     load_config, save_config, get_active_profile,
     get_profile_for_window, get_profile_names, set_active_profile,
-    set_profile_for_target, get_config_path
+    set_profile_for_target, get_config_path, get_sector_command
 )
 from src.gesture_engine import GestureEngine
 from src.qt_radial_menu import QRadialMenu
 from src.qt_config_gui import open_config_gui
-from src.command_executor import execute_with_cancel
+from src.command_executor import execute_with_cancel, cancel_context_menu
 from src.single_instance import is_exit_requested
 from src.logger import get_logger
 from src.i18n import T, set_language, add_listener, remove_listener
@@ -196,6 +196,12 @@ class CADGestureApp:
                             self.menu.show(x, y, self.profile)
                         elif event_type == "hide":
                             self.menu.hide()
+                            # 钩子不拦截右键：松手时 CAD 会弹右键菜单，
+                            # 无论是否触发命令都发 ESC 取消（触发路径不再重复发）
+                            try:
+                                cancel_context_menu()
+                            except Exception as e:
+                                self.log.error("取消右键菜单失败: %s", e, exc_info=True)
                         elif event_type == "extension_hint":
                             self.menu.set_extension_hint(data)
                         elif event_type == "gesture":
@@ -204,15 +210,8 @@ class CADGestureApp:
                                 profile = get_profile_for_window(self.config, window_type)
                                 if profile is None:
                                     profile = self.profile
-                                if ring_type == "extension":
-                                    sectors_key = "extension_sectors"
-                                elif ring_type == "outer":
-                                    sectors_key = "outer_sectors"
-                                else:
-                                    sectors_key = "sectors"
-                                sector_cfg = profile.get(sectors_key, {}).get(str(sector), {})
-                                if ring_type in ("outer", "extension") and not sector_cfg:
-                                    sector_cfg = profile.get("sectors", {}).get(str(sector), {})
+                                # 空扇区返回 {}，不触发命令（不回退内层同方向）
+                                sector_cfg = get_sector_command(profile, ring_type, sector)
                                 key = sector_cfg.get("key", "")
                                 desc = sector_cfg.get("description", "")
                                 target = profile.get("target", "autocad")

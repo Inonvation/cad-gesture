@@ -107,6 +107,7 @@ _EN: Dict[str, str] = {
     "已取消选择": "Selection cancelled",
     "● 保存中…": "● Saving...",
     "已清空{layer}扇区 {idx}": "Cleared {layer} sector {idx}",
+    "未设置": "Empty",
     "已{verb}命令：{f_layer}扇区 {f_idx} ↔ {t_layer}扇区 {t_idx}":
         "{verb} command: {f_layer} sector {f_idx} ↔ {t_layer} sector {t_idx}",
     "交换": "swapped",

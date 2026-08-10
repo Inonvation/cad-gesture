@@ -249,6 +249,17 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     return migrated
 
 
+def get_sector_command(profile: dict, ring_type: str, sector: int) -> dict:
+    """取某扇区（圈层 + 编号）的命令配置；空扇区返回 {}（不触发命令）。
+
+    不再回退到内层同方向扇区：外层/扩展圈未设置的扇区应保持为空，
+    避免用户划到空白扇区误触发一个"看起来没设置"的内层命令。
+    """
+    key_map = {"extension": "extension_sectors", "outer": "outer_sectors",
+               "inner": "sectors"}
+    return profile.get(key_map.get(ring_type, "sectors"), {}).get(str(sector), {})
+
+
 def get_active_profile(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """获取当前活动的Profile"""
     profile_name = config.get("settings", {}).get("active_profile", "AutoCAD-常用")

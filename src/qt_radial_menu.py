@@ -21,6 +21,7 @@ from PySide6.QtGui import (QColor, QFont, QFontMetrics, QGuiApplication,
 from PySide6.QtWidgets import QWidget
 
 from src.gesture_engine import calc_sector
+from src.i18n import T
 from src.menu_geometry import menu_scale, scaled_radius
 from src.theme import theme_from_settings
 from src.qt_renderer import (INNER, OUTER, EXTENSION, draw_shadow, draw_ring,
@@ -298,13 +299,13 @@ class QRadialMenu(QWidget):
                 cfg = self._profile.get("extension_sectors", {}).get(str(idx), {})
             elif self._highlighted_outer:
                 cfg = self._profile.get("outer_sectors", {}).get(str(idx), {})
-                if not cfg:
-                    cfg = self._profile.get("sectors", {}).get(str(idx), {})
             else:
                 cfg = self._profile.get("sectors", {}).get(str(idx), {})
-            label = cfg.get("label", "")
-            sub = cfg.get("key", "").upper() if cfg.get("key") else ""
-            return label, sub
+            if cfg.get("label") or cfg.get("key"):
+                label = cfg.get("label", "")
+                sub = cfg.get("key", "").upper() if cfg.get("key") else ""
+                return label, sub
+            return T("未设置"), ""   # 空扇区提示，不再回退内层命令
         return "", self._profile.get("name", "") if self._profile else ""
 
 

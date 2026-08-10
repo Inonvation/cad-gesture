@@ -222,3 +222,17 @@ if __name__ == "__main__":
     test_preset_commands()
     test_default_config()
     print("\nAll tests passed!")
+
+
+def test_get_sector_command_no_inner_fallback():
+    """外层/扩展圈空扇区返回空，不回退内层同方向命令"""
+    from src.config_manager import get_sector_command
+    profile = {
+        "sectors": {"0": {"label": "直线", "key": "l", "description": "LINE"}},
+        "outer_sectors": {},
+        "extension_sectors": {"0": {"label": "构造线", "key": "xl"}},
+    }
+    assert get_sector_command(profile, "inner", 0)["key"] == "l"
+    assert get_sector_command(profile, "outer", 0) == {}      # 外层空 -> 不触发
+    assert get_sector_command(profile, "extension", 0)["key"] == "xl"
+    assert get_sector_command(profile, "extension", 1) == {}  # 扩展圈空 -> 不触发
