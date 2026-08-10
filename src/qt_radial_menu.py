@@ -14,9 +14,10 @@ if __package__ in (None, ""):
 
 import math
 
-from PySide6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation,
+from PySide6.QtCore import (QEasingCurve, QPoint, QPointF, QPropertyAnimation,
                             Qt, QTimer)
-from PySide6.QtGui import (QGuiApplication, QPainter, QPixmap, QCursor)
+from PySide6.QtGui import (QColor, QGuiApplication, QPainter,
+                           QPen, QPixmap, QCursor)
 from PySide6.QtWidgets import QWidget
 
 from src.gesture_engine import calc_sector
@@ -49,9 +50,12 @@ class QRadialMenu(QWidget):
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
+        self._trail_dx = self._trail_dy = None
         self._theme = theme_from_settings(
             config.get("settings", {}))
         self._shadow_pm = None  # 投影层缓存（重绘开销最大，缓存在 QPixmap）
+        self._trail_dx = None   # 手势轨迹终点（相对圆盘中心逻辑坐标）
+        self._trail_dy = None
 
         # 窗口尺寸覆盖到扩展圈判定范围（第三圈区域透明）
         self._apply_size()
@@ -118,6 +122,7 @@ class QRadialMenu(QWidget):
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
+        self._trail_dx = self._trail_dy = None
         # 屏幕边缘自适应：圆盘窗口不超出屏幕可用区域（贴近边缘时整体内移）
         left = int(lx - self._size // 2)
         top = int(ly - self._size // 2)
@@ -175,6 +180,7 @@ class QRadialMenu(QWidget):
         if not self._visible:
             return
         dx, dy = mouse_x - self._center_x, mouse_y - self._center_y
+        self._trail_dx, self._trail_dy = dx, dy
         dist = math.sqrt(dx * dx + dy * dy)
         if dist < self.dead_zone:
             new_sec, new_outer, new_ext = -1, False, False
@@ -288,7 +294,32 @@ class QRadialMenu(QWidget):
 
         draw_center(p, cx, cy, self.dead_zone, t, self._size,
                     *self._center_texts())
+        self._draw_trail(p, cx, cy, t)
         p.end()
+
+    def _draw_trail(self, p: QPainter, cx: float, cy: float, t) -> None:
+        """手势轨迹线：从中心死区边缘引到当前光标，跟随鼠标（Quicker 风格）"""
+        if not bool(self.config.get("settings", {}).get("gesture_trail", True)):
+            return
+        if self._trail_dx is None or self._trail_dy is None:
+            return
+        dist = math.hypot(self._trail_dx, self._trail_dy)
+        if dist <= self.dead_zone:
+            return
+        saved_opacity = p.opacity()
+        # 颜色：浅色主题用主题色描边，深色主题用亮色；半透明细线
+        color = (t.extension.outline_hl if t.light
+                 else t.inner.highlight)
+        pen = QPen(QColor(color), 1.5)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setOpacity(max(0.35, min(0.85, saved_opacity)))
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        sx = cx + self.dead_zone * self._trail_dx / dist
+        sy = cy + self.dead_zone * self._trail_dy / dist
+        p.drawLine(QPointF(sx, sy),
+                   QPointF(cx + self._trail_dx, cy + self._trail_dy))
+        p.setOpacity(saved_opacity)
 
     def _center_texts(self) -> tuple[str, str]:
         """中心两行文字：有悬停显示 (命令名, 快捷键)，否则淡显方案名"""

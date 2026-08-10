@@ -15,8 +15,14 @@ from src.menu_geometry import menu_scale, scaled_radius
 WH_MOUSE_LL = 14
 WM_RBUTTONDOWN = 0x0204
 WM_RBUTTONUP = 0x0205
+WM_MBUTTONDOWN = 0x0207
+WM_MBUTTONUP = 0x0208
+WM_XBUTTONDOWN = 0x020B
+WM_XBUTTONUP = 0x020C
 WM_MOUSEMOVE = 0x0200
 HC_ACTION = 0
+XBUTTON1 = 0x0001
+XBUTTON2 = 0x0002
 
 # 64位Windows上LRESULT是64位指针大小
 HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int,
@@ -150,6 +156,11 @@ class GestureEngine:
         return self.config.get("settings", {}).get("trigger_distance", 10)
 
     @property
+    def trigger_button(self) -> str:
+        """触发按键：right / middle / x1（后退侧键）/ x2（前进侧键）"""
+        return self.config.get("settings", {}).get("trigger_button", "right")
+
+    @property
     def ring_radius(self) -> int:
         return scaled_radius(self.config.get("settings", {}), "ring_radius")
 
@@ -260,6 +271,28 @@ class GestureEngine:
         except Exception:
             return ""
 
+    def _trigger_down(self, wParam, mouse_data) -> bool:
+        """当前事件是否为所选触发键的按下"""
+        btn = self.trigger_button
+        if btn == "middle":
+            return wParam == WM_MBUTTONDOWN
+        if btn == "x1":
+            return wParam == WM_XBUTTONDOWN and (mouse_data >> 16) == XBUTTON1
+        if btn == "x2":
+            return wParam == WM_XBUTTONDOWN and (mouse_data >> 16) == XBUTTON2
+        return wParam == WM_RBUTTONDOWN
+
+    def _trigger_up(self, wParam, mouse_data) -> bool:
+        """当前事件是否为所选触发键的松开"""
+        btn = self.trigger_button
+        if btn == "middle":
+            return wParam == WM_MBUTTONUP
+        if btn == "x1":
+            return wParam == WM_XBUTTONUP and (mouse_data >> 16) == XBUTTON1
+        if btn == "x2":
+            return wParam == WM_XBUTTONUP and (mouse_data >> 16) == XBUTTON2
+        return wParam == WM_RBUTTONUP
+
     def _start_trigger_monitor(self):
         """右键按下后启动触发判定轮询线程（幂等）"""
         with self._lock:
@@ -332,7 +365,11 @@ class GestureEngine:
         ext_hint_args = None
         should_hide = False
 
-        if wParam == WM_RBUTTONDOWN:
+        # 触发键判断（右键/中键/侧键，由 settings.trigger_button 决定）
+        btn_down = self._trigger_down(wParam, msll.mouseData)
+        btn_up = self._trigger_up(wParam, msll.mouseData)
+
+        if btn_down:
             win_type = self._detect_cad_window()
             if win_type:
                 with self._lock:
@@ -359,7 +396,7 @@ class GestureEngine:
                             ext_hint_cb = self.on_extension_hint
                             ext_hint_args = (is_ext,)
 
-        elif wParam == WM_RBUTTONUP:
+        elif btn_up:
             ext_hint_cb = None
             ext_hint_args = None
             with self._lock:

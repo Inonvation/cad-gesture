@@ -191,7 +191,7 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         settings["menu_theme"] = "azure"
         migrated = True
     if "trigger_distance" not in settings:
-        settings["trigger_distance"] = 15
+        settings["trigger_distance"] = 10
         migrated = True
     if "auto_start" not in settings:
         settings["auto_start"] = False
@@ -216,6 +216,27 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         migrated = True
     if "ui_mode" not in settings:
         settings["ui_mode"] = "dark"
+        migrated = True
+    if "trigger_button" not in settings:
+        settings["trigger_button"] = "right"
+        migrated = True
+    if "gesture_trail" not in settings:
+        settings["gesture_trail"] = True
+        migrated = True
+    if "command_feedback" not in settings:
+        settings["command_feedback"] = True
+        migrated = True
+    if "feedback_position" not in settings:
+        settings["feedback_position"] = "bottom_center"
+        migrated = True
+    if "feedback_show_name" not in settings:
+        settings["feedback_show_name"] = True
+        migrated = True
+    if "feedback_show_key" not in settings:
+        settings["feedback_show_key"] = True
+        migrated = True
+    if "feedback_duration_ms" not in settings:
+        settings["feedback_duration_ms"] = 1500
         migrated = True
     # 为旧配置中的 profile 添加 target、outer_sectors 和 extension_sectors
     # 记录哪些 profile 原本缺少 extension_sectors 字段（区分"旧配置缺失"与"用户主动清空"）
@@ -344,6 +365,29 @@ def set_active_profile(config: Dict[str, Any], profile_name: str) -> bool:
 
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _RUN_VALUE = "CADGesture"
+
+
+def export_full_config(path: str) -> tuple:
+    """备份完整配置（settings + profiles）到 JSON 文件；返回 (ok, err)"""
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(load_config(), f, ensure_ascii=False, indent=2)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def import_full_config(path: str) -> tuple:
+    """从备份文件读取完整配置；返回 (ok, data_or_err)"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        return False, f"无法读取文件: {e}"
+    if (not isinstance(data, dict)
+            or "settings" not in data or "profiles" not in data):
+        return False, "备份文件格式无效（应为 {settings, profiles} 结构）"
+    return True, data
 
 
 def get_auto_start() -> bool:

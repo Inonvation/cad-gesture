@@ -21,6 +21,7 @@ from src.config_manager import (
 )
 from src.gesture_engine import GestureEngine
 from src.qt_radial_menu import QRadialMenu
+from src.qt_feedback import QFeedbackTip
 from src.qt_config_gui import open_config_gui
 from src.command_executor import execute_with_cancel, cancel_context_menu
 from src.single_instance import is_exit_requested
@@ -117,6 +118,8 @@ class CADGestureApp:
 
         # 圆盘菜单（Qt 透明悬浮窗）
         self.menu = QRadialMenu(self.config)
+        # 命令执行反馈提示（屏幕角落两行文字，短暂淡出）
+        self._feedback = QFeedbackTip()
         self.profile = get_active_profile(self.config)
 
         # 事件队列：put 后立即唤醒主线程（postEvent 线程安全），
@@ -171,6 +174,24 @@ class CADGestureApp:
     def _queue_extension_hint(self, is_in_zone: bool):
         self.event_queue.put(("extension_hint", is_in_zone))
 
+    def _show_feedback(self, cfg: dict):
+        """命令执行后显示反馈提示（位置/内容/时长均由设置控制）"""
+        try:
+            s = self.config.get("settings", {})
+            if not s.get("command_feedback", True):
+                return
+            line1 = (cfg.get("label", "") or cfg.get("description", ""))
+            if not s.get("feedback_show_name", True):
+                line1 = ""
+            line2 = ""
+            if s.get("feedback_show_key", True) and cfg.get("key"):
+                line2 = cfg.get("key", "").upper()
+            if not (line1 or line2):
+                return
+            self._feedback.show_feedback(line1, line2, s)
+        except Exception as e:
+            self.log.error("显示命令反馈失败: %s", e, exc_info=True)
+
     def _wake(self):
         """跨线程唤醒主线程立即处理事件队列（postEvent 线程安全）"""
         try:
@@ -217,6 +238,7 @@ class CADGestureApp:
                                 target = profile.get("target", "autocad")
                                 if key:
                                     execute_with_cancel(key, desc, target)
+                                    self._show_feedback(sector_cfg)
                             except Exception as e:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)
                         elif event_type == "update_check_result":

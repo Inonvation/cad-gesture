@@ -354,7 +354,14 @@ def _default_config() -> Dict[str, Any]:
             "update_source_url": "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest",
             "last_update_check": "",
             "language": "zh",
-            "ui_mode": "dark"
+            "ui_mode": "dark",
+            "trigger_button": "right",
+            "gesture_trail": True,
+            "command_feedback": True,
+            "feedback_position": "bottom_center",
+            "feedback_show_name": True,
+            "feedback_show_key": True,
+            "feedback_duration_ms": 1500
         },
         "profiles": {
             "AutoCAD-常用": {
