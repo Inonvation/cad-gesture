@@ -35,6 +35,28 @@ _enable_dpi_awareness()
 get_logger()
 
 
+def _install_excepthook():
+    """全局未捕获异常兜底：写入日志文件，避免异常被静默吞掉（打包版无控制台）"""
+    import traceback
+
+    def _hook(exc_type, exc_value, exc_tb):
+        try:
+            from src.logger import get_logger
+            get_logger().error(
+                "未捕获异常: %s\n%s",
+                exc_value,
+                "".join(traceback.format_exception(
+                    exc_type, exc_value, exc_tb)))
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _hook
+
+
+_install_excepthook()
+
+
 def main():
     """主函数"""
     if not ensure_single_instance():
