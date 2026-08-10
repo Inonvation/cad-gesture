@@ -60,7 +60,7 @@ class UITheme:
     scroll_handle_hover: str
 
 
-UI = UITheme(
+UI_DARK = UITheme(
     bg="#0f1218",
     bg_raised="#151a22",
     bg_card="#1a202b",
@@ -83,6 +83,53 @@ UI = UITheme(
     scroll_handle="#303b4a",
     scroll_handle_hover="#42506a",
 )
+
+# 浅色界面（低饱和、温和，与深色同 accent 保持品牌一致）
+UI_LIGHT = UITheme(
+    bg="#f4f5f7",
+    bg_raised="#ffffff",
+    bg_card="#fafbfc",
+    bg_overlay="#ffffff",
+    bg_input="#ffffff",
+    bg_hover="#e9edf2",
+    bg_selected="#d7e4f2",
+    text="#1f2733",
+    text_secondary="#4a5568",
+    text_muted="#7a8595",
+    border="#e0e4ea",
+    border_strong="#cfd6df",
+    accent="#2f6db3",
+    accent_hover="#3b7cc7",
+    accent_text="#ffffff",
+    accent_dim="#c5d9ee",
+    danger="#c03b3b",
+    danger_bg="#fbeaea",
+    danger_border="#f0cccc",
+    scroll_handle="#c5cdd8",
+    scroll_handle_hover="#aab6c4",
+)
+
+# 兼容旧引用（模块级 UI 即深色主题）
+UI = UI_DARK
+
+# 当前界面模式（模块级，供 paintEvent 等无参取色的地方使用）
+_CURRENT_MODE = "dark"
+
+
+def set_ui_mode(mode: str) -> None:
+    """记录当前界面模式（切换浅/深时由主窗口调用）"""
+    global _CURRENT_MODE
+    _CURRENT_MODE = "light" if mode == "light" else "dark"
+
+
+def get_ui(mode: str = None) -> UITheme:
+    """按界面模式返回 UI 主题（"light" / "dark"）。
+
+    不传 mode 时使用模块级当前模式——供 paintEvent 等需要
+    跟随主题的绘制代码调用（折叠按钮、拖拽卡片、预览标注等）。
+    """
+    m = _CURRENT_MODE if mode is None else mode
+    return UI_LIGHT if m == "light" else UI_DARK
 
 
 def build_qss(t: UITheme) -> str:
@@ -176,6 +223,118 @@ QSlider::handle:horizontal:hover {{ background: {t.accent_hover}; }}
 """
 
 
+def build_app_qss(mode: str = "dark") -> str:
+    """生成应用级全局样式表（含全部界面组件，浅/深模式通用入口）。
+
+    所有 UI 组件样式集中于此，通过 objectName / class 属性匹配；
+    切换界面模式时只需重新生成并 QApplication.setStyleSheet 即可全局生效。
+    """
+    t = get_ui(mode)
+    base = build_qss(t)
+    # 深色模式下的悬停叠色与浅色不同，用半透明黑/白区分
+    hover_overlay = "rgba(0,0,0,10)" if mode == "light" else "rgba(255,255,255,10)"
+    return base + f"""
+/* ---- 侧栏导航 ---- */
+QPushButton.nav {{
+    text-align: left; padding: 7px 10px; border-radius: 6px;
+    background: transparent; border: none;
+    color: {t.text_secondary}; font-size: 13px;
+    icon-size: 16px; }}
+QPushButton.nav:hover {{ background: {t.bg_hover}; color: {t.text}; }}
+QPushButton.nav:checked {{
+    background: {t.bg_selected}; color: {t.text};
+    font-weight: 600; }}
+QWidget#sidebar {{ background: {t.bg_raised};
+                  border-right: 1px solid {t.border}; }}
+QLabel#appLogo {{ font-size: 14px; font-weight: 700; color: {t.text}; }}
+QFrame#sidebarSep {{ background: {t.border}; border: none;
+                     max-height: 1px; min-height: 1px; }}
+QLabel#pageTitle {{ font-size: 15px; font-weight: 600; }}
+QLabel#pageSub {{ color: {t.text_muted}; font-size: 11px;
+                  font-weight: 600; padding-left: 8px; }}
+QLabel#pill {{ background: {t.bg_card}; color: {t.text_secondary};
+    border: 1px solid {t.border}; border-radius: 10px;
+    padding: 3px 12px; font-size: 12px; }}
+
+/* ---- 上下文区列表（无边框，融入侧栏） ---- */
+QListWidget#ctxList {{
+    background: transparent; border: none; padding: 2px;
+}}
+QListWidget#ctxList::item {{
+    padding: 5px 10px; border-radius: 6px; margin: 1px 0;
+}}
+QListWidget#ctxList::item:hover {{ background: {t.bg_hover}; }}
+QListWidget#ctxList::item:selected {{
+    background: {t.bg_selected}; color: {t.text}; }}
+
+/* ---- 顶栏操作按钮（撤销/重做/清除/恢复默认） ---- */
+QPushButton.topBtn {{
+    background: {t.bg_raised}; border: 1px solid {t.border_strong};
+    border-radius: 6px; padding: 2px 12px; color: {t.text}; }}
+QPushButton.topBtn:hover {{ background: {t.bg_hover}; }}
+QPushButton.topBtn:pressed {{ background: {t.bg_card}; }}
+QPushButton.topBtn:disabled {{ color: {t.text_muted}; }}
+QPushButton#btnClearAll {{ color: {t.danger}; }}
+
+/* ---- 命令库面板 ---- */
+QWidget#presetPanel {{
+    background: {t.bg_raised};
+    border-left: 1px solid {t.border_strong};
+}}
+QWidget#presetPanel QLabel {{ background: transparent; }}
+
+/* ---- 设置页卡片 ---- */
+QWidget#secCard {{
+    background: {t.bg_card}; border: 1px solid {t.border};
+    border-radius: {RADIUS_LG}px;
+}}
+QWidget#secCard QLabel, QWidget#secCard QCheckBox {{ background: transparent; }}
+QWidget#secCard QComboBox {{ background: {t.bg_input}; }}
+
+/* ---- 扇区编辑浮层 ---- */
+QFrame#popupCard {{
+    background: {t.bg_overlay};
+    border: 1px solid {t.border_strong};
+    border-radius: {RADIUS_LG}px;
+}}
+QFrame#popupCard QLabel {{ background: transparent; }}
+QLabel#popupTitle {{
+    color: {t.text}; font-size: {FONT_SM}px; font-weight: 600;
+}}
+QLabel#popupMeta {{ color: {t.text_muted}; font-size: {FONT_XS}px; }}
+QLabel#fieldName {{ color: {t.text_muted}; font-size: {FONT_XS}px; }}
+QFrame#popupCard QLineEdit {{
+    background: {t.bg_input}; border: 1px solid {t.border_strong};
+    border-radius: 5px; padding: 4px 8px; min-height: 0;
+}}
+QFrame#popupCard QLineEdit:focus {{ border-color: {t.accent}; }}
+QFrame#popupCard QPushButton {{
+    background: {t.bg_raised}; border: 1px solid {t.border_strong};
+    border-radius: 5px; padding: 3px 10px; min-height: 0;
+    color: {t.text};
+}}
+QFrame#popupCard QPushButton:hover {{ background: {t.bg_hover}; }}
+QPushButton#clearBtn {{ color: {t.danger}; }}
+
+/* ---- 主题色板格 ---- */
+QPushButton.themeTile {{
+    border: 2px solid transparent; border-radius: 10px;
+    background: transparent; padding: 0; min-width: 112px;
+    min-height: 132px;
+}}
+QPushButton.themeTile:hover {{ background: {hover_overlay}; }}
+QPushButton.themeTile:checked {{
+    border-color: {t.accent}; background: {hover_overlay};
+}}
+QPushButton.themeTile QLabel {{
+    background: transparent; color: {t.text_secondary};
+    font-size: 11px; border: none; padding: 0; min-height: 0;
+}}
+QPushButton.themeTile:hover QLabel {{ color: {t.text}; }}
+QPushButton.themeTile:checked QLabel {{ color: {t.text}; }}
+"""
+
+
 # ========== 圆盘主题 ==========
 
 
@@ -207,6 +366,7 @@ class MenuTheme:
     border: str
     accent_dim: str
     menu_bg: str = "#010101"
+    light: bool = False  # 浅色主题（Quicker 风：白扇面 + 主题色高亮白字 + 扇区间隙）
 
 
 # ---------- HLS 颜色推导 ----------
@@ -266,6 +426,62 @@ def _make_theme(name: str, label: str, h: float, s: float) -> MenuTheme:
     )
 
 
+# ---------- 浅色圆盘主题（浅色界面模式用） ----------
+
+# 浅色主题是 Quicker 风格：近白扇面 + 主题色高亮（高亮时文字反转为白色）
+# + 扇区间靠浅色描边/间隙分割，整体干净明亮。
+
+
+def _derive_ring_light(h: float, s_normal: float) -> RingColors:
+    """从色相推导浅色扇区环配色（Quicker 风）。
+
+    普通扇区 = 近白卡片底 + 深色文字；
+    高亮扇区 = 主题主色填充 + 白色粗体文字（对比反转，视觉明确）；
+    描边 = 浅灰，弱化分割（靠扇区间隙分隔）。
+    """
+    s_hl = max(0.55, min(0.75, s_normal + 0.38))
+    return RingColors(
+        normal=_hls(h, 0.975, 0.04),
+        empty=_hls(h, 0.91, 0.05),
+        highlight=_hls(h, 0.36, s_hl),
+        hover=_hls(h, 0.90, 0.07),
+        outline=_hls(h, 0.80, 0.06),
+        outline_hl=_hls(h, 0.30, s_hl),
+        text="#1f2430",
+        text_dim=_hls(h, 0.46, min(0.35, s_normal + 0.10)),
+    )
+
+
+def make_light_theme(t: MenuTheme) -> MenuTheme:
+    """由深色圆盘主题推导浅色版（Quicker 风：白扇面 + 主题色高亮白字）。
+
+    用于浅色界面模式：圆盘配色与浅色 chrome 协调，避免深色圆盘
+    在浅色背景下显得突兀。
+    """
+    def ring(r: RingColors) -> RingColors:
+        h, _, s = _hex_to_hls(r.normal)
+        return _derive_ring_light(h, s)
+
+    inner = ring(t.inner)
+    outer = ring(t.outer)
+    ext = ring(t.extension)
+    h = _hex_to_hls(t.dead_zone)[0]
+    s_hl = max(0.55, min(0.75, _hex_to_hls(t.inner.normal)[2] + 0.38))
+    return MenuTheme(
+        name=t.name, label=t.label,
+        inner=inner,
+        outer=outer,
+        extension=ext,
+        dead_zone=_hls(h, 0.985, 0.03),
+        dead_zone_outline=_hls(h, 0.80, 0.06),
+        center_text="#20242c",
+        selected_border=_hls(h, 0.36, s_hl),
+        border=_hls(h, 0.78, 0.05),
+        accent_dim=_hls(h, 0.80, min(0.45, _hex_to_hls(t.inner.normal)[2] + 0.20)),
+        light=True,
+    )
+
+
 def _hue_of(hex_color: str) -> float:
     return _hex_to_hls(hex_color)[0]
 
@@ -317,7 +533,15 @@ def get_menu_theme(name: str = "azure",
     return MENU_THEMES.get(name, MENU_THEMES["azure"])
 
 
-def theme_from_settings(settings: dict) -> MenuTheme:
-    """从配置 settings 取圆盘主题（含自定义主色）"""
-    return get_menu_theme(settings.get("menu_theme", "azure"),
-                          settings.get("custom_accent"))
+def theme_from_settings(settings: dict, ui_mode: str = None) -> MenuTheme:
+    """从配置 settings 取圆盘主题（含自定义主色）。
+
+    浅色界面模式下自动返回浅色版主题（亮扇面 + 深色文字），
+    与浅色 chrome 协调；深色模式返回原深色主题。
+    """
+    mode = (ui_mode or settings.get("ui_mode", "dark"))
+    t = get_menu_theme(settings.get("menu_theme", "azure"),
+                       settings.get("custom_accent"))
+    if mode == "light":
+        return make_light_theme(t)
+    return t

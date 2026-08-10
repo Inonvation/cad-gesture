@@ -1,0 +1,483 @@
+"""国际化（i18n）— 简体中文 / English 界面语言切换
+
+- 语言存于配置 settings.language（"zh" / "en"），运行时通过 set_language 切换
+- 所有界面文本通过 T(key) 获取；中文模式下 key 即原文，英文模式查表
+- 语言切换后调用已注册的刷新回调（各窗口 retranslate 自身文本）
+- 带占位符的文本用模板 + .format()，如 T("已切换到: {name}").format(name=...)
+"""
+
+from typing import Callable, Dict, List
+
+_lang = "zh"
+_listeners: List[Callable[[], None]] = []
+
+# ========== 翻译表（中文 → English） ==========
+
+_EN: Dict[str, str] = {
+    # ---- 主窗口 / 侧边栏 ----
+    "CAD鼠标手势 - 配置": "CAD Gesture - Settings",
+    "圆盘编辑": "Disc Editor",
+    "设置": "Settings",
+    "配置方案": "Profiles",
+    "新增方案": "New Profile",
+    "＋ 新增": "+ New",
+    "复制 / 重命名 / 删除 / 导入 / 导出":
+        "Copy / Rename / Delete / Import / Export",
+    "设置分类": "Settings",
+    "外观": "Appearance",
+    "触发手感": "Trigger",
+    "圆盘尺寸": "Disc Size",
+    "常规": "General",
+    "维护": "Maintenance",
+    "复制方案": "Copy Profile",
+    "重命名": "Rename",
+    "删除方案": "Delete Profile",
+    "导入方案": "Import Profile",
+    "导出方案": "Export Profile",
+    "AutoCAD": "AutoCAD",
+    "中望CAD": "ZWCAD",
+    "其他": "Others",
+    "就绪": "Ready",
+    "全局设置：修改即时保存": "Settings: changes save instantly",
+    "圆盘编辑": "Disc Editor",
+
+    # ---- 编辑页顶栏 ----
+    "撤销": "Undo",
+    "重做": "Redo",
+    "撤销上一步操作 (Ctrl+Z)": "Undo last action (Ctrl+Z)",
+    "重做被撤销的操作 (Ctrl+Y)": "Redo undone action (Ctrl+Y)",
+    "一键清除": "Clear All",
+    "清空当前方案的全部命令": "Clear all commands of current profile",
+    "恢复默认": "Reset Defaults",
+    "把当前方案恢复为默认命令": "Restore current profile to default commands",
+
+    # ---- 命令库 ----
+    "命令库": "Command Library",
+    "全部折叠 ▸": "Collapse All ▸",
+    "全部展开 ▾": "Expand All ▾",
+    "折叠所有分类": "Collapse all categories",
+    "展开所有分类": "Expand all categories",
+    "搜索命令…  (Ctrl+F)": "Search commands... (Ctrl+F)",
+    "点扇区即编辑；选扇区后点命令直接应用；未选扇区时点命令进入放置模式":
+        "Click a sector to edit; select a sector then click a command to apply; "
+        "click a command without selection to enter placement mode",
+    "折叠命令库，圆盘全宽显示": "Collapse library to give disc full width",
+    "展开命令库": "Expand library",
+    "放置到圆盘扇区…": "Place onto disc sector...",
+    "点击圆盘扇区放置「{label}」，右键 / Esc 取消":
+        "Click a disc sector to place \"{label}\", right-click / Esc to cancel",
+    "放置": "Place",
+    "点击扇区放置 · 右键取消": "Click a sector to place · right-click to cancel",
+    "已取消放置": "Placement cancelled",
+    "已将「{label}」放置到{layer}扇区 {idx}":
+        "Placed \"{label}\" onto {layer} sector {idx}",
+    "已将「{label}」应用到扇区 {idx}":
+        "Applied \"{label}\" to sector {idx}",
+    "命令: {label}\n快捷键: {key}\nCAD 命令: {desc}\n\n拖拽到圆盘扇区即可新增/更换，也可左键应用到选中扇区":
+        "Command: {label}\nShortcut: {key}\nCAD command: {desc}\n\n"
+        "Drag onto a disc sector to add/replace, or left-click to apply to selected sector",
+
+    # ---- 扇区编辑浮层 ----
+    "按住此处可拖动编辑窗": "Drag here to move editor",
+    "已保存": "Saved",
+    "未保存": "Unsaved",
+    "扇区": "Sector",
+    "内层": "Inner",
+    "外层": "Outer",
+    "扩展圈": "Extension",
+    "{layer} · 扇区 {idx}": "{layer} · Sector {idx}",
+    "圆盘上显示的名称": "Name shown on disc",
+    "回退快捷键，如 L / CO": "Fallback shortcut, e.g. L / CO",
+    "发送到 CAD 的命令名，如 LINE": "CAD command name, e.g. LINE",
+    "显示名称": "Display Name",
+    "快捷键": "Shortcut",
+    "CAD 命令": "CAD Command",
+    "保存": "Save",
+    "清空": "Clear",
+    "删除该扇区命令": "Delete this sector's command",
+    "保存该扇区的命令修改": "Save changes to this sector",
+    "编辑 {layer}扇区 {idx}：点击外部关闭":
+        "Editing {layer} sector {idx}: click outside to close",
+    "未保存的修改": "Unsaved Changes",
+    "扇区编辑有未保存的修改，要保存吗？":
+        "Sector editing has unsaved changes. Save them?",
+    "放弃": "Discard",
+    "取消": "Cancel",
+    "修改未保存，已丢弃": "Changes discarded",
+    "已取消选择": "Selection cancelled",
+    "● 保存中…": "● Saving...",
+    "已清空{layer}扇区 {idx}": "Cleared {layer} sector {idx}",
+    "已{verb}命令：{f_layer}扇区 {f_idx} ↔ {t_layer}扇区 {t_idx}":
+        "{verb} command: {f_layer} sector {f_idx} ↔ {t_layer} sector {t_idx}",
+    "交换": "swapped",
+    "移动": "moved",
+    "请先在圆盘上选择一个扇区": "Select a sector on the disc first",
+    "已删除{layer}扇区 {idx} 的命令": "Deleted command on {layer} sector {idx}",
+    "确定清空方案「{name}」的全部命令吗？\n（可用 Ctrl+Z 撤销）":
+        "Clear all commands of profile \"{name}\"?\n(Ctrl+Z to undo)",
+    "已清空全部命令": "All commands cleared",
+    "确定把方案「{name}」的三圈命令\n恢复为默认内容吗？（可用 Ctrl+Z 撤销）":
+        "Restore all three rings of profile \"{name}\" to defaults?\n(Ctrl+Z to undo)",
+    "未找到可恢复的默认配置": "No default configuration found",
+    "已恢复方案「{name}」的默认命令":
+        "Restored default commands for profile \"{name}\"",
+
+    # ---- 方案操作 ----
+    "新增配置方案": "New Profile",
+    "请输入方案名称:": "Enter profile name:",
+    "错误": "Error",
+    "方案「{name}」已存在": "Profile \"{name}\" already exists",
+    "选择目标软件": "Select Target Software",
+    "适用的 CAD 软件:": "Target CAD software:",
+    "复制配置方案": "Copy Profile",
+    "请输入新方案名称:": "Enter new profile name:",
+    "重命名配置方案": "Rename Profile",
+    "请输入新名称:": "Enter new name:",
+    "提示": "Info",
+    "没有可导出的配置": "Nothing to export",
+    "导出方案": "Export Profile",
+    "导入方案": "Import Profile",
+    "导入失败（无法读取文件）: {e}": "Import failed (cannot read file): {e}",
+    "导入失败：文件格式无效（应为对象）":
+        "Import failed: invalid file format (expected an object)",
+    "导入失败：{key} 格式无效": "Import failed: invalid {key} format",
+    "导入失败：{key} 中存在无效数据": "Import failed: invalid data in {key}",
+    "已从 {path} 导入配置": "Imported configuration from {path}",
+    "已从": "Exported to",
+    "导出": "export",
+    "导出失败": "Export failed",
+    "至少保留一个配置方案": "Keep at least one profile",
+    "确认": "Confirm",
+    "确定要删除「{name}」吗?": "Delete profile \"{name}\"?",
+    "已撤销": "Undone",
+    "已重做": "Redone",
+    "✓ 已保存": "✓ Saved",
+    "保存失败": "Save failed",
+
+    # ---- 设置页分类 ----
+    "界面模式": "Interface Mode",
+    "深色": "Dark",
+    "浅色": "Light",
+    "跟随系统": "Follow System",
+    "语言": "Language",
+    "简体中文": "简体中文",
+    "English": "English",
+    "主色": "Accent Color",
+    "自选颜色…": "Custom Color...",
+    "自定义": "Custom",
+    "不透明度": "Opacity",
+    "长按延迟": "Hold Delay",
+    "触发距离": "Trigger Distance",
+    "中心死区": "Center Dead Zone",
+    "内层半径": "Inner Radius",
+    "外层半径": "Outer Radius",
+    "扩展圈": "Extension Ring",
+    "扇区数量": "Sector Count",
+    "启动时打开此界面": "Open this window on startup",
+    "根据 CAD 窗口自动切换": "Auto-switch by CAD window",
+    "开机自启": "Launch at startup",
+    "启动时检查更新": "Check for updates on startup",
+    "检查更新": "Check for Updates",
+    "立即检查是否有新版本": "Check for new version now",
+    "配置目录": "Config Directory",
+    "更改": "Change",
+    "重置": "Reset",
+    "把配置迁移到自选目录（如 D 盘）":
+        "Move configuration to a custom directory (e.g. D:)",
+    "恢复默认 %APPDATA%\\CADGesture": "Restore default %APPDATA%\\CADGesture",
+    "打开配置目录": "Open Config Directory",
+    "把当前方案的三圈命令恢复为默认内容":
+        "Restore current profile's three rings to defaults",
+    "选择配置目录": "Select Config Directory",
+    "更改失败": "Change Failed",
+    "无法使用该目录：{e}": "Cannot use this directory: {e}",
+    "配置目录已更改": "Config Directory Changed",
+    "配置已迁移到：\n{path}\n\n目录位置已记住，下次启动自动使用。":
+        "Configuration migrated to:\n{path}\n\nLocation remembered, "
+        "used automatically on next start.",
+    "恢复失败": "Reset Failed",
+    "已恢复默认": "Default Restored",
+    "配置目录已恢复为：\n{path}": "Config directory restored to:\n{path}",
+    "确定要重置所有配置为默认值吗?": "Reset all settings to defaults?",
+    "已重置为默认配置": "Settings reset to defaults",
+    "预览随设置实时更新，拖动尺寸滑杆可查看实际大小效果":
+        "Preview updates live; drag size sliders to see actual scale",
+    "内 {inner}px · 外 {outer}px · 扩展 {ext}px   实际直径 {dia}px":
+        "Inner {inner}px · Outer {outer}px · Ext {ext}px   Actual diameter {dia}px",
+    "选择圆盘主色": "Pick Disc Accent Color",
+    "圆盘主题": "Disc Theme",
+
+    # ---- 托盘 / 更新 / 其他 ----
+    "配置": "Settings",
+    "退出": "Exit",
+    "已切换到: {name}": "Switched to: {name}",
+    "CAD鼠标手势": "CAD Gesture",
+    "发现新版本": "New Version Available",
+    "CAD鼠标手势 v{new} 已发布（当前 v{cur}）":
+        "CAD Gesture v{new} released (current v{cur})",
+    "（无更新说明）": "(no release notes)",
+    "立即更新": "Update Now",
+    "稍后再说": "Later",
+    "正在下载 v{ver} 更新包...": "Downloading v{ver} update...",
+    "CAD鼠标手势 - 更新": "CAD Gesture - Update",
+    "正在下载更新包... {got} KB / {total} KB":
+        "Downloading update... {got} KB / {total} KB",
+    "更新已取消": "Update cancelled",
+    "下载失败，请检查网络后重试": "Download failed, check network and retry",
+    "更新就绪": "Update Ready",
+    "更新包已下载完成。": "Update package downloaded.",
+    "将退出程序并自动完成更新，更新完成后会重新启动。":
+        "The app will exit and update automatically, then restart.",
+    "已取消更新": "Update cancelled",
+    "启动安装程序失败，请手动运行更新包":
+        "Failed to start installer, please run the update package manually",
+    "鼠标钩子安装失败，手势将不可用":
+        "Mouse hook install failed, gestures unavailable",
+    "已是最新版本（v{ver}）": "Already up to date (v{ver})",
+    "检查更新": "Check for Updates",
+    "提示：GitHub 接口有限频（约 60 次/小时），如提示 403 请稍后再试":
+        "Note: GitHub API rate-limited (~60/hour); if 403 shown, try again later",
+    "无": "None",
+    "应用": "Apply",
+    "关闭": "Close",
+    "打开": "Open",
+    "关于": "About",
+    "版本": "Version",
+    "命令": "Command",
+    "方案": "Profile",
+    "设为 AutoCAD 应用方案": "Set as AutoCAD Profile",
+    "设为中望CAD 应用方案": "Set as ZWCAD Profile",
+    "已设为 {cad} 的应用方案": "Set as active profile for {cad}",
+    "方案类型与目标 CAD 不匹配": "Profile type does not match the target CAD",
+    "{cad}（当前：{name}）": "{cad} (Current: {name})",
+    "{name}  ● 当前": "{name}  ● Current",
+    "搜索": "Search",
+    "全部": "All",
+    "是": "Yes",
+    "否": "No",
+    "设置": "Settings",
+    "重置为默认配置": "Reset to Defaults",
+
+    # ========== 预设命令 / 分类（命令库显示） ==========
+    "绘图": "Draw",
+    "编辑修改": "Modify",
+    "标注": "Dimension",
+    "文字与样式": "Text & Style",
+    "视图与系统": "View & System",
+    "快捷操作": "Shortcuts",
+    "开关切换": "Toggles",
+    "符号标注": "Symbols",
+    "构造工具": "Construction",
+    "序号明细": "BOM",
+    "增强工具": "Enhanced Tools",
+    "直线": "Line",
+    "圆": "Circle",
+    "圆弧": "Arc",
+    "矩形": "Rectangle",
+    "多段线": "Polyline",
+    "样条": "Spline",
+    "椭圆": "Ellipse",
+    "填充": "Hatch",
+    "块": "Block",
+    "插入块": "Insert Block",
+    "点": "Point",
+    "多边形": "Polygon",
+    "圆环": "Donut",
+    "构造线": "Xline",
+    "射线": "Ray",
+    "多线": "Mline",
+    "边界": "Boundary",
+    "面域": "Region",
+    "渐变色": "Gradient",
+    "写块": "Wblock",
+    "表格": "Table",
+    "复制": "Copy",
+    "移动": "Move",
+    "删除": "Erase",
+    "偏移": "Offset",
+    "修剪": "Trim",
+    "延伸": "Extend",
+    "镜像": "Mirror",
+    "旋转": "Rotate",
+    "缩放": "Scale",
+    "拉伸": "Stretch",
+    "打断": "Break",
+    "圆角": "Fillet",
+    "倒角": "Chamfer",
+    "分解": "Explode",
+    "特性匹配": "Match Props",
+    "编辑多段线": "Pedit",
+    "修改属性": "Change",
+    "撤销删除": "Oops",
+    "定数等分": "Divide",
+    "定距等分": "Measure",
+    "标注样式": "Dim Style",
+    "线性标注": "Linear Dim",
+    "对齐标注": "Aligned Dim",
+    "半径标注": "Radius Dim",
+    "直径标注": "Diameter Dim",
+    "角度标注": "Angular Dim",
+    "基线标注": "Baseline Dim",
+    "连续标注": "Continue Dim",
+    "圆心标记": "Center Mark",
+    "坐标标注": "Ordinate Dim",
+    "引线": "Leader",
+    "编辑标注": "Dim Edit",
+    "单行文字": "Single Text",
+    "多行文字": "Mtext",
+    "文字编辑": "Text Edit",
+    "图层": "Layer",
+    "线型": "Linetype",
+    "线宽": "Lineweight",
+    "颜色": "Color",
+    "文字样式": "Text Style",
+    "表格样式": "Table Style",
+    "线型比例": "Ltscale",
+    "平移": "Pan",
+    "重生成": "Regen",
+    "距离": "Dist",
+    "列表": "List",
+    "选项": "Options",
+    "草图设置": "Drafting Settings",
+    "单位": "Units",
+    "清理": "Purge",
+    "重命名": "Rename",
+    "特性": "Properties",
+    "进入视口": "Mspace",
+    "退出视口": "Pspace",
+    "撤销": "Undo",
+    "重做": "Redo",
+    "保存": "Save",
+    "另存为": "Save As",
+    "打开": "Open",
+    "新建": "New",
+    "打印": "Print",
+    "粘贴": "Paste",
+    "剪切": "Cut",
+    "全选": "Select All",
+    "基点复制": "Copy Base",
+    "粘贴为块": "Paste as Block",
+    "正交": "Ortho",
+    "对象捕捉": "Osnap",
+    "栅格": "Grid",
+    "捕捉": "Snap",
+    "极轴": "Polar",
+    "视图": "View",
+    "视觉样式": "Visual Style",
+    "前一个视图": "Previous View",
+    "实时平移": "Real-time Pan",
+    "实时缩放": "Real-time Zoom",
+    "全屏显示": "Fullscreen",
+    "智能标注": "Smart Dim",
+    "粗糙度": "Roughness",
+    "形位公差": "GD&T",
+    "基准标注": "Datum",
+    "序号": "Balloon",
+    "明细表": "Part List",
+    "图框设置": "Frame Setup",
+    "技术要求": "Tech. Notes",
+    "焊接符号": "Weld Symbol",
+    "锥斜度": "Taper",
+    "文字标注": "Text Dim",
+    "超级符号": "Super Symbol",
+    "计算面积": "Area",
+    "超级编辑": "Super Edit",
+    "层变换": "Layer Change",
+    "标高符号": "Elevation",
+    "圆孔标记": "Circle Mark",
+    "中心孔标注": "Center Hole",
+    "折断符号": "Break Symbol",
+    "截断线": "Section Line",
+    "智能画线": "Smart Line",
+    "对称画线": "Mirror Line",
+    "中心线": "Centerline",
+    "垂直线": "Vertical Line",
+    "切线": "Tangent Line",
+    "管道线": "Pipe Line",
+    "并行线": "Parallel Line",
+    "基准": "Datum",
+    "中心线": "Centerline",
+    "裁剪": "Trim",
+    "局部详图": "Detail",
+    "区域缩放": "Zoom",
+    "一键标注φ": "Dim φ",
+    "方向符号": "Direction",
+    "剖面线": "Section Hatch",
+    "图幅": "Frame",
+    "剖切线": "Cut Line",
+    "公切线": "Common Tangent",
+    "圆心画圆": "Circle by Center",
+    "圆心画弧": "Arc by Center",
+    "端点画圆": "Circle by Ends",
+    "端点画弧": "Arc by Ends",
+    "构造圆": "Construct Circle",
+    "角度线": "Angle Line",
+    "锯齿线": "Zigzag Line",
+    "追踪": "Tracking",
+    "动态延伸": "Dynamic Extend",
+    "水平构造线": "H. Xline",
+    "垂直构造线": "V. Xline",
+    "垂分线": "Perp Bisector",
+    "平分线": "Angle Bisector",
+    "层变换": "Layer Change",
+    "图纸管理": "Drawing Mgmt",
+    "更换图框": "Change Frame",
+    "更换标准": "Change Std",
+    "更换比例": "Change Scale",
+    "合并序号": "Merge Balloon",
+    "序号对齐": "Align Balloon",
+    "序号顺号": "Reorder Balloon",
+    "增强工具": "Enhanced Tools",
+    "清理": "Purge",
+
+    # ---- 圆盘主题名 ----
+    "天蓝": "Azure",
+    "翡翠": "Emerald",
+    "绯红": "Crimson",
+    "午夜": "Midnight",
+    "极光": "Aurora",
+    "石墨": "Graphite",
+    "琥珀": "Amber",
+    "单色": "Mono",
+    "自定义": "Custom",
+    "中心死区": "Dead Zone",
+}
+
+
+def T(key: str) -> str:
+    """翻译：中文模式返回原文，英文模式查表（缺项回退原文）"""
+    if _lang == "en":
+        return _EN.get(key, key)
+    return key
+
+
+def get_language() -> str:
+    return _lang
+
+
+def set_language(lang: str) -> bool:
+    """切换语言；返回是否有变化。变化时通知所有监听器刷新界面。"""
+    global _lang
+    lang = "en" if lang == "en" else "zh"
+    if lang == _lang:
+        return False
+    _lang = lang
+    for cb in list(_listeners):
+        try:
+            cb()
+        except Exception:
+            pass
+    return True
+
+
+def add_listener(fn: Callable[[], None]) -> None:
+    """注册语言切换监听器（窗口 retranslate）。重复注册去重。"""
+    if fn not in _listeners:
+        _listeners.append(fn)
+
+
+def remove_listener(fn: Callable[[], None]) -> None:
+    try:
+        _listeners.remove(fn)
+    except ValueError:
+        pass

@@ -91,7 +91,13 @@ def test_preset_commands():
 
     zwcad = get_preset_commands("zwcad")
     assert "符号标注" in zwcad
-    assert "序号明细" in zwcad
+    assert "序号与明细表" in zwcad
+    assert "尺寸标注" in zwcad
+    assert "图纸与图框" in zwcad
+    assert "超级符号库" in zwcad
+    assert zwcad["绘图工具"]["智能画线"]["description"] == "ZWMINTELLIGENTLINE"
+    assert zwcad["符号标注"]["锥斜度"]["description"] == "ZWMTAPERSYM"
+    assert zwcad["符号标注"]["圆孔标记"]["description"] == "ZWMCIRCLEMARK"
     print(f"[OK]  ZWCAD预设命令: {len(zwcad)}个分类")
 
 

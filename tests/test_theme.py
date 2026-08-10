@@ -5,7 +5,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.theme import (MENU_THEMES, get_menu_theme, make_custom_theme,
-                       theme_from_settings, build_qss, UI)
+                       theme_from_settings, make_light_theme, build_qss, UI)
 
 
 def _lum(hexc):
@@ -70,6 +70,25 @@ def test_text_contrast_on_normal():
 def test_center_text_contrast():
     for t in MENU_THEMES.values():
         assert _contrast(t.center_text, t.dead_zone) >= 6.0
+
+
+def test_light_theme_quicker_style():
+    """浅色主题（Quicker 风）：字段齐全 + 白字高亮对比 + 深字浅底对比"""
+    for t in MENU_THEMES.values():
+        lt = make_light_theme(t)
+        assert lt.light is True
+        for ring in (lt.inner, lt.outer, lt.extension):
+            for attr in ("normal", "empty", "highlight", "hover",
+                         "outline", "outline_hl", "text", "text_dim"):
+                assert getattr(ring, attr), f"light {t.name}.{attr} 为空"
+            # 白字在主题色高亮扇面上可读
+            assert _contrast("#ffffff", ring.highlight) >= 3.0, \
+                f"light {t.name} 高亮白字对比不足: {_contrast('#ffffff', ring.highlight):.2f}"
+            # 深字在近白普通扇面上可读
+            assert _contrast(ring.text, ring.normal) >= 6.0, \
+                f"light {t.name} 普通扇面深字对比不足"
+        # 中心深字与浅色中心区对比
+        assert _contrast(lt.center_text, lt.dead_zone) >= 6.0
 
 
 def test_build_qss():

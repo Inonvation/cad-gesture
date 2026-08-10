@@ -42,6 +42,22 @@ def calc_sector(dx: int, dy: int, sector_count: int) -> int:
     return int(adjusted / sec_angle) % sector_count
 
 
+def should_trigger_on_release(menu_shown: bool, dist: float, dead_zone: float,
+                              trigger_distance: float, held_ms: float,
+                              hold_threshold_ms: float) -> bool:
+    """松手时是否结算手势命令。
+
+    规则（与圆盘 hover 的中心区判定一致）：
+    - 菜单已弹出：松手位置在中心死区内 → 取消，不触发（防止"滑到扇区后
+      滑回中心松手"仍触发旧扇区 / 停在中心区松手误触发命令）；
+      死区外按最终位置结算（松手在哪就触发哪）。
+    - 菜单未弹出（快速甩动兜底）：拖出触发距离且按住够久才触发。
+    """
+    if menu_shown:
+        return dist >= dead_zone
+    return dist >= trigger_distance and held_ms >= hold_threshold_ms
+
+
 class GestureEngine:
     """鼠标手势引擎——监听右键拖拽，触发圆盘菜单和命令"""
 
@@ -243,14 +259,10 @@ class GestureEngine:
                     dx, dy = x - self._press_pos[0], y - self._press_pos[1]
                     dist = math.sqrt(dx * dx + dy * dy)
                     held_ms = (time.monotonic() - self._press_time) * 1000
-                    if self._menu_shown:
-                        # 长按弹菜单路径：拖出触发距离才结算
-                        if dist >= self.trigger_distance:
-                            callback = self.on_gesture
-                            callback_args = self._resolve_gesture(dx, dy, dist)
-                    elif dist >= self.trigger_distance and held_ms >= self.hold_threshold_ms:
-                        # 快速甩动兜底：菜单来不及弹出（按住时长不足或移动后静止）
-                        # 但已拖出死区且按住够久，直接按当前方向触发，避免手势整条丢失
+                    if should_trigger_on_release(
+                            self._menu_shown, dist, self.dead_zone,
+                            self.trigger_distance, held_ms,
+                            self.hold_threshold_ms):
                         callback = self.on_gesture
                         callback_args = self._resolve_gesture(dx, dy, dist)
                     should_hide = True

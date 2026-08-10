@@ -36,6 +36,8 @@ class QRadialMenu(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setFocusPolicy(Qt.StrongFocus)
+        # 覆盖应用级 QSS：圆盘菜单保持全透明背景，只由 paintEvent 自绘
+        self.setStyleSheet("QWidget { background: transparent; }")
 
         self.config = config
         self._on_cancel = on_cancel
@@ -245,20 +247,20 @@ class QRadialMenu(QWidget):
         else:
             hl_layer = INNER
 
-        draw_shadow(p, cx, cy, self.ext_ring_radius)
+        draw_shadow(p, cx, cy, self.ext_ring_radius, light=t.light)
 
         draw_ring(p, cx, cy, self.outer_ring_radius, self.ext_ring_radius,
                   n, self._profile.get("extension_sectors", {}), t.extension,
                   layer=EXTENSION, hl_idx=self._highlighted_sector,
-                  hl_layer=hl_layer, hl_fade=self._hl_fade)
+                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light)
         draw_ring(p, cx, cy, self.ring_radius, self.outer_ring_radius,
                   n, self._profile.get("outer_sectors", {}), t.outer,
                   layer=OUTER, hl_idx=self._highlighted_sector,
-                  hl_layer=hl_layer, hl_fade=self._hl_fade)
+                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light)
         draw_ring(p, cx, cy, self.dead_zone, self.ring_radius,
                   n, self._profile.get("sectors", {}), t.inner,
                   layer=INNER, hl_idx=self._highlighted_sector,
-                  hl_layer=hl_layer, hl_fade=self._hl_fade)
+                  hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light)
 
         draw_center(p, cx, cy, self.dead_zone, t, self._size,
                     *self._center_texts())

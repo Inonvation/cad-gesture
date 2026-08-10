@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QMenu, QMessageBox,
 from src.config_manager import (
     load_config, save_config, get_active_profile,
     get_profile_for_window, get_profile_names, set_active_profile,
-    get_config_path
+    set_profile_for_target, get_config_path
 )
 from src.gesture_engine import GestureEngine
 from src.qt_radial_menu import QRadialMenu
@@ -24,6 +24,8 @@ from src.qt_config_gui import open_config_gui
 from src.command_executor import execute_with_cancel
 from src.single_instance import is_exit_requested
 from src.logger import get_logger
+from src.i18n import T, set_language, add_listener, remove_listener
+from src.theme import build_app_qss, set_ui_mode
 from src.updater import (check_for_update, download_update, run_installer,
                          UpdateCancelled, UpdateError)
 from src.version import __version__
@@ -44,6 +46,17 @@ class CADGestureApp:
         if self.app is None:
             self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)
+
+        # 界面语言 / 模式初始化
+        s = self.config.get("settings", {})
+        set_language(s.get("language", "zh"))
+        self._ui_mode = s.get("ui_mode", "dark")
+        set_ui_mode(self._ui_mode)
+        self.app.setStyleSheet(build_app_qss(self._ui_mode))
+
+        # 语言切换时重建托盘菜单文本
+        self._lang_listener = self._rebuild_tray
+        add_listener(self._lang_listener)
 
         # 圆盘菜单（Qt 透明悬浮窗）
         self.menu = QRadialMenu(self.config)
@@ -219,6 +232,27 @@ class CADGestureApp:
 
     def _setup_tray(self):
         """设置系统托盘"""
+        self._tray_menu = self._build_tray_menu()  # 保持引用防 GC
+        if hasattr(self, "tray"):
+            self.tray.setContextMenu(self._tray_menu)
+            self.tray.setToolTip(T("CAD鼠标手势"))
+            return
+        self.tray = QSystemTrayIcon(self._create_tray_icon())
+        self.tray.setToolTip(T("CAD鼠标手势"))
+        self.tray.setContextMenu(self._tray_menu)
+        self.tray.show()
+
+    def _rebuild_tray(self):
+        """语言切换后重建托盘菜单文本（保留图标与显示状态）"""
+        try:
+            self._tray_menu = self._build_tray_menu()
+            if hasattr(self, "tray"):
+                self.tray.setContextMenu(self._tray_menu)
+        except Exception as e:
+            self.log.error("重建托盘菜单失败: %s", e, exc_info=True)
+
+    def _build_tray_menu(self) -> QMenu:
+        """构建托盘菜单（当前语言）"""
         profile_names = get_profile_names(self.config)
         autocad_profiles = [n for n in profile_names
                             if self.config["profiles"][n].get("target") == "autocad"]
@@ -229,49 +263,60 @@ class CADGestureApp:
 
         menu = QMenu()
 
-        def add_profile_actions(names, parent_menu=None):
-            target = parent_menu or menu
+        # 当前各 CAD 生效方案（勾选标记用），与运行时规则一致
+        active_by_target = {}
+        for tgt in ("autocad", "zwcad"):
+            p = get_profile_for_window(self.config, tgt)
+            if p is not None:
+                active_by_target[tgt] = p.get("name", "")
+
+        def add_profile_actions(names, parent_menu=None, target=None):
+            tgt_menu = parent_menu or menu
             for name in names:
-                act = QAction(self.config["profiles"][name].get("name", name), target)
+                act = QAction(self.config["profiles"][name].get("name", name), tgt_menu)
+                act.setCheckable(True)
+                act.setChecked(
+                    target is not None
+                    and active_by_target.get(target) == self.config["profiles"][name].get("name", name))
                 act.triggered.connect(lambda _=False, n=name: self._switch_profile(n))
-                target.addAction(act)
+                tgt_menu.addAction(act)
 
         if autocad_profiles:
             sub = menu.addMenu("AutoCAD")
-            add_profile_actions(autocad_profiles, sub)
+            add_profile_actions(autocad_profiles, sub, "autocad")
         if zwcad_profiles:
-            sub = menu.addMenu("中望CAD")
-            add_profile_actions(zwcad_profiles, sub)
+            sub = menu.addMenu(T("中望CAD"))
+            add_profile_actions(zwcad_profiles, sub, "zwcad")
         add_profile_actions(other_profiles)
 
         menu.addSeparator()
-        act_cfg = QAction("配置", menu)
+        act_cfg = QAction(T("配置"), menu)
         act_cfg.triggered.connect(lambda _=False: self._open_config())
         menu.addAction(act_cfg)
-        act_update = QAction("检查更新", menu)
+        act_update = QAction(T("检查更新"), menu)
         act_update.triggered.connect(lambda _=False: self._check_update(manual=True))
         menu.addAction(act_update)
-        act_exit = QAction("退出", menu)
+        act_exit = QAction(T("退出"), menu)
         act_exit.triggered.connect(lambda _=False: self._quit())
         menu.addAction(act_exit)
-
-        self._tray_menu = menu  # 保持引用防 GC
-
-        self.tray = QSystemTrayIcon(self._create_tray_icon())
-        self.tray.setToolTip("CAD鼠标手势")
-        self.tray.setContextMenu(menu)
-        self.tray.show()
+        return menu
 
     def _switch_profile(self, profile_name: str):
         """切换方案（Qt 信号槽运行在主线程，无需跨线程投递）"""
         try:
             set_active_profile(self.config, profile_name)
+            # 托盘点选即表示"该方案用于对应 CAD"：同步显式绑定
+            prof = self.config["profiles"].get(profile_name, {})
+            target = prof.get("target", "")
+            if target in ("autocad", "zwcad"):
+                set_profile_for_target(self.config, target, profile_name)
             self.profile = get_active_profile(self.config)
             self.gesture_engine.update_config(self.config)
             self.menu.update_config(self.config)
             display = self.config["profiles"].get(profile_name, {}).get("name", profile_name)
             try:
-                self.tray.showMessage("CAD鼠标手势", f"已切换到: {display}",
+                self.tray.showMessage("CAD鼠标手势",
+                                      T("已切换到: {name}").format(name=display),
                                       QSystemTrayIcon.Information, 2000)
             except Exception:
                 pass
@@ -294,6 +339,12 @@ class CADGestureApp:
             self.profile = get_active_profile(self.config)
             self.gesture_engine.update_config(self.config)
             self.menu.update_config(self.config)
+            # 界面模式变化时同步全局（配置窗口已应用，这里保持模块状态一致）
+            mode = self.config.get("settings", {}).get("ui_mode", "dark")
+            if mode != self._ui_mode:
+                self._ui_mode = mode
+                set_ui_mode(mode)
+                self.app.setStyleSheet(build_app_qss(mode))
         except Exception as e:
             self.log.error("重载配置失败: %s", e, exc_info=True)
 
@@ -347,16 +398,18 @@ class CADGestureApp:
                 # 托盘气泡在 Windows 上可能被通知设置屏蔽，手动检查用弹窗确保可见
                 try:
                     QMessageBox.information(
-                        None, "检查更新", f"已是最新版本（v{__version__}）")
+                        None, T("检查更新"),
+                        T("已是最新版本（v{ver}）").format(ver=__version__))
                 except Exception as e:
                     self.log.error("提示弹窗失败: %s", e, exc_info=True)
         else:
             if manual:
                 try:
                     QMessageBox.warning(
-                        None, "检查更新",
-                        data.get("error", "检查更新失败") +
-                        "\n\n提示：GitHub 接口有限频（约 60 次/小时），如提示 403 请稍后再试")
+                        None, T("检查更新"),
+                        data.get("error", T("检查更新")) +
+                        "\n\n" + T("提示：GitHub 接口有限频（约 60 次/小时），"
+                                  "如提示 403 请稍后再试"))
                 except Exception as e:
                     self.log.error("提示弹窗失败: %s", e, exc_info=True)
             else:
@@ -382,15 +435,15 @@ class CADGestureApp:
         self._update_info = info
         box = QMessageBox()
         box.setIcon(QMessageBox.Information)
-        box.setWindowTitle("发现新版本")
-        box.setText(f"CAD鼠标手势 v{info.get('version', '')} 已发布"
-                    f"（当前 v{__version__}）")
-        notes = (info.get("notes") or "").strip() or "（无更新说明）"
+        box.setWindowTitle(T("发现新版本"))
+        box.setText(T("CAD鼠标手势 v{new} 已发布（当前 v{cur}）")
+                    .format(new=info.get("version", ""), cur=__version__))
+        notes = (info.get("notes") or "").strip() or T("（无更新说明）")
         if len(notes) > _UPDATE_NOTES_MAX:
             notes = notes[:_UPDATE_NOTES_MAX] + "..."
         box.setInformativeText(notes)
-        btn_now = box.addButton("立即更新", QMessageBox.AcceptRole)
-        box.addButton("稍后再说", QMessageBox.RejectRole)
+        btn_now = box.addButton(T("立即更新"), QMessageBox.AcceptRole)
+        box.addButton(T("稍后再说"), QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is btn_now:
             self._start_update_download(info)
@@ -405,9 +458,9 @@ class CADGestureApp:
             pass
         total = info.get("size") or 0
         self._update_progress = QProgressDialog(
-            f"正在下载 v{info.get('version', '')} 更新包...", "取消", 0,
-            100 if total > 0 else 0)
-        self._update_progress.setWindowTitle("CAD鼠标手势 - 更新")
+            T("正在下载 v{ver} 更新包...").format(ver=info.get("version", "")),
+            T("取消"), 0, 100 if total > 0 else 0)
+        self._update_progress.setWindowTitle(T("CAD鼠标手势 - 更新"))
         self._update_progress.setWindowModality(Qt.WindowModal)
         self._update_progress.setMinimumDuration(0)
         self._update_progress.canceled.connect(
@@ -437,8 +490,8 @@ class CADGestureApp:
                 pct = int(downloaded * 100 / total)
                 self._update_progress.setValue(min(pct, 100))
                 self._update_progress.setLabelText(
-                    f"正在下载更新包... {downloaded // 1024} KB / "
-                    f"{total // 1024} KB")
+                    T("正在下载更新包... {got} KB / {total} KB")
+                    .format(got=downloaded // 1024, total=total // 1024))
             else:
                 self._update_progress.setValue(0)
         except Exception as e:
@@ -451,25 +504,26 @@ class CADGestureApp:
             self._update_progress.close()
             self._update_progress = None
         if self._update_cancel:
-            self._tray_message("CAD鼠标手势", "更新已取消")
+            self._tray_message("CAD鼠标手势", T("更新已取消"))
             return
         if not ok:
-            self._tray_message("CAD鼠标手势", "下载失败，请检查网络后重试",
+            self._tray_message("CAD鼠标手势", T("下载失败，请检查网络后重试"),
                                QSystemTrayIcon.Warning)
             return
         box = QMessageBox()
         box.setIcon(QMessageBox.Question)
-        box.setWindowTitle("更新就绪")
-        box.setText("更新包已下载完成。")
-        box.setInformativeText("将退出程序并自动完成更新，更新完成后会重新启动。")
-        btn_now = box.addButton("立即更新", QMessageBox.AcceptRole)
-        box.addButton("取消", QMessageBox.RejectRole)
+        box.setWindowTitle(T("更新就绪"))
+        box.setText(T("更新包已下载完成。"))
+        box.setInformativeText(T("将退出程序并自动完成更新，更新完成后会重新启动。"))
+        btn_now = box.addButton(T("立即更新"), QMessageBox.AcceptRole)
+        box.addButton(T("取消"), QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is not btn_now:
-            self._tray_message("CAD鼠标手势", "已取消更新")
+            self._tray_message("CAD鼠标手势", T("已取消更新"))
             return
         if not run_installer(dest):
-            self._tray_message("CAD鼠标手势", "启动安装程序失败，请手动运行更新包",
+            self._tray_message("CAD鼠标手势",
+                               T("启动安装程序失败，请手动运行更新包"),
                                QSystemTrayIcon.Warning)
             return
         self.log.info("更新流程启动，即将退出当前实例")
@@ -481,6 +535,7 @@ class CADGestureApp:
         if self._quitting:
             return
         self._quitting = True
+        remove_listener(self._lang_listener)
         try:
             self.gesture_engine.stop()
         except Exception as e:
@@ -500,7 +555,8 @@ class CADGestureApp:
         if not self.gesture_engine.start():
             self.log.error("鼠标钩子安装失败，手势将不可用")
             try:
-                self.tray.showMessage("CAD鼠标手势", "鼠标钩子安装失败，手势将不可用",
+                self.tray.showMessage("CAD鼠标手势",
+                                      T("鼠标钩子安装失败，手势将不可用"),
                                       QSystemTrayIcon.Warning, 3000)
             except Exception:
                 pass

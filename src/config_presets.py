@@ -126,81 +126,205 @@ def get_preset_commands(target: str = "autocad") -> Dict[str, Dict[str, str]]:
     if target == "autocad":
         return base_commands
 
-    # ========== 中望CAD 机械版特有命令 ==========
-    # 使用 copy + update 方式合并，避免修改原字典
-    import copy
+    # ========== 中望CAD 机械版专属命令（按《中望CAD快捷键指南》完整分类） ==========
+    zw_mech_commands = {
+        # 一、尺寸标注
+        "尺寸标注": {
+            "智能标注": {"key": "d", "description": "ZWMPOWERDIM", "label": "智能标注"},
+            "长度标注": {"key": "", "description": "ZWMLINEARDIM", "label": "长度标注"},
+            "水平标注": {"key": "", "description": "ZWMHORIZONTALDIM", "label": "水平标注"},
+            "垂直标注": {"key": "", "description": "ZWMVERTICALDIM", "label": "垂直标注"},
+            "对齐标注": {"key": "", "description": "ZWMALIGNEDDIM", "label": "对齐标注"},
+            "半剖标注": {"key": "", "description": "ZWMHALFALIGNDIM", "label": "半剖标注"},
+            "点线标注": {"key": "", "description": "ZWMPTLINEDIM", "label": "点线标注"},
+            "直径标注": {"key": "", "description": "ZWMDIAMETERDIM", "label": "直径标注"},
+            "半径标注": {"key": "", "description": "ZWMRADIUSDIM", "label": "半径标注"},
+            "折弯标注": {"key": "", "description": "ZWMJOGGEDRADIUSDIM", "label": "折弯标注"},
+            "坐标标注": {"key": "", "description": "ZWM_DIMORDINATE", "label": "坐标标注"},
+            "弧长标注": {"key": "", "description": "ZWMARCLENGTHDIM", "label": "弧长标注"},
+            "连续标注": {"key": "", "description": "ZWMCHAINDIM", "label": "连续标注"},
+            "基线标注": {"key": "", "description": "ZWMBASELINEDIM", "label": "基线标注"},
+            "中心记号": {"key": "", "description": "ZWMCENTERDIM", "label": "中心记号"},
+            "角度标注": {"key": "", "description": "ZWMANGULARDIM", "label": "角度标注"},
+            "引线标注": {"key": "", "description": "ZWMANGULARDIM YX", "label": "引线标注"},
+            "板厚标注": {"key": "", "description": "ZWMTHICKNESSDIM", "label": "板厚标注"},
+            "倒角标注": {"key": "", "description": "ZWMCHAMFERSYM DB", "label": "倒角标注"},
+        },
+        # 二、标注编辑
+        "标注编辑": {
+            "尺寸合并": {"key": "", "description": "ZWMDIMJOIN", "label": "尺寸合并"},
+            "尺寸插入": {"key": "", "description": "ZWMDIMINSERT", "label": "尺寸插入"},
+            "尺寸对齐": {"key": "", "description": "ZWMDIMALIGN", "label": "尺寸对齐"},
+            "尺寸检查": {"key": "", "description": "ZWMDIMCHECK", "label": "尺寸检查"},
+            "公差查询": {"key": "", "description": "ZWMDIMTOLQUERY", "label": "公差查询"},
+        },
+        # 三、构造工具
+        "构造工具": {
+            "构造线": {"key": "", "description": "ZWMCONSTLINES", "label": "构造线"},
+            "自动构造线": {"key": "", "description": "ZWMAUTOCLINES", "label": "自动构造线"},
+            "水平构造线": {"key": "", "description": "ZWMCONSTHOR", "label": "水平构造线"},
+            "垂直构造线": {"key": "", "description": "ZWMCONSTVER", "label": "垂直构造线"},
+            "交叉构造线": {"key": "", "description": "ZWMCONSTCRS", "label": "交叉构造线"},
+            "两点构造线": {"key": "", "description": "ZWMCONSTHB", "label": "两点构造线"},
+            "成角构造线": {"key": "", "description": "ZWMCONSTHW", "label": "成角构造线"},
+            "全距平行线": {"key": "", "description": "ZWMCONSTPAR", "label": "全距平行线"},
+            "半距平行线": {"key": "", "description": "ZWMCONSTPAR2", "label": "半距平行线"},
+            "两点垂线": {"key": "", "description": "ZWMCONSTLOT2", "label": "两点垂线"},
+            "直线垂线": {"key": "", "description": "ZWMCONSTLOT", "label": "直线垂线"},
+            "角等分线": {"key": "", "description": "ZWMCONSTHM", "label": "角等分线"},
+            "过点射线": {"key": "", "description": "ZWMCONSTXRAY", "label": "过点射线"},
+            "过点直线": {"key": "", "description": "ZWMCONSTXLINE", "label": "过点直线"},
+            "Z方向构造线": {"key": "", "description": "ZWMCONSTZ", "label": "Z方向构造线"},
+            "圆切平行线": {"key": "", "description": "ZWMCONSTTAN", "label": "圆切平行线"},
+            "两圆切线": {"key": "", "description": "ZWMCONSTTC", "label": "两圆切线"},
+            "同心构造线": {"key": "", "description": "ZWMCONSTCC", "label": "同心构造线"},
+            "轴断面构造线": {"key": "", "description": "ZWMCONSTCCREA", "label": "轴断面构造线"},
+            "双线切圆": {"key": "", "description": "ZWMCONSTKR", "label": "双线切圆"},
+            "外切矩形构造线": {"key": "", "description": "ZWMCONSTCIRCLI", "label": "外切矩形构造线"},
+            "构造圆": {"key": "", "description": "ZWMCONSTCIRCLE", "label": "构造圆"},
+            "已知圆心画圆": {"key": "hy", "description": "ZWMCIRCLEBYC", "label": "圆心画圆"},
+            "已知端点画圆": {"key": "hyd", "description": "ZWMCIRCLEBY3P", "label": "端点画圆"},
+            "已知圆心画弧": {"key": "hh", "description": "ZWMARCBYC", "label": "圆心画弧"},
+            "已知端点画弧": {"key": "hhd", "description": "ZWMARCBY3P", "label": "端点画弧"},
+            "直线切构造圆": {"key": "", "description": "ZWMCONSTC2", "label": "直线切构造圆"},
+            "工艺槽构造": {"key": "gy", "description": "ZWMCONSTRECESS", "label": "工艺槽构造"},
+        },
+        # 四、绘图工具
+        "绘图工具": {
+            "智能画线": {"key": "ss", "description": "ZWMINTELLIGENTLINE", "label": "智能画线"},
+            "对称画线": {"key": "dc", "description": "ZWMMIRRORLINE", "label": "对称画线"},
+            "并行线": {"key": "px", "description": "ZWMPARALLELLINE", "label": "并行线"},
+            "垂直线": {"key": "cz", "description": "ZWMVERTICALLINE", "label": "垂直线"},
+            "切线": {"key": "qx", "description": "ZWMTANGENTLINE", "label": "切线"},
+            "公切线": {"key": "gq", "description": "ZWMCOMMONTANGENT", "label": "公切线"},
+            "管道线": {"key": "gd", "description": "ZWMPIPELINE", "label": "管道线"},
+            "垂分线": {"key": "cf", "description": "ZWMPERPBISECTOR", "label": "垂分线"},
+            "角度线": {"key": "jd", "description": "ZWMANGLELINER", "label": "角度线"},
+            "平分线": {"key": "pf", "description": "ZWMANGLEBISECTOR", "label": "平分线"},
+            "放射线": {"key": "", "description": "ZWMRADIATION", "label": "放射线"},
+            "中心线": {"key": "zx", "description": "ZWMCENTERLINE", "label": "中心线"},
+            "截断线": {"key": "jdx", "description": "ZWMSECTIONSYMBOL", "label": "截断线"},
+            "插入折断符": {"key": "zdf", "description": "ZWMBREAKSYMBOL1", "label": "插入折断符"},
+            "打断": {"key": "dad", "description": "ZWMBREAKENTITY", "label": "打断"},
+            "动态延伸": {"key": "ys", "description": "ZWMDYNAMICEXTEND", "label": "动态延伸"},
+            "矩形": {"key": "jx", "description": "ZWMRECTANGLE", "label": "矩形"},
+            "锯齿线": {"key": "bl", "description": "ZWMZIGZAGLINE", "label": "锯齿线"},
+            "波浪线": {"key": "", "description": "ZWMWAVILNESSLINE", "label": "波浪线"},
+        },
+        # 五、符号标注
+        "符号标注": {
+            "粗糙度": {"key": "cc", "description": "ZWMSURFSYM", "label": "粗糙度"},
+            "形位公差": {"key": "xw", "description": "ZWMFCFRAME", "label": "形位公差"},
+            "基准标注": {"key": "jz", "description": "ZWMDATUMID", "label": "基准标注"},
+            "形状识别": {"key": "", "description": "ZWMFEATID", "label": "形状识别"},
+            "基准目标": {"key": "", "description": "ZWMDATUMTGT", "label": "基准目标"},
+            "锥斜度": {"key": "xd", "description": "ZWMTAPERSYM", "label": "锥斜度"},
+            "中心孔标注": {"key": "zxk", "description": "ZWMCENTERHOLE", "label": "中心孔标注"},
+            "圆孔标记": {"key": "bj", "description": "ZWMCIRCLEMARK", "label": "圆孔标记"},
+            "折断符号": {"key": "zd", "description": "ZWMBREAKSYMBOL", "label": "折断符号"},
+            "标高符号": {"key": "bgf", "description": "ZWMELEVSYM", "label": "标高符号"},
+            "焊接符号": {"key": "hj", "description": "ZWMWELDING", "label": "焊接符号"},
+        },
+        # 六、序号与明细表
+        "序号与明细表": {
+            "标注序号": {"key": "xh", "description": "ZWMBALLOON", "label": "标注序号"},
+            "序号类型修改": {"key": "", "description": "ZWMEDITBALLOONSTYLE", "label": "序号类型修改"},
+            "序号数据修改": {"key": "", "description": "ZWMEDITBOMROW", "label": "序号数据修改"},
+            "序号对齐": {"key": "", "description": "ZWMALIGNBALLOON", "label": "序号对齐"},
+            "序号顺号": {"key": "", "description": "ZWMRENUMBERBALLOON", "label": "序号顺号"},
+            "序号隐藏": {"key": "", "description": "ZWMHIDEBALLOON", "label": "序号隐藏"},
+            "序号显示": {"key": "", "description": "ZWMSHOWBALLOON", "label": "序号显示"},
+            "合并序号": {"key": "", "description": "ZWMCOMBINEBALLOON", "label": "合并序号"},
+            "序号加引线": {"key": "", "description": "ZWMADDLEADER", "label": "序号加引线"},
+            "序号去引线": {"key": "", "description": "ZWMREMOVELEADER", "label": "序号去引线"},
+            "生成明细表": {"key": "mx", "description": "ZWMPARTLIST", "label": "生成明细表"},
+            "处理明细表": {"key": "mxb", "description": "ZWMTOTALBOMEDIT", "label": "处理明细表"},
+            "明细表表格": {"key": "", "description": "ZWMBOMCARDEXP", "label": "明细表表格"},
+        },
+        # 七、图纸与图框管理
+        "图纸与图框": {
+            "图纸设置": {"key": "tf", "description": "ZWMFRAMEINIT", "label": "图纸设置"},
+            "标题栏填充": {"key": "", "description": "ZWMTITLEEDIT", "label": "标题栏填充"},
+            "附加栏填充": {"key": "", "description": "ZWMFJLEDIT", "label": "附加栏填充"},
+            "参数栏填充": {"key": "", "description": "ZWMCSLEDIT", "label": "参数栏填充"},
+            "多图幅设置": {"key": "tf2", "description": "ZWMFRAMEINIT2", "label": "多图幅设置"},
+            "更换图框": {"key": "", "description": "ZWMSWITCHFRAME", "label": "更换图框"},
+            "更换比例": {"key": "", "description": "ZWMSWITCHSCALE", "label": "更换比例"},
+            "更换标题栏": {"key": "", "description": "ZWMSWITCHTITLE", "label": "更换标题栏"},
+            "更换明细栏": {"key": "", "description": "ZWMSWITCHBOM", "label": "更换明细栏"},
+            "更换代号栏": {"key": "", "description": "ZWMSWITCHDHL", "label": "更换代号栏"},
+            "更换附加栏": {"key": "", "description": "ZWMSWITCHFJL", "label": "更换附加栏"},
+            "更换参数栏": {"key": "", "description": "ZWMSWITCHCSL2", "label": "更换参数栏"},
+            "增加更改栏": {"key": "", "description": "ZWMREVISIONLIST", "label": "增加更改栏"},
+            "更换标准": {"key": "gh", "description": "ZWMSTDANDARDC", "label": "更换标准"},
+        },
+        # 八、机械设计工具
+        "机械设计": {
+            "轴设计": {"key": "", "description": "ZWMSHAFT", "label": "轴设计"},
+            "齿轮设计": {"key": "", "description": "ZWMGEAR", "label": "齿轮设计"},
+            "文字标注": {"key": "wz", "description": "ZWMDIMTEXT", "label": "文字标注"},
+            "技术要求": {"key": "tj", "description": "ZWMTECHREQUEST", "label": "技术要求"},
+            "DWG资料浏览": {"key": "", "description": "ZWMDWGDATAVIEW", "label": "DWG资料浏览"},
+        },
+        # 九、表格与数据提取
+        "表格与数据": {
+            "提取表格数据": {"key": "tb", "description": "ZWMTABLEDATAPICKUP", "label": "提取表格数据"},
+            "批量资料提取": {"key": "", "description": "ZWMDWGDATAPICKUP", "label": "批量资料提取"},
+            "批量脚本操作": {"key": "", "description": "ZWMDWGBATCHSCRIPT", "label": "批量脚本操作"},
+            "自动排图": {"key": "zdpt", "description": "ZWMJIGSAWPRINT", "label": "自动排图"},
+        },
+        # 十、增强编辑工具
+        "增强编辑": {
+            "超级编辑": {"key": "v", "description": "ZWMSUPEREDIT", "label": "超级编辑"},
+            "计算面积": {"key": "aa", "description": "ZWMAREA", "label": "计算面积"},
+            "增强调用": {"key": "zd", "description": "ZWMPOWERRECALL", "label": "增强调用"},
+            "增强删除": {"key": "ze", "description": "ZWMPOWERERASE", "label": "增强删除"},
+        },
+        # 十一、孔加工工具
+        "孔加工": {
+            "单孔": {"key": "dk", "description": "ZWMSINGLEHOLE", "label": "单孔"},
+            "孔阵": {"key": "kz", "description": "ZWMARRAYHOLE", "label": "孔阵"},
+            "孔轴投影": {"key": "", "description": "ZWMHSPROJECTOR", "label": "孔轴投影"},
+        },
+        # 十二、卡片与样式管理
+        "卡片与样式": {
+            "超级卡片": {"key": "mcc", "description": "ZWMCREATECARD", "label": "超级卡片"},
+            "卡片编辑": {"key": "mce", "description": "ZWMCARDEDIT", "label": "卡片编辑"},
+            "定义表格": {"key": "mta", "description": "ZWMMAKETBL", "label": "定义表格"},
+            "定义卡片": {"key": "mca", "description": "ZWMMAKECARD", "label": "定义卡片"},
+            "样式配置": {"key": "", "description": "ZWMSTYLEMANAGER", "label": "样式配置"},
+            "词句库维护": {"key": "", "description": "ZWMWORDLIBMNG", "label": "词句库维护"},
+            "自定义标题栏": {"key": "", "description": "ZWMTITLEDEFINE", "label": "自定义标题栏"},
+            "自定义附加栏": {"key": "", "description": "ZWMFJLDEFINE", "label": "自定义附加栏"},
+            "自定义参数栏": {"key": "", "description": "ZWMCSLDEFINE", "label": "自定义参数栏"},
+            "自定义代号栏": {"key": "", "description": "ZWMREVERSEDEFINE", "label": "自定义代号栏"},
+            "自定义明细表表头": {"key": "", "description": "ZWMBOMHEADDEFINE", "label": "自定义表头"},
+            "自定义明细表表体": {"key": "", "description": "ZWMBOMBODYDEFINE", "label": "自定义表体"},
+            "超级属性块": {"key": "", "description": "ZWMATTBLOCKDEF", "label": "超级属性块"},
+            "样式同步配置": {"key": "", "description": "ZWMUPDATESET", "label": "样式同步配置"},
+        },
+        # 十三、超级符号库
+        "超级符号库": {
+            "超级符号库调用": {"key": "fh", "description": "ZWM_SYMOUT", "label": "超级符号库"},
+            "层变换工具": {"key": "ty", "description": "ZWMCHGLAYER", "label": "层变换工具"},
+        },
+        # 十四、其他实用命令
+        "其他实用": {
+            "快速标直径": {"key": "zwm", "description": "ZWM_%%D", "label": "快速标直径"},
+            "缩放区域": {"key": "", "description": "ZwmScArea", "label": "缩放区域"},
+            "导入PDF": {"key": "pdfim", "description": "PDFIMPORT", "label": "导入PDF"},
+            "工程计算器": {"key": "jsq", "description": "ZWMBASCALC", "label": "工程计算器"},
+            "样式库同步": {"key": "", "description": "ZWMUPDATE", "label": "样式库同步"},
+            "系列化零件设计": {"key": "xl", "description": "ZWM_SPART_OUT", "label": "系列化零件"},
+            "大小写转换": {"key": "", "description": "ZWM_CASECHG", "label": "大小写转换"},
+            "标总长": {"key": "bzc", "description": "ZWM_BZC", "label": "标总长"},
+        },
+    }
+
+    # 基础命令 + 机械版专属命令（使用 copy + update 合并，避免修改原字典）
     zwcad_commands = copy.deepcopy(base_commands)
-
-    # 中望绘图增强
-    zwcad_commands["绘图"].update({
-        "智能画线": {"key": "ss", "description": "ZWMINTELLIGENTLINE", "label": "智能画线"},
-        "对称画线": {"key": "dc", "description": "ZWMMIRRORLINE", "label": "对称画线"},
-        "中心线": {"key": "zx", "description": "ZWMCENTERLINE", "label": "中心线"},
-        "并行线": {"key": "px", "description": "ZWMPARALLELLINE", "label": "并行线"},
-        "垂直线": {"key": "cz", "description": "ZWMVERTICALLINE", "label": "垂直线"},
-        "切线": {"key": "qx", "description": "ZWMTANGENTLINE", "label": "切线"},
-        "公切线": {"key": "gq", "description": "ZWMCOMMONTANGENT", "label": "公切线"},
-        "管道线": {"key": "gd", "description": "ZWMPIPELINE", "label": "管道线"},
-        "垂分线": {"key": "cf", "description": "ZWMPERPBISECTOR", "label": "垂分线"},
-        "角度线": {"key": "jd", "description": "ZWMANGLELINER", "label": "角度线"},
-        "平分线": {"key": "pf", "description": "ZWMANGLEBISECTOR", "label": "平分线"},
-        "锯齿线": {"key": "bl", "description": "ZWMZIGZAGLINE", "label": "锯齿线"},
-        "动态延伸": {"key": "ys", "description": "ZWMDYNAMICEXTEND", "label": "动态延伸"},
-    })
-
-    # 中望符号标注
-    zwcad_commands["符号标注"] = {
-        "粗糙度": {"key": "cc", "description": "ZWMSURFSYM", "label": "粗糙度"},
-        "形位公差": {"key": "xw", "description": "ZWMFCFRAME", "label": "形位公差"},
-        "基准标注": {"key": "jz", "description": "ZWMDATUMID", "label": "基准标注"},
-        "焊接符号": {"key": "hj", "description": "ZWMWELDING", "label": "焊接符号"},
-        "锥斜度": {"key": "xd", "description": "ZWMtapersym", "label": "锥斜度"},
-        "标高符号": {"key": "bgf", "description": "ZWMELEVSYM", "label": "标高符号"},
-        "圆孔标记": {"key": "bj", "description": "ZWMCRCLMARK", "label": "圆孔标记"},
-        "中心孔标注": {"key": "zxk", "description": "ZWMCENTERHOLE", "label": "中心孔标注"},
-        "折断符号": {"key": "zd", "description": "ZWMBREAKSYMBOL", "label": "折断符号"},
-        "截断线": {"key": "jdx", "description": "ZWMSECTIONSYMBOL", "label": "截断线"},
-    }
-
-    # 中望序号与明细表
-    zwcad_commands["序号明细"] = {
-        "序号": {"key": "xh", "description": "ZWMBALLOON", "label": "序号"},
-        "明细表": {"key": "mx", "description": "ZWMPARTLIST", "label": "明细表"},
-        "序号对齐": {"key": "xhdq", "description": "ZWMALIGNBALLOON", "label": "序号对齐"},
-        "序号顺号": {"key": "xhsh", "description": "ZWMRENUMBERBALLOON", "label": "序号顺号"},
-        "合并序号": {"key": "xhhb", "description": "ZWMCOMBINEBALLOON", "label": "合并序号"},
-    }
-
-    # 中望图纸管理
-    zwcad_commands["图纸管理"] = {
-        "图框设置": {"key": "tf", "description": "ZWMFRAMEINIT", "label": "图框设置"},
-        "技术要求": {"key": "tj", "description": "ZWMTECHREQUEST", "label": "技术要求"},
-        "更换标准": {"key": "gh", "description": "ZWMSTDANDARDC", "label": "更换标准"},
-        "更换图框": {"key": "ghtk", "description": "ZWMSWITCHFRAME", "label": "更换图框"},
-        "更换比例": {"key": "ghbl", "description": "ZWMSWITCHSCALE", "label": "更换比例"},
-    }
-
-    # 中望增强工具
-    zwcad_commands["增强工具"] = {
-        "超级编辑": {"key": "v", "description": "ZWMSUPEREDIT", "label": "超级编辑"},
-        "计算面积": {"key": "aa", "description": "ZWMAREA", "label": "计算面积"},
-        "层变换": {"key": "ty", "description": "ZWMCHGLAYER", "label": "层变换"},
-        "超级符号": {"key": "fh", "description": "ZWM_SYMOUT", "label": "超级符号"},
-        "智能标注": {"key": "d", "description": "ZWMPOWERDIM", "label": "智能标注"},
-        "文字标注": {"key": "wz", "description": "ZWMDIMTEXT", "label": "文字标注"},
-    }
-
-    # 中望构造工具
-    zwcad_commands["构造工具"] = {
-        "构造线": {"key": "xl", "description": "ZWMCONSTLINES", "label": "构造线"},
-        "构造圆": {"key": "gzy", "description": "ZWMCONSTCIRCLE", "label": "构造圆"},
-        "水平构造线": {"key": "spgzhx", "description": "ZWMCONSTHOR", "label": "水平构造线"},
-        "垂直构造线": {"key": "czgzhx", "description": "ZWMCONSTVER", "label": "垂直构造线"},
-        "已知圆心画圆": {"key": "hy", "description": "ZWMCIRCLEBYC", "label": "圆心画圆"},
-        "已知端点画圆": {"key": "hyd", "description": "ZWMCIRCLEBY3P", "label": "端点画圆"},
-        "已知圆心画弧": {"key": "hh", "description": "ZWMARCBYC", "label": "圆心画弧"},
-        "已知端点画弧": {"key": "hhd", "description": "ZWMARCBY3P", "label": "端点画弧"},
-    }
+    for category, cmds in zw_mech_commands.items():
+        zwcad_commands[category] = cmds
 
     return zwcad_commands
 
@@ -219,13 +343,17 @@ def _default_config() -> Dict[str, Any]:
             "sector_count": 8,
             "menu_opacity": 0.95,
             "active_profile": "AutoCAD-常用",
+            "autocad_profile": "AutoCAD-常用",
+            "zwcad_profile": "ZWCAD-常用",
             "auto_start": False,
             "auto_switch_profile": True,
             "open_config_on_start": False,
             "menu_theme": "azure",
             "check_update_on_start": True,
             "update_source_url": "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest",
-            "last_update_check": ""
+            "last_update_check": "",
+            "language": "zh",
+            "ui_mode": "dark"
         },
         "profiles": {
             "AutoCAD-常用": {

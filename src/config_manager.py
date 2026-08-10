@@ -176,6 +176,12 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "auto_switch_profile" not in settings:
         settings["auto_switch_profile"] = True
         migrated = True
+    if "autocad_profile" not in settings:
+        settings["autocad_profile"] = ""
+        migrated = True
+    if "zwcad_profile" not in settings:
+        settings["zwcad_profile"] = ""
+        migrated = True
     if "open_config_on_start" not in settings:
         settings["open_config_on_start"] = False
         migrated = True
@@ -199,6 +205,12 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         migrated = True
     if "last_update_check" not in settings:
         settings["last_update_check"] = ""
+        migrated = True
+    if "language" not in settings:
+        settings["language"] = "zh"
+        migrated = True
+    if "ui_mode" not in settings:
+        settings["ui_mode"] = "dark"
         migrated = True
     # 为旧配置中的 profile 添加 target、outer_sectors 和 extension_sectors
     # 记录哪些 profile 原本缺少 extension_sectors 字段（区分"旧配置缺失"与"用户主动清空"）
@@ -241,33 +253,52 @@ def get_active_profile(config: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def get_profile_for_window(config: Dict[str, Any], window_type: str) -> Optional[Dict[str, Any]]:
-    """根据窗口类型自动选择匹配的 Profile
-    
+    """根据窗口类型选择匹配的 Profile（显式绑定优先）
+
     Args:
         config: 配置字典
         window_type: "autocad" 或 "zwcad"
-    
+
     Returns:
         匹配的 Profile，如果没有匹配则返回当前 active_profile
+
+    选择优先级（auto_switch_profile=True 时）：
+        1. settings 中显式绑定的方案（autocad_profile / zwcad_profile）
+        2. 该 target 下第一个方案（旧版本行为，向后兼容）
     """
     if not config.get("settings", {}).get("auto_switch_profile", True):
         return get_active_profile(config)
-    
-    # 获取当前 active_profile 的 target
-    active_name = config.get("settings", {}).get("active_profile", "")
-    active_profile = config.get("profiles", {}).get(active_name)
-    
-    # 如果当前 profile 已经匹配，直接返回
-    if active_profile and active_profile.get("target", "") == window_type:
-        return active_profile
-    
-    # 否则查找匹配的 profile
+
+    settings = config.get("settings", {})
+    # 1. 显式绑定优先
+    bound_name = settings.get(f"{window_type}_profile", "")
+    if bound_name:
+        bound = config.get("profiles", {}).get(bound_name)
+        if bound and bound.get("target", "") == window_type:
+            return bound
+
+    # 2. 该 target 下第一个方案（向后兼容旧行为）
     for name, profile in config.get("profiles", {}).items():
         if profile.get("target", "") == window_type:
+            # 绑定字段为空时自动补全，让界面显示一致
+            if not settings.get(f"{window_type}_profile"):
+                settings[f"{window_type}_profile"] = name
             return profile
-    
-    # 没有匹配的，返回当前 active
-    return active_profile
+
+    # 3. 无匹配，返回当前 active
+    return get_active_profile(config)
+
+
+def set_profile_for_target(config: Dict[str, Any], target: str,
+                           profile_name: str) -> bool:
+    """把某 CAD 类型显式绑定到指定方案（target: autocad / zwcad）"""
+    profile = config.get("profiles", {}).get(profile_name)
+    if not profile:
+        return False
+    if profile.get("target", "") != target:
+        return False
+    config.setdefault("settings", {})[f"{target}_profile"] = profile_name
+    return True
 
 
 def get_profile_names(config: Dict[str, Any]) -> List[str]:

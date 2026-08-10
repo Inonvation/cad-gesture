@@ -1,29 +1,35 @@
-"""设置面板 — 全屏覆盖式（左侧设置项卡片 + 右侧真实数据预览）
+"""设置分类页面 — 每个分类独立一页（由侧边栏导航切换进入）
 
-改进点：
-- 主题选择从下拉框改为色板网格：每套主题画迷你圆盘缩略图，一眼看出效果
-- 支持自定义主题：从预设主色板或调色板自选主色，自动推导整套配色
-- 右侧预览圆盘用当前方案的真实命令数据绘制，拖尺寸滑杆所见即所得
-- 卡片分组 + 锚点滚动：外观 / 触发手感 / 圆盘尺寸 / 常规 / 维护
+页面（与侧边栏分类一一对应，qt_config_gui 将其加入 QStackedWidget）：
+- AppearancePage  外观：界面模式（浅/深）、圆盘主题色板、自定义主色、不透明度
+- TriggerPage     触发手感：长按延迟、触发距离
+- SizePage        圆盘尺寸：5 个滑杆 + 实时预览
+- GeneralPage     常规：语言、启动项、检查更新
+- MaintenancePage 维护：配置目录、方案导入导出、恢复默认
+
+公共基类 _BasePage 提供：slider_row / save / refresh 骨架 / retranslate 钩子。
+回调属性（由 qt_config_gui 注入）：
+- on_saved / on_check_update / on_import / on_export / on_open_dir
+- on_ui_mode_changed(mode)   界面模式切换（主窗口重建全局 QSS）
+- on_language_changed(lang)  语言切换（主窗口调 i18n.set_language）
 """
 
 import os
 
-from PySide6.QtCore import QEasingCurve, QPoint, Qt, QTimer, QVariantAnimation
+from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
-                               QComboBox, QFileDialog, QFormLayout,
-                               QGraphicsDropShadowEffect, QGridLayout,
+                               QComboBox, QFileDialog, QGridLayout,
                                QHBoxLayout, QLabel, QPushButton, QScrollArea,
-                               QSizePolicy, QSlider, QSpinBox, QVBoxLayout,
-                               QWidget, QMessageBox)
+                               QSlider, QVBoxLayout, QWidget, QMessageBox)
 
 from src.config_manager import (save_config, get_auto_start, set_auto_start,
                                 get_config_path, set_config_dir,
                                 reset_config_dir, _default_config)
-from src.theme import (UI, build_qss, MENU_THEMES, make_custom_theme,
-                       theme_from_settings, FONT_XS, FONT_SM, RADIUS_LG,
-                       _CUSTOM_ACCENT)
+from src.i18n import T
+from src.theme import (get_ui, MENU_THEMES, make_custom_theme,
+                       make_light_theme, theme_from_settings,
+                       FONT_XS, RADIUS_LG, _CUSTOM_ACCENT)
 from src.qt_renderer import (draw_shadow, draw_ring, draw_center,
                              INNER, OUTER, EXTENSION)
 
@@ -33,16 +39,6 @@ _CUSTOM_COLORS = [
     "#c084d9", "#9d8cf0", "#5aa7b4", "#4fc8d8", "#b8c4d0", "#c7c9d6",
 ]
 
-_SECTION_QSS = f"""
-QWidget#secCard {{
-    background: {UI.bg_card}; border: 1px solid {UI.border};
-    border-radius: {RADIUS_LG}px;
-}}
-QWidget#secCard QLabel {{ background: transparent; }}
-QWidget#secCard QCheckBox {{ background: transparent; }}
-QWidget#secCard QComboBox {{ background: {UI.bg_input}; }}
-"""
-
 
 def _tile_pixmap(t, w=96, h=96) -> QPixmap:
     """离屏绘制迷你圆盘缩略图（主题色板用）"""
@@ -51,7 +47,6 @@ def _tile_pixmap(t, w=96, h=96) -> QPixmap:
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing)
     c = w / 2
-    # 三层示意缩放到画布内（外层 42 半径，直径 84 < 96，四周留白不裁切）
     draw_shadow(p, c, c, 18)
     draw_ring(p, c, c, 12, 34, 8, {}, t.inner, layer=INNER, sel=("inner", 0))
     draw_ring(p, c, c, 34, 42, 8, {}, t.outer, layer=OUTER)
@@ -74,7 +69,7 @@ def _custom_tile_pixmap(w=96, h=96) -> QPixmap:
     grad.setColorAt(1, QColor("#2a3340"))
     p.setPen(Qt.NoPen)
     p.setBrush(grad)
-    p.drawEllipse(QPoint(c, c), r, r)
+    p.drawEllipse(QPointF(c, c), r, r)
     p.setPen(QColor("#ffffff"))
     f = QFont("Microsoft YaHei")
     f.setPixelSize(26)
@@ -86,13 +81,14 @@ def _custom_tile_pixmap(w=96, h=96) -> QPixmap:
 
 
 class _ThemeTile(QPushButton):
-    """主题色板格：图标 + 名称由布局驱动，文字不被挤压遮挡"""
+    """主题色板格：图标 + 名称（文字语言切换时可更新）"""
 
     def __init__(self, text: str, pixmap, parent=None):
         super().__init__(parent)
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(text)
+        self.setProperty("class", "themeTile")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 7)
         lay.setSpacing(5)
@@ -105,112 +101,17 @@ class _ThemeTile(QPushButton):
         self._text.setMinimumHeight(16)
         lay.addWidget(self._text, 0)
         self.setMinimumSize(112, 132)
-        self.setStyleSheet(f"""
-            QPushButton {{
-                border: 2px solid transparent; border-radius: 10px;
-                background: transparent; padding: 0; min-width: 112px;
-                min-height: 132px;
-            }}
-            QPushButton:hover {{ background: rgba(255,255,255,8); }}
-            QPushButton:checked {{
-                border-color: {UI.accent}; background: rgba(255,255,255,6);
-            }}
-            QPushButton QLabel {{
-                background: transparent; color: {UI.text_secondary};
-                font-size: 11px; border: none; padding: 0; min-height: 0;
-            }}
-            QPushButton:hover QLabel {{ color: {UI.text}; }}
-            QPushButton:checked QLabel {{ color: {UI.text}; }}
-        """)
 
     def set_icon_pixmap(self, pixmap):
         self._icon.setPixmap(pixmap)
 
-
-class _CollapsibleSection(QWidget):
-    """可折叠设置卡片：点击标题展开/折叠，带高度动画"""
-
-    ANIM_MS = 200
-
-    def __init__(self, key: str, title: str, expanded: bool = True, parent=None):
-        super().__init__(parent)
-        self.setObjectName("secCard")
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._key = key
-        self._title = title
-        self._expanded = expanded
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 14, 20, 16)
-        outer.setSpacing(0)
-
-        self._btn = QPushButton(f"{title}  {'▾' if expanded else '▸'}")
-        self._btn.setCursor(Qt.PointingHandCursor)
-        self._btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: none; text-align: left;
-                color: {UI.text_secondary}; font-weight: bold;
-                font-size: {FONT_SM}px; padding: 2px;
-            }}
-            QPushButton:hover {{ color: {UI.text}; }}
-        """)
-        outer.addWidget(self._btn)
-        self._btn.clicked.connect(self._toggle)
-
-        self._content = QWidget()
-        self.lay = QVBoxLayout(self._content)
-        self.lay.setContentsMargins(0, 12, 0, 0)
-        self.lay.setSpacing(12)
-        outer.addWidget(self._content)
-
-        self._anim = QVariantAnimation(self)
-        self._anim.setDuration(self.ANIM_MS)
-        self._anim.setEasingCurve(QEasingCurve.InOutCubic)
-        self._anim.valueChanged.connect(self._apply_height)
-        self._anim.finished.connect(self._on_anim_finished)
-
-        if not expanded:
-            self._content.setMaximumHeight(0)
-            self._content.setVisible(False)
-
-    # ---- 折叠控制 ----
-
-    def is_expanded(self) -> bool:
-        return self._expanded
-
-    def set_expanded(self, expand: bool):
-        if expand == self._expanded:
-            return
-        self._expanded = expand
-        if expand:
-            self._content.setVisible(True)
-            start = self._content.height()
-            end = self._content.sizeHint().height()
-        else:
-            start = self._content.height()
-            end = 0
-        self._btn.setText(f"{self._title}  {'▾' if expand else '▸'}")
-        self._anim.stop()
-        self._anim.setStartValue(start)
-        self._anim.setEndValue(end)
-        self._anim.start()
-
-    def _toggle(self):
-        self.set_expanded(not self._expanded)
-
-    def _apply_height(self, v):
-        self._content.setMaximumHeight(int(v))
-
-    def _on_anim_finished(self):
-        if self._expanded:
-            self._content.setMaximumHeight(16777215)
-        else:
-            self._content.setMaximumHeight(0)
-            self._content.setVisible(False)
+    def set_label(self, text: str):
+        self._text.setText(text)
+        self.setToolTip(text)
 
 
 class _MenuPreview(QWidget):
-    """右侧圆盘预览：用当前方案的真实命令数据绘制，反映真实尺寸效果"""
+    """圆盘预览：用当前方案的真实命令数据绘制（尺寸页右侧预览）"""
 
     def __init__(self, config=None, profile=None, parent=None):
         super().__init__(parent)
@@ -255,110 +156,155 @@ class _MenuPreview(QWidget):
 
         # 底部标注各层半径与实际直径
         p.setOpacity(1.0)
-        p.setPen(QColor(UI.text_muted))
+        p.setPen(QColor(get_ui().text_muted))
         f = QFont("Microsoft YaHei")
         f.setPixelSize(FONT_XS)
         p.setFont(f)
         p.drawText(6, self.height() - 6,
-                   f"内 {inner}px · 外 {outer}px · 扩展 {ext}px   实际直径 {ext * 2}px")
+                   T("内 {inner}px · 外 {outer}px · 扩展 {ext}px   实际直径 {dia}px")
+                   .format(inner=inner, outer=outer, ext=ext, dia=ext * 2))
         p.end()
 
 
-class QSettingsPanel(QWidget):
-    """全局设置面板（覆盖整个界面）"""
+class _BasePage(QWidget):
+    """设置分类页基类：公共布局骨架 + 公共能力（滑杆行/保存/刷新/重译）"""
 
     def __init__(self, config, parent=None):
         super().__init__(parent)
         self.config = config
-        self.on_back = None
         self.on_saved = None
+        self.on_check_update = None
         self.on_import = None
         self.on_export = None
         self.on_open_dir = None
-        self.on_check_update = None
-        self.setStyleSheet(build_qss(UI) + _SECTION_QSS)
-        self._slider_labels = {}
-        self._cards = {}
+        self.on_ui_mode_changed = None
+        self.on_language_changed = None
+        self._slider_labels = {}       # key -> (name_lb, unit, val_lb, divisor, slider)
+        self._tr = []                  # [(widget, zh_text)] 语言切换刷新
 
-        outer = QHBoxLayout(self)
+        # 页面骨架：标题 + 滚动内容区
+        outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 16, 24, 16)
-        outer.addStretch(1)
-        center = QWidget()
-        center.setMaximumWidth(1200)
-        cv = QVBoxLayout(center)
-        cv.setSpacing(16)
-        outer.addWidget(center)
-        outer.addStretch(1)
-
-        # 顶部导航
-        top = QHBoxLayout()
-        btn_back = QPushButton("← 返回圆盘编辑")
-        btn_back.setProperty("class", "ghost")
-        btn_back.clicked.connect(self._back)
-        top.addWidget(btn_back)
-        top.addStretch(1)
-        title = QLabel("全局设置")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        top.addWidget(title)
-        top.addStretch(1)
-        sub = QLabel("修改即时保存")
-        sub.setStyleSheet("color: #6f7a88; font-size: 11px;")
-        top.addWidget(sub)
-        cv.addLayout(top)
-
-        body = QHBoxLayout()
-        body.setSpacing(28)
-
-        # ---- 左侧：设置卡片（滚动） ----
+        outer.setSpacing(14)
+        self.title = QLabel("")
+        self.title.setObjectName("pageTitle")
+        outer.addWidget(self.title)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QScrollArea.NoFrame)
-        self.scroll.setMinimumWidth(540)
-        inner = QWidget()
-        form = QVBoxLayout(inner)
-        form.setSpacing(14)
-        form.setContentsMargins(0, 0, 0, 0)
+        self._content = QWidget()
+        self.body = QVBoxLayout(self._content)
+        self.body.setSpacing(14)
+        self.body.setContentsMargins(0, 0, 0, 0)
+        self.scroll.setWidget(self._content)
+        outer.addWidget(self.scroll, 1)
 
-        form.addWidget(self._build_appearance_card(), 0)
-        form.addWidget(self._build_trigger_card(), 0)
-        form.addWidget(self._build_size_card(), 0)
-        form.addWidget(self._build_general_card(), 0)
-        form.addWidget(self._build_maintenance_card(), 0)
-        form.addStretch(1)
+    # ---- 语言 / 主题钩子 ----
 
-        self.scroll.setWidget(inner)
-        body.addWidget(self.scroll, 1)
+    def register_text(self, widget, zh: str):
+        """注册语言刷新项：语言切换时 widget 显示 T(zh)"""
+        self._tr.append((widget, zh))
 
-        # ---- 右侧：预览 ----
-        right_col = QWidget()
-        right_col.setFixedWidth(450)
-        rv = QVBoxLayout(right_col)
-        rv.setSpacing(12)
-        rv.setContentsMargins(0, 0, 0, 0)
-        rv.addStretch(1)
-        self.preview = _MenuPreview(self.config)
-        rv.addWidget(self.preview, 0, Qt.AlignHCenter)
-        hint = QLabel("预览随设置实时更新，拖动尺寸滑杆可查看实际大小效果")
-        hint.setWordWrap(True)
-        hint.setAlignment(Qt.AlignCenter)
-        hint.setStyleSheet(f"color: {UI.text_muted}; font-size: {FONT_XS}px;")
-        rv.addWidget(hint)
-        rv.addStretch(1)
-        body.addWidget(right_col, 0)
+    def retranslate(self):
+        """语言切换时刷新本页文本（子类覆盖并调用 super）"""
+        for w, zh in self._tr:
+            try:
+                w.setText(T(zh))
+            except Exception:
+                pass
+        self.title.setText(T(self.title_zh))
 
-        cv.addLayout(body, 1)
+    # ---- 公共控件 ----
 
-    # ========== 卡片构建 ==========
+    def _slider_row(self, zh_name, key, lo, hi, unit,
+                    on_change=None, divisor=1.0, container=None):
+        """向页面添加一行：名称 | 滑杆 | 当前值。container 为 None 时加进 body"""
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        name = QLabel(T(zh_name))
+        name.setMinimumWidth(96)
+        row.addWidget(name)
+        raw = self.config.get("settings", {}).get(key, lo)
+        val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
+        val = max(lo, min(hi, val))
+        lb = QLabel(f"{val}{unit}")
+        lb.setFixedWidth(56)
+        lb.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        sl = QSlider(Qt.Horizontal)
+        sl.setRange(lo, hi)
+        sl.setValue(val)
+        self._slider_labels[key] = (name, unit, lb, divisor, sl)
 
-    def _section(self, key, title, expanded=True):
-        card = _CollapsibleSection(key, title, expanded=expanded)
-        self._cards[key] = card
-        return card
+        def _on_value(v, l=lb, u=unit, k=key, d=divisor):
+            l.setText(f"{v}{u}")
+            self.config.setdefault("settings", {})[k] = v / d if d != 1.0 else v
+            if on_change:
+                on_change()
+        sl.valueChanged.connect(_on_value)
+        sl.sliderReleased.connect(self._save)  # 拖动结束才保存
+        row.addWidget(sl, 1)
+        row.addWidget(lb)
+        (container or self.body).addLayout(row)
+        self.register_text(name, zh_name)
+        return sl, lb
 
-    def _build_appearance_card(self):
-        card = self._section("appearance", "外观")
+    # ---- 保存 / 配置 ----
 
-        # 主题色板网格（3 列 3 行共 9 格，宽度充裕不挤压、文字不被遮挡）
+    def _set(self, key, value):
+        self.config.setdefault("settings", {})[key] = value
+        self._save()
+
+    def _save(self):
+        ok = save_config(self.config)
+        if ok and self.on_saved:
+            self.on_saved()
+
+    def refresh(self, config, profile=None):
+        """进入页面时同步控件状态（子类覆盖）"""
+        self.config = config
+        self._refresh_sliders()
+
+    def _refresh_sliders(self):
+        for key, (name_lb, unit, lb, divisor, sl) in self._slider_labels.items():
+            raw = self.config.get("settings", {}).get(key, 0)
+            val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
+            sl.blockSignals(True)
+            sl.setValue(val)
+            sl.blockSignals(False)
+            lb.setText(f"{val}{unit}")
+
+
+class AppearancePage(_BasePage):
+    """外观：界面模式（浅/深）、圆盘主题色板、自定义主色、不透明度 + 实时预览"""
+
+    def __init__(self, config, parent=None):
+        self.title_zh = "外观"
+        super().__init__(config, parent)
+        self.title.setText(T(self.title_zh))
+
+        # 横向：左设置项 + 右实时预览
+        hbox = QHBoxLayout()
+        hbox.setSpacing(24)
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(12)
+
+        # 界面模式（浅/深）
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(10)
+        self._lb_mode = QLabel(T("界面模式"))
+        self.register_text(self._lb_mode, "界面模式")
+        mode_row.addWidget(self._lb_mode)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItem(T("深色"), "dark")
+        self.mode_combo.addItem(T("浅色"), "light")
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(self.mode_combo)
+        mode_row.addStretch(1)
+        lv.addLayout(mode_row)
+
+        # 圆盘主题色板网格（3 列）
         grid = QGridLayout()
         grid.setSpacing(12)
         for c in range(3):
@@ -368,18 +314,18 @@ class QSettingsPanel(QWidget):
         self._theme_tiles = {}       # theme name -> tile
         self._tile_by_btn = {}       # button -> theme name or "custom"
         for i, th in enumerate(MENU_THEMES.values()):
-            tile = self._make_tile(th.label, _tile_pixmap(th))
+            tile = _ThemeTile(th.label, self._tile_pixmap_for(th))
             self._theme_tiles[th.name] = tile
             self._theme_group.addButton(tile)
             self._tile_by_btn[tile] = th.name
             grid.addWidget(tile, i // 3, i % 3)
         i = len(MENU_THEMES)
-        self._custom_tile = self._make_tile("自定义", _custom_tile_pixmap())
+        self._custom_tile = _ThemeTile("自定义", _custom_tile_pixmap())
         self._theme_group.addButton(self._custom_tile)
         self._tile_by_btn[self._custom_tile] = "custom"
         grid.addWidget(self._custom_tile, i // 3, i % 3)
         self._theme_group.buttonClicked.connect(self._on_theme_picked)
-        card.lay.addLayout(grid)
+        lv.addLayout(grid)
 
         # 自定义主题主色选择（默认隐藏，选"自定义"时显示）
         self._custom_row = QWidget()
@@ -387,11 +333,14 @@ class QSettingsPanel(QWidget):
         cr.setContentsMargins(0, 0, 0, 0)
         cr.setSpacing(8)
         head = QHBoxLayout()
-        head.addWidget(QLabel("主色"))
+        self._lb_color = QLabel(T("主色"))
+        self.register_text(self._lb_color, "主色")
+        head.addWidget(self._lb_color)
         head.addStretch(1)
-        self._btn_picker = QPushButton("自选颜色…")
+        self._btn_picker = QPushButton(T("自选颜色…"))
         self._btn_picker.setProperty("class", "ghost")
         self._btn_picker.clicked.connect(self._pick_color)
+        self.register_text(self._btn_picker, "自选颜色…")
         head.addWidget(self._btn_picker)
         cr.addLayout(head)
         # 色点网格：6 列两行，点击即应用
@@ -404,10 +353,11 @@ class QSettingsPanel(QWidget):
             b = QPushButton()
             b.setFixedSize(22, 22)
             b.setCheckable(True)
+            b.setProperty("class", "colorDot")
             b.setStyleSheet(
-                f"background: {col}; border-radius: 11px; border: 2px solid "
-                f"{UI.bg_card};"
-                f"QPushButton:checked {{ border: 2px solid {UI.accent}; }}")
+                f"background: {col}; border-radius: 11px; border: 2px solid transparent;"
+                f" QPushButton:checked {{ border: 2px solid #6fa3d8; }}"
+                f" QPushButton:hover {{ border: 1px solid #8a94a3; }}")
             b.setToolTip(col)
             b.clicked.connect(lambda _=False, c=col: self._set_custom_accent(c))
             self._color_group.addButton(b)
@@ -416,150 +366,56 @@ class QSettingsPanel(QWidget):
         color_grid.setColumnStretch(6, 1)
         cr.addLayout(color_grid)
         self._custom_row.hide()
-        card.lay.addWidget(self._custom_row)
+        lv.addWidget(self._custom_row)
 
-        # 不透明度
+        # 不透明度（加进左列）
         self._opacity_slider, self._opacity_label = self._slider_row(
-            card, "不透明度", "menu_opacity", 30, 100, "%",
-            on_change=self._update_preview, divisor=100.0)
-        return card
+            "不透明度", "menu_opacity", 30, 100, "%",
+            on_change=self._update_preview, divisor=100.0, container=lv)
+        lv.addStretch(1)
 
-    def _make_tile(self, text, pixmap):
-        """主题色板格：图标 + 名称，选中描边"""
-        return _ThemeTile(text, pixmap)
+        hbox.addWidget(left, 1)
+        self.preview = _MenuPreview(self.config)
+        hbox.addWidget(self.preview, 0, Qt.AlignHCenter)
+        self.body.addLayout(hbox)
 
-    def _build_trigger_card(self):
-        card = self._section("trigger", "触发手感", expanded=False)
-        self._hold_slider, self._hold_label = self._slider_row(
-            card, "长按延迟", "hold_threshold_ms", 10, 200, "ms")
-        self._trig_slider, self._trig_label = self._slider_row(
-            card, "触发距离", "trigger_distance", 8, 40, "px")
-        return card
+    def _update_preview(self):
+        if getattr(self, "preview", None):
+            self.preview.update()
 
-    def _build_size_card(self):
-        card = self._section("size", "圆盘尺寸", expanded=False)
-        self._size_sliders = {}
-        for key, text, lo, hi, unit in (("dead_zone_radius", "中心死区", 8, 60, "px"),
-                                        ("ring_radius", "内层半径", 40, 160, "px"),
-                                        ("outer_ring_radius", "外层半径", 90, 260, "px"),
-                                        ("ext_ring_radius", "扩展圈", 140, 360, "px"),
-                                        ("sector_count", "扇区数量", 4, 16, "")):
-            sl, lb = self._slider_row(card, text, key, lo, hi, unit,
-                                      on_change=self._update_preview)
-            self._size_sliders[key] = sl
-        return card
+    # ---- 界面模式 ----
 
-    def _build_general_card(self):
-        card = self._section("general", "常规")
-        self.chk_open = QCheckBox("启动时打开此界面")
-        self.chk_open.toggled.connect(lambda b: self._set("open_config_on_start", b))
-        card.lay.addWidget(self.chk_open)
-        self.chk_auto = QCheckBox("根据 CAD 窗口自动切换")
-        self.chk_auto.toggled.connect(lambda b: self._set("auto_switch_profile", b))
-        card.lay.addWidget(self.chk_auto)
-        self.chk_startup = QCheckBox("开机自启")
-        self.chk_startup.toggled.connect(self._on_startup)
-        card.lay.addWidget(self.chk_startup)
-        self.chk_update = QCheckBox("启动时检查更新")
-        self.chk_update.toggled.connect(lambda b: self._set("check_update_on_start", b))
-        card.lay.addWidget(self.chk_update)
-        self.btn_check_update = QPushButton("检查更新")
-        self.btn_check_update.setToolTip("立即检查是否有新版本")
-        self.btn_check_update.clicked.connect(self._on_check_update_click)
-        card.lay.addWidget(self.btn_check_update)
-        return card
+    def _on_mode_changed(self, idx):
+        mode = self.mode_combo.itemData(idx)
+        s = self.config.setdefault("settings", {})
+        if s.get("ui_mode") != mode:
+            s["ui_mode"] = mode
+            self._save()
+            if self.on_ui_mode_changed:
+                self.on_ui_mode_changed(mode)
+        # 界面模式切换：主题色板缩略图跟随浅/深显示对应版本
+        self._refresh_theme_thumbnails()
 
-    def _on_check_update_click(self):
-        """手动检查更新（结果由 app 层弹窗/气泡提示）"""
-        if self.on_check_update:
-            self.on_check_update()
-        # 防连点：短暂禁用后恢复
-        self.btn_check_update.setEnabled(False)
-        QTimer.singleShot(5000, lambda: self.btn_check_update.setEnabled(True))
+    def _tile_pixmap_for(self, th):
+        """按当前界面模式生成主题缩略图（浅色模式显示浅色版圆盘）"""
+        if self.config.get("settings", {}).get("ui_mode", "dark") == "light":
+            return _tile_pixmap(make_light_theme(th))
+        return _tile_pixmap(th)
 
-    def _build_maintenance_card(self):
-        card = self._section("maintenance", "维护")
+    def _refresh_theme_thumbnails(self):
+        """刷新全部主题格缩略图（界面模式切换后调用）"""
+        for name, tile in self._theme_tiles.items():
+            tile.set_icon_pixmap(self._tile_pixmap_for(MENU_THEMES[name]))
+        self._refresh_custom_tile()
+        self.preview.update()
 
-        # 配置目录行：标题 + 当前路径 + 更改/重置（同一行）
-        dir_head = QHBoxLayout()
-        dir_head.setSpacing(8)
-        dir_head.addWidget(QLabel("配置目录"))
-        self._config_dir_label = QLabel(get_config_path())
-        self._config_dir_label.setWordWrap(True)
-        self._config_dir_label.setStyleSheet(
-            f"color: {UI.text_muted}; font-size: {FONT_XS}px;")
-        dir_head.addWidget(self._config_dir_label, 1)
-        btn_change = QPushButton("更改")
-        btn_change.setToolTip("把配置迁移到自选目录（如 D 盘）")
-        btn_change.clicked.connect(self._change_config_dir)
-        btn_reset_dir = QPushButton("重置")
-        btn_reset_dir.setToolTip("恢复默认 %APPDATA%\\CADGesture")
-        btn_reset_dir.clicked.connect(self._restore_config_dir)
-        dir_head.addWidget(btn_change, 0, Qt.AlignVCenter)
-        dir_head.addWidget(btn_reset_dir, 0, Qt.AlignVCenter)
-        card.lay.addLayout(dir_head)
-
-        # 方案操作：保持原排版
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        btn_import = QPushButton("导入方案")
-        btn_import.clicked.connect(lambda: self.on_import() if self.on_import else None)
-        btn_export = QPushButton("导出方案")
-        btn_export.clicked.connect(lambda: self.on_export() if self.on_export else None)
-        btn_dir = QPushButton("打开配置目录")
-        btn_dir.clicked.connect(lambda: self.on_open_dir() if self.on_open_dir else None)
-        btn_reset = QPushButton("恢复默认")
-        btn_reset.setProperty("class", "danger")
-        btn_reset.setToolTip("把当前方案的三圈命令恢复为默认内容")
-        btn_reset.clicked.connect(self._reset_defaults)
-        row.addWidget(btn_import)
-        row.addWidget(btn_export)
-        row.addWidget(btn_dir)
-        row.addStretch(1)
-        row.addWidget(btn_reset)
-        card.lay.addLayout(row)
-        return card
-
-    def _change_config_dir(self):
-        """选择新配置目录并迁移现有配置"""
-        d = QFileDialog.getExistingDirectory(self, "选择配置目录")
-        if not d:
-            return
-        try:
-            set_config_dir(d)
-        except Exception as e:
-            QMessageBox.warning(self, "更改失败", f"无法使用该目录：{e}")
-            return
-        self._config_dir_label.setText(get_config_path())
-        self._save()  # 把当前配置立即写入新位置
-        self._update_preview()
-        QMessageBox.information(
-            self, "配置目录已更改",
-            f"配置已迁移到：\n{get_config_path()}\n\n"
-            "目录位置已记住，下次启动自动使用。")
-
-    def _restore_config_dir(self):
-        """恢复默认配置目录（%APPDATA%\\CADGesture）"""
-        try:
-            reset_config_dir()
-        except Exception as e:
-            QMessageBox.warning(self, "恢复失败", str(e))
-            return
-        self._config_dir_label.setText(get_config_path())
-        self._save()
-        self._update_preview()
-        QMessageBox.information(
-            self, "已恢复默认",
-            f"配置目录已恢复为：\n{get_config_path()}")
-
-    # ========== 交互 ==========
+    # ---- 主题 ----
 
     def _on_theme_picked(self, btn):
         name = self._tile_by_btn[btn]
         self.config.setdefault("settings", {})["menu_theme"] = name
         self._custom_row.setVisible(name == "custom")
         if name == "custom":
-            # 同步当前主色的色点选中态
             accent = self.config.get("settings", {}).get("custom_accent", _CUSTOM_ACCENT)
             self._sync_color_buttons(accent)
             self._refresh_custom_tile()
@@ -576,7 +432,7 @@ class QSettingsPanel(QWidget):
 
     def _pick_color(self):
         accent = self.config.get("settings", {}).get("custom_accent", _CUSTOM_ACCENT)
-        col = QColorDialog.getColor(QColor(accent), self, "选择圆盘主色")
+        col = QColorDialog.getColor(QColor(accent), self, T("选择圆盘主色"))
         if col.isValid():
             self._set_custom_accent(col.name())
 
@@ -587,65 +443,31 @@ class QSettingsPanel(QWidget):
     def _refresh_custom_tile(self):
         accent = self.config.get("settings", {}).get("custom_accent", _CUSTOM_ACCENT)
         t = make_custom_theme(accent)
+        if self.config.get("settings", {}).get("ui_mode", "dark") == "light":
+            t = make_light_theme(t)
         self._custom_tile.set_icon_pixmap(_tile_pixmap(t))
 
-    # ========== 通用 ==========
-
-    def _slider_row(self, card, text, key, lo, hi, unit, on_change=None, divisor=1.0):
-        """向卡片内添加一行：名称 | 滑杆 | 当前值"""
-        row = QHBoxLayout()
-        row.setSpacing(10)
-        name = QLabel(text)
-        name.setFixedWidth(76)
-        row.addWidget(name)
-        raw = self.config.get("settings", {}).get(key, lo)
-        val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
-        val = max(lo, min(hi, val))
-        lb = QLabel(f"{val}{unit}")
-        lb.setFixedWidth(48)
-        lb.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        lb.setStyleSheet(f"color: {UI.text_secondary};")
-        sl = QSlider(Qt.Horizontal)
-        sl.setRange(lo, hi)
-        sl.setValue(val)
-
-        def _on_value(v, l=lb, u=unit, k=key, d=divisor):
-            l.setText(f"{v}{u}")
-            self.config.setdefault("settings", {})[k] = v / d if d != 1.0 else v
-            if on_change:
-                on_change()
-        sl.valueChanged.connect(_on_value)
-        sl.sliderReleased.connect(self._save)  # 拖动结束才保存
-        row.addWidget(sl, 1)
-        row.addWidget(lb)
-        card.lay.addLayout(row)
-        self._slider_labels[key] = (unit, lb, divisor)
-        return sl, lb
-
-    def _update_preview(self):
-        if getattr(self, "preview", None):
-            self.preview.update()
-
-    def scroll_to(self, key):
-        """滚动到指定设置卡片（侧栏锚点导航用）"""
-        card = self._cards.get(key)
-        if card:
-            self.scroll.ensureWidgetVisible(card, 0, 50)
+    def retranslate(self):
+        super().retranslate()
+        # 界面模式下拉项
+        for i, mode in enumerate(("dark", "light")):
+            self.mode_combo.setItemText(i, T("深色") if mode == "dark" else T("浅色"))
+        # 主题色板名称
+        for name, tile in self._theme_tiles.items():
+            tile.set_label(T(MENU_THEMES[name].label))
+        self._custom_tile.set_label(T("自定义"))
 
     def refresh(self, config, profile=None):
-        """从配置刷新控件（进入设置面板时调用）"""
         self.config = config
         s = config.get("settings", {})
-        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
-            w.blockSignals(True)
-        self.chk_open.setChecked(bool(s.get("open_config_on_start", False)))
-        self.chk_auto.setChecked(bool(s.get("auto_switch_profile", True)))
-        self.chk_startup.setChecked(get_auto_start())
-        self.chk_update.setChecked(bool(s.get("check_update_on_start", True)))
-        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
-            w.blockSignals(False)
-
-        # 主题选中态（断连防递归，刷新后重连）
+        # 界面模式
+        mode = s.get("ui_mode", "dark")
+        idx = self.mode_combo.findData(mode)
+        if idx >= 0:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(idx)
+            self.mode_combo.blockSignals(False)
+        # 主题选中态
         name = s.get("menu_theme", "azure")
         try:
             self._theme_group.buttonClicked.disconnect(self._on_theme_picked)
@@ -656,46 +478,242 @@ class QSettingsPanel(QWidget):
         self._theme_group.buttonClicked.connect(self._on_theme_picked)
         self._custom_row.setVisible(name == "custom")
         self._sync_color_buttons(s.get("custom_accent", _CUSTOM_ACCENT))
-        self._refresh_custom_tile()
-
-        # 滑杆同步
-        for key, (unit, lb, divisor) in self._slider_labels.items():
-            sl = self._size_sliders.get(key)
-            if sl is None and hasattr(self, "_opacity_slider") and key == "menu_opacity":
-                sl = self._opacity_slider
-            if sl is None:
-                continue
-            raw = s.get(key, 0)
-            val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
-            sl.blockSignals(True)
-            sl.setValue(val)
-            sl.blockSignals(False)
-            lb.setText(f"{val}{unit}")
+        self._refresh_theme_thumbnails()
+        self._refresh_sliders()
         self.preview.set_data(config, profile)
 
-    # ========== 保存与重置 ==========
 
-    def _back(self):
-        if self.on_back:
-            self.on_back()
+class TriggerPage(_BasePage):
+    """触发手感：长按延迟、触发距离"""
 
-    def _set(self, key, value):
-        self.config.setdefault("settings", {})[key] = value
-        self._save()
+    def __init__(self, config, parent=None):
+        self.title_zh = "触发手感"
+        super().__init__(config, parent)
+        self.title.setText(T(self.title_zh))
+        self._hold_slider, self._hold_label = self._slider_row(
+            "长按延迟", "hold_threshold_ms", 10, 200, "ms")
+        self._trig_slider, self._trig_label = self._slider_row(
+            "触发距离", "trigger_distance", 8, 40, "px")
+        self.body.addStretch(1)
+
+
+class SizePage(_BasePage):
+    """圆盘尺寸：5 个滑杆 + 右侧实时预览"""
+
+    def __init__(self, config, parent=None):
+        self.title_zh = "圆盘尺寸"
+        super().__init__(config, parent)
+        self.title.setText(T(self.title_zh))
+        # 横向：左滑杆列 + 右预览
+        self._hbox = QHBoxLayout()
+        self._hbox.setSpacing(24)
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(12)
+        self._size_sliders = {}
+        for key, text, lo, hi, unit in (("dead_zone_radius", "中心死区", 8, 60, "px"),
+                                        ("ring_radius", "内层半径", 40, 160, "px"),
+                                        ("outer_ring_radius", "外层半径", 90, 260, "px"),
+                                        ("ext_ring_radius", "扩展圈", 140, 360, "px"),
+                                        ("sector_count", "扇区数量", 4, 16, "")):
+            sl, lb = self._slider_row(text, key, lo, hi, unit,
+                                      on_change=self._update_preview,
+                                      container=lv)
+            self._size_sliders[key] = sl
+        lv.addStretch(1)
+        self._hbox.addWidget(left, 1)
+        self.preview = _MenuPreview(self.config)
+        self._hbox.addWidget(self.preview, 0, Qt.AlignHCenter)
+        self.body.addLayout(self._hbox)
+
+    def _update_preview(self):
+        self.preview.update()
+
+    def refresh(self, config, profile=None):
+        self.config = config
+        self.preview.set_data(config, profile)
+        self._refresh_sliders()
+
+
+class GeneralPage(_BasePage):
+    """常规：语言、启动项、检查更新"""
+
+    def __init__(self, config, parent=None):
+        self.title_zh = "常规"
+        super().__init__(config, parent)
+        self.title.setText(T(self.title_zh))
+
+        # 语言
+        lang_row = QHBoxLayout()
+        lang_row.setSpacing(10)
+        self._lb_lang = QLabel(T("语言"))
+        self.register_text(self._lb_lang, "语言")
+        lang_row.addWidget(self._lb_lang)
+        self.lang_combo = QComboBox()
+        self.lang_combo.addItem("简体中文", "zh")
+        self.lang_combo.addItem("English", "en")
+        self.lang_combo.currentIndexChanged.connect(self._on_lang_changed)
+        lang_row.addWidget(self.lang_combo)
+        lang_row.addStretch(1)
+        self.body.addLayout(lang_row)
+
+        self.chk_open = QCheckBox(T("启动时打开此界面"))
+        self.chk_open.toggled.connect(lambda b: self._set("open_config_on_start", b))
+        self.body.addWidget(self.chk_open)
+        self.chk_auto = QCheckBox(T("根据 CAD 窗口自动切换"))
+        self.chk_auto.toggled.connect(lambda b: self._set("auto_switch_profile", b))
+        self.body.addWidget(self.chk_auto)
+        self.chk_startup = QCheckBox(T("开机自启"))
+        self.chk_startup.toggled.connect(self._on_startup)
+        self.body.addWidget(self.chk_startup)
+        self.chk_update = QCheckBox(T("启动时检查更新"))
+        self.chk_update.toggled.connect(lambda b: self._set("check_update_on_start", b))
+        self.body.addWidget(self.chk_update)
+        self.btn_check_update = QPushButton(T("检查更新"))
+        self.btn_check_update.setToolTip(T("立即检查是否有新版本"))
+        self.btn_check_update.clicked.connect(self._on_check_update_click)
+        self.body.addWidget(self.btn_check_update)
+        self.body.addStretch(1)
+
+        self.register_text(self.chk_open, "启动时打开此界面")
+        self.register_text(self.chk_auto, "根据 CAD 窗口自动切换")
+        self.register_text(self.chk_startup, "开机自启")
+        self.register_text(self.chk_update, "启动时检查更新")
+        self.register_text(self.btn_check_update, "检查更新")
+
+    def _on_lang_changed(self, idx):
+        lang = self.lang_combo.itemData(idx)
+        s = self.config.setdefault("settings", {})
+        if s.get("language") != lang:
+            s["language"] = lang
+            self._save()
+            if self.on_language_changed:
+                self.on_language_changed(lang)
+
+    def _on_check_update_click(self):
+        if self.on_check_update:
+            self.on_check_update()
+        self.btn_check_update.setEnabled(False)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(5000, lambda: self.btn_check_update.setEnabled(True))
 
     def _on_startup(self, checked):
         set_auto_start(checked)
 
-    def _save(self):
-        ok = save_config(self.config)
-        if ok and self.on_saved:
-            self.on_saved()
+    def refresh(self, config, profile=None):
+        self.config = config
+        s = config.get("settings", {})
+        lang = s.get("language", "zh")
+        idx = self.lang_combo.findData(lang)
+        if idx >= 0:
+            self.lang_combo.blockSignals(True)
+            self.lang_combo.setCurrentIndex(idx)
+            self.lang_combo.blockSignals(False)
+        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
+            w.blockSignals(True)
+        self.chk_open.setChecked(bool(s.get("open_config_on_start", False)))
+        self.chk_auto.setChecked(bool(s.get("auto_switch_profile", True)))
+        self.chk_startup.setChecked(get_auto_start())
+        self.chk_update.setChecked(bool(s.get("check_update_on_start", True)))
+        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
+            w.blockSignals(False)
+
+    def retranslate(self):
+        super().retranslate()
+
+
+class MaintenancePage(_BasePage):
+    """维护：配置目录、方案导入导出、恢复默认"""
+
+    def __init__(self, config, parent=None):
+        self.title_zh = "维护"
+        super().__init__(config, parent)
+        self.title.setText(T(self.title_zh))
+
+        # 配置目录行：标题 + 当前路径 + 更改/重置（同一行）
+        dir_head = QHBoxLayout()
+        dir_head.setSpacing(8)
+        self._lb_dir_title = QLabel(T("配置目录"))
+        self.register_text(self._lb_dir_title, "配置目录")
+        dir_head.addWidget(self._lb_dir_title)
+        self._config_dir_label = QLabel(get_config_path())
+        self._config_dir_label.setWordWrap(True)
+        dir_head.addWidget(self._config_dir_label, 1)
+        btn_change = QPushButton(T("更改"))
+        btn_change.setToolTip(T("把配置迁移到自选目录（如 D 盘）"))
+        btn_change.clicked.connect(self._change_config_dir)
+        self.register_text(btn_change, "更改")
+        btn_reset_dir = QPushButton(T("重置"))
+        btn_reset_dir.setToolTip(T("恢复默认 %APPDATA%\\CADGesture"))
+        btn_reset_dir.clicked.connect(self._restore_config_dir)
+        self.register_text(btn_reset_dir, "重置")
+        dir_head.addWidget(btn_change, 0, Qt.AlignVCenter)
+        dir_head.addWidget(btn_reset_dir, 0, Qt.AlignVCenter)
+        self.body.addLayout(dir_head)
+
+        # 方案操作
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        btn_import = QPushButton(T("导入方案"))
+        btn_import.clicked.connect(lambda: self.on_import() if self.on_import else None)
+        self.register_text(btn_import, "导入方案")
+        btn_export = QPushButton(T("导出方案"))
+        btn_export.clicked.connect(lambda: self.on_export() if self.on_export else None)
+        self.register_text(btn_export, "导出方案")
+        btn_dir = QPushButton(T("打开配置目录"))
+        btn_dir.clicked.connect(lambda: self.on_open_dir() if self.on_open_dir else None)
+        self.register_text(btn_dir, "打开配置目录")
+        btn_reset = QPushButton(T("恢复默认"))
+        btn_reset.setProperty("class", "danger")
+        btn_reset.setToolTip(T("把当前方案的三圈命令恢复为默认内容"))
+        btn_reset.clicked.connect(self._reset_defaults)
+        self.register_text(btn_reset, "恢复默认")
+        row.addWidget(btn_import)
+        row.addWidget(btn_export)
+        row.addWidget(btn_dir)
+        row.addStretch(1)
+        row.addWidget(btn_reset)
+        self.body.addLayout(row)
+        self.body.addStretch(1)
+
+    def _change_config_dir(self):
+        d = QFileDialog.getExistingDirectory(self, T("选择配置目录"))
+        if not d:
+            return
+        try:
+            set_config_dir(d)
+        except Exception as e:
+            QMessageBox.warning(self, T("更改失败"), T("无法使用该目录：{e}").format(e=e))
+            return
+        self._config_dir_label.setText(get_config_path())
+        self._save()
+        QMessageBox.information(
+            self, T("配置目录已更改"),
+            T("配置已迁移到：\n{path}\n\n目录位置已记住，下次启动自动使用。")
+            .format(path=get_config_path()))
+
+    def _restore_config_dir(self):
+        try:
+            reset_config_dir()
+        except Exception as e:
+            QMessageBox.warning(self, T("恢复失败"), str(e))
+            return
+        self._config_dir_label.setText(get_config_path())
+        self._save()
+        QMessageBox.information(
+            self, T("已恢复默认"),
+            T("配置目录已恢复为：\n{path}").format(path=get_config_path()))
 
     def _reset_defaults(self):
-        if QMessageBox.question(self, "确认",
-                                "确定要重置所有配置为默认值吗?") != QMessageBox.Yes:
+        if QMessageBox.question(self, T("确认"),
+                                T("确定要重置所有配置为默认值吗?")) != QMessageBox.Yes:
             return
         self.config = _default_config()
         self.refresh(self.config)
         self._save()
-        QMessageBox.information(self, "提示", "已重置为默认配置")
+        QMessageBox.information(self, T("提示"), T("已重置为默认配置"))
+
+    def refresh(self, config, profile=None):
+        self.config = config
+        self._config_dir_label.setText(get_config_path())

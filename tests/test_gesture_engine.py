@@ -1,0 +1,52 @@
+"""手势引擎松手结算规则测试：中心圆区不触发命令"""
+
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.gesture_engine import should_trigger_on_release, calc_sector
+
+DEAD = 24.0
+TRIG = 15.0
+HOLD = 100.0
+
+
+def test_menu_shown_center_release_cancels():
+    """菜单已弹出 + 松手在中心死区内 → 不触发（停在中心区误触发回归）"""
+    assert not should_trigger_on_release(True, 10.0, DEAD, TRIG, 500, HOLD)
+    assert not should_trigger_on_release(True, 23.9, DEAD, TRIG, 500, HOLD)
+    assert not should_trigger_on_release(True, 0.0, DEAD, TRIG, 500, HOLD)
+
+
+def test_menu_shown_sector_release_triggers():
+    """菜单已弹出 + 松手在死区外 → 按最终位置触发"""
+    assert should_trigger_on_release(True, 24.0, DEAD, TRIG, 500, HOLD)
+    assert should_trigger_on_release(True, 50.0, DEAD, TRIG, 500, HOLD)
+    assert should_trigger_on_release(True, 100.0, DEAD, TRIG, 500, HOLD)
+
+
+def test_menu_shown_slide_back_to_center_cancels():
+    """滑到扇区后返回中心松手 → 不触发之前扇区（滑动返回回归）"""
+    # 模拟：按下原点 → 滑到 (100,0) → 返回 (10,0) 松手
+    assert not should_trigger_on_release(True, 10.0, DEAD, TRIG, 500, HOLD)
+
+
+def test_flick_fallback_unchanged():
+    """快速甩动兜底（菜单未弹出）：距离 + 按住时长条件不变"""
+    assert not should_trigger_on_release(False, 14.9, DEAD, TRIG, 500, HOLD)
+    assert should_trigger_on_release(False, 15.0, DEAD, TRIG, 500, HOLD)
+    assert not should_trigger_on_release(False, 30.0, DEAD, TRIG, 50, HOLD)
+    assert not should_trigger_on_release(False, 5.0, DEAD, TRIG, 500, HOLD)
+
+
+def test_calc_sector_stable():
+    """扇区计算不变（回归保护）"""
+    assert calc_sector(0, 100, 8) == 0
+    assert calc_sector(100, 0, 8) == 2
+
+
+if __name__ == "__main__":
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_"):
+            fn()
+            print(f"[OK] {name}")

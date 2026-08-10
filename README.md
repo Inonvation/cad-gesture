@@ -117,11 +117,12 @@ src/                    # 程序代码
 ├── gesture_engine.py    # 鼠标钩子与手势/圈层判定
 ├── qt_radial_menu.py    # Qt 透明悬浮圆盘菜单（运行时）
 ├── qt_renderer.py       # 共享圆盘绘制（菜单与配置预览共用）
-├── qt_config_gui.py     # Qt 配置界面（导航式布局 + 扇区浮层编辑）
+├── qt_config_gui.py     # Qt 配置界面（侧边栏分类导航 + 扇区浮层编辑）
 ├── qt_preview.py        # 圆盘编辑页组件（预览/命令树/折叠按钮）
-├── qt_settings_panel.py # 设置面板（主题色板网格 + 实时预览）
+├── qt_settings_panel.py # 设置分类页（外观/触发/尺寸/常规/维护，每类一页）
 ├── qt_sector_editor.py  # 扇区编辑浮层（就地编辑 / 保存 / 清空）
-├── theme.py             # 设计 token、QSS 生成、8 套主题 + 自定义主题
+├── theme.py             # 设计 token、深浅色 QSS 生成、8 套主题 + 自定义主题
+├── i18n.py              # 中英文界面语言切换（翻译表 + 全局刷新）
 ├── command_executor.py  # COM 命令执行 + pyautogui 回退
 ├── config_manager.py    # 配置读写与自动迁移
 ├── config_presets.py    # 预设命令库与默认配置

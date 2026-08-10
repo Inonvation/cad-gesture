@@ -1,21 +1,23 @@
 """Qt 配置界面 — 导航式布局（PySide6）
 
-结构：左侧导航栏 + 上下文区（方案列表 / 设置锚点），主区 QStackedWidget 两页：
+结构：左侧导航栏 + 上下文区（方案列表），主区 QStackedWidget 多页：
   - 圆盘编辑页：大圆盘预览 + 可折叠命令库；点击扇区弹出就地编辑器
-  - 设置页：QSettingsPanel（主题色板 / 实时预览）
-功能：方案增删改、命令库拖放/搜索/放置模式、撤销重做、自动保存。
+  - 设置分类页：外观 / 触发手感 / 圆盘尺寸 / 常规 / 维护（侧边栏进入）
+功能：方案增删改、命令库拖放/搜索/放置模式、撤销重做、自动保存、
+中英文切换、浅色/深色界面模式。
 """
 
 import ctypes
 import copy
 import json
+import math
 import os
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
                             QPoint, QPointF, QSize, Qt, QTimer, QVariantAnimation)
-from PySide6.QtGui import (QColor, QIcon,
+from PySide6.QtGui import (QColor, QIcon, QPainter, QPen, QPixmap,
                            QKeySequence, QMouseEvent, QShortcut)
-from PySide6.QtWidgets import (QApplication, QButtonGroup,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame,
                                QFileDialog, QHBoxLayout, QHeaderView,
                                QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu,
@@ -25,57 +27,50 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup,
 
 from src.config_manager import (load_config, save_config,
                                 get_preset_commands, get_config_path,
+                                get_profile_for_window, set_profile_for_target,
                                 _default_config)
-from src.theme import UI, build_qss, FONT_XS
+from src.i18n import T, add_listener, remove_listener
+from src.theme import get_ui, set_ui_mode, build_app_qss
 from src.qt_preview import (CommandTree, _PanelToggleButton, QRadialPreview,
                             _layer_key, _layer_name)
 from src.qt_sector_editor import SectorEditorPopup
-from src.qt_settings_panel import QSettingsPanel
+from src.qt_settings_panel import (AppearancePage, TriggerPage, SizePage,
+                                   GeneralPage, MaintenancePage)
 
-QSS = build_qss(UI) + """
-QPushButton.nav {
-    text-align: left; padding: 9px 14px; border-radius: 8px;
-    background: transparent; border: 1px solid transparent;
-    color: """ + UI.text_secondary + """; font-size: 13px; }
-QPushButton.nav:hover { background: """ + UI.bg_hover + """; }
-QPushButton.nav:checked {
-    background: """ + UI.bg_selected + """; color: """ + UI.text + """; }
-QLabel#pageTitle { font-size: 15px; font-weight: 600; }
-QLabel#pageSub { color: """ + UI.text_muted + """; font-size: 11px; }
-QLabel#pill { background: """ + UI.bg_card + """; color: """ + UI.text_secondary + """;
-    border: 1px solid """ + UI.border + """; border-radius: 10px;
-    padding: 3px 12px; font-size: 12px; }
-"""
+# 侧边栏分类页元数据：(分类 key, 中文标题)
+_SETTINGS_PAGES = (("appearance", "外观"), ("trigger", "触发手感"),
+                   ("size", "圆盘尺寸"), ("general", "常规"),
+                   ("maintenance", "维护"))
 
 
-def _enable_dark_titlebar(win) -> None:
-    """让窗口标题栏跟随深色主题（Windows 10 1809+）"""
+def _enable_dark_titlebar(win, dark: bool = True) -> None:
+    """让窗口标题栏跟随深色/浅色主题（Windows 10 1809+，兼容 19/20 属性）"""
     try:
+        import ctypes.wintypes as wintypes
         hwnd = int(win.winId())
         while True:
             parent = ctypes.windll.user32.GetParent(hwnd)
             if parent == 0:
                 break
             hwnd = parent
-        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-        val = ctypes.c_int(1)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            ctypes.c_void_p(hwnd), DWMWA_USE_IMMERSIVE_DARK_MODE,
-            ctypes.byref(val), ctypes.sizeof(val))
+        val = ctypes.c_int(1 if dark else 0)
+        # Win10 1809~1909 用属性 19，2004+ / Win11 用 20；两个都设置以兼容
+        # 所有版本，且 DWM 属性在锁屏/远程桌面重连后可能丢失，调用方可重复设置
+        for attr in (20, 19):
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                ctypes.c_void_p(hwnd), attr,
+                ctypes.byref(val), ctypes.sizeof(val))
+        # 强制刷新窗口非客户区（标题栏）：深色→浅色切换时 DWM 属性不会
+        # 立即重绘，SWP_FRAMECHANGED 触发重绘保证立即生效
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        user32.SetWindowPos(
+            hwnd, None, 0, 0, 0, 0,
+            0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020)  # NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
     except Exception:
         pass
-
-
-# 顶栏按钮样式：与标题同高（28px），避免全局 QSS 的 min-height 撑高
-_TOP_BTN_QSS = f"""
-QPushButton {{
-    background: {UI.bg_raised}; border: 1px solid {UI.border_strong};
-    border-radius: 6px; padding: 2px 12px; color: {UI.text};
-}}
-QPushButton:hover {{ background: {UI.bg_hover}; }}
-QPushButton:pressed {{ background: {UI.bg_card}; }}
-QPushButton:disabled {{ color: {UI.text_muted}; }}
-"""
 
 
 class QConfigGUI(QMainWindow):
@@ -93,13 +88,17 @@ class QConfigGUI(QMainWindow):
         self._autosave_timer.setInterval(500)
         self._autosave_timer.timeout.connect(self._do_save)
 
-        self.setWindowTitle("CAD鼠标手势 - 配置")
+        self.setWindowTitle(T("CAD鼠标手势 - 配置"))
         icon_path = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "assets", "icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         self.resize(1280, 820)
-        self.setStyleSheet(QSS)
+        self.setMinimumSize(1060, 720)
+
+        # 语言切换监听（切换语言时刷新全部文本）
+        self._lang_listener = self._apply_language
+        add_listener(self._lang_listener)
 
         # 撤销/重做栈与状态
         self._undo_stack = []
@@ -109,6 +108,8 @@ class QConfigGUI(QMainWindow):
         self._btn_undo = None
         self._btn_redo = None
         self._selected_sector = None
+        self._last_status = ""
+        self._ui_mode = "dark"
 
         self.preview = QRadialPreview()
         self.preview.on_select = self._on_sector_selected
@@ -142,14 +143,23 @@ class QConfigGUI(QMainWindow):
         root.addWidget(self._build_sidebar())
         self._main_stack = QStackedWidget()
         self._main_stack.addWidget(self._build_editor_page())
-        self._settings_panel = QSettingsPanel(self.config)
-        self._settings_panel.on_back = self._show_editor
-        self._settings_panel.on_saved = self._on_settings_saved
-        self._settings_panel.on_check_update = self.on_check_update
-        self._settings_panel.on_import = self._import_profile
-        self._settings_panel.on_export = self._export_profile
-        self._settings_panel.on_open_dir = self._open_config_dir
-        self._main_stack.addWidget(self._settings_panel)
+
+        # 设置分类页（外观 / 触发手感 / 圆盘尺寸 / 常规 / 维护）
+        self._setting_pages = {}
+        page_cls = {"appearance": AppearancePage, "trigger": TriggerPage,
+                    "size": SizePage, "general": GeneralPage,
+                    "maintenance": MaintenancePage}
+        for key, _zh in _SETTINGS_PAGES:
+            page = page_cls[key](self.config)
+            page.on_saved = self._on_settings_saved
+            page.on_check_update = self.on_check_update
+            page.on_import = self._import_profile
+            page.on_export = self._export_profile
+            page.on_open_dir = self._open_config_dir
+            page.on_ui_mode_changed = self._on_ui_mode_changed
+            page.on_language_changed = self._on_language_changed
+            self._setting_pages[key] = page
+            self._main_stack.addWidget(page)
         self._main_stack.setCurrentIndex(0)
         root.addWidget(self._main_stack, 1)
         central = QWidget()
@@ -157,57 +167,193 @@ class QConfigGUI(QMainWindow):
         self.setCentralWidget(central)
         self.setMinimumSize(1060, 720)
 
-        self.statusBar().showMessage("就绪")
+        self._apply_ui_mode(self.config.get("settings", {}).get("ui_mode", "dark"))
+        self.statusBar().showMessage(T("就绪"))
         self._refresh_profiles()
         self._load_profile(self.current_profile)
 
     def showEvent(self, e):
         super().showEvent(e)
-        _enable_dark_titlebar(self)
+        _enable_dark_titlebar(self, self._ui_mode == "dark")
+        # 窗口完全显示后 DWM 属性更稳定，延迟再应用一次（覆盖显示时序问题）
+        QTimer.singleShot(150,
+                          lambda: _enable_dark_titlebar(self, self._ui_mode == "dark"))
+
+    def event(self, e):
+        # DWM 标题栏属性在锁屏/远程桌面重连后可能丢失，窗口重新激活时重设
+        if e.type() == QEvent.WindowActivate:
+            _enable_dark_titlebar(self, self._ui_mode == "dark")
+        return super().event(e)
+
+    # ========== 界面模式 / 语言 ==========
+
+    def _on_ui_mode_changed(self, mode: str):
+        """界面模式切换（外观页）：保存配置 + 重建全局 QSS/标题栏 + 同步运行时圆盘"""
+        self.config.setdefault("settings", {})["ui_mode"] = mode
+        save_config(self.config)
+        self._apply_ui_mode(mode)
+        if self.on_save:
+            self.on_save()  # app 层重载配置 → 运行时圆盘主题跟随
+
+    def _apply_ui_mode(self, mode: str):
+        self._ui_mode = mode
+        set_ui_mode(mode)
+        QApplication.instance().setStyleSheet(build_app_qss(mode))
+        _enable_dark_titlebar(self, mode == "dark")
+
+    def _on_language_changed(self, lang: str):
+        """语言切换（常规页）：保存配置 + 通知全局刷新"""
+        from src.i18n import set_language
+        set_language(lang)
+
+    def _apply_language(self):
+        """语言切换后的全量文本刷新（侧栏 / 顶栏 / 命令库 / 设置页 / 浮层）"""
+        self.setWindowTitle(T("CAD鼠标手势 - 配置"))
+        for b, zh in self._nav_texts:
+            b.setText(T(zh))
+        self.btn_add.setToolTip(T("新增方案"))
+        self.btn_more.setToolTip(T("复制 / 重命名 / 删除 / 导入 / 导出"))
+        # 设置分类锚点文本
+        for i in range(self.anchor_list.count()):
+            it = self.anchor_list.item(i)
+            it.setText(T(_SETTINGS_PAGES[i][1]))
+        self._refresh_profiles()
+        self._load_profile(self.current_profile)
+        self._populate_presets(self.search_entry.text())
+        for page in self._setting_pages.values():
+            page.retranslate()
+        if self._popup.isVisible():
+            self._popup.retranslate()
+        self.statusBar().showMessage(self._last_status or T("就绪"))
 
     # ========== 侧栏 ==========
 
     def _build_sidebar(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("sidebar")
-        panel.setStyleSheet(f"""
-            QWidget#sidebar {{ background: {UI.bg_raised};
-                              border-right: 1px solid {UI.border}; }}
-        """)
         v = QVBoxLayout(panel)
-        v.setContentsMargins(10, 14, 10, 12)
-        v.setSpacing(6)
+        v.setContentsMargins(12, 12, 12, 12)
+        v.setSpacing(4)
 
-        title = QLabel("CAD 鼠标手势")
-        title.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {UI.text}; "
-                            "padding: 2px 8px 10px 8px;")
-        v.addWidget(title)
+        # ---- Logo 区（图标 + 名称 + 底部细分隔线）----
+        logo_row = QHBoxLayout()
+        logo_row.setSpacing(8)
+        logo_icon = QLabel()
+        logo_icon.setPixmap(self._app_logo_pixmap())
+        logo_icon.setFixedSize(22, 22)
+        logo_row.addWidget(logo_icon)
+        logo = QLabel("CAD 鼠标手势")
+        logo.setObjectName("appLogo")
+        logo_row.addWidget(logo)
+        logo_row.addStretch(1)
+        v.addLayout(logo_row)
 
-        # 导航按钮
+        sep1 = QFrame()
+        sep1.setObjectName("sidebarSep")
+        sep1.setFrameShape(QFrame.HLine)
+        v.addSpacing(6)
+        v.addWidget(sep1)
+        v.addSpacing(6)
+
+        # ---- 主导航（图标按钮，选中高亮）----
         self._nav_group = QButtonGroup(self)
         self._nav_group.setExclusive(True)
-        self.btn_nav_editor = self._nav_btn("圆盘编辑")
-        self.btn_nav_settings = self._nav_btn("设置")
+        self._nav_texts = []  # (btn, zh)
+        self.btn_nav_editor = self._nav_btn("圆盘编辑", "disc")
+        self._nav_texts.append((self.btn_nav_editor, "圆盘编辑"))
         self._nav_group.addButton(self.btn_nav_editor)
-        self._nav_group.addButton(self.btn_nav_settings)
         self.btn_nav_editor.setChecked(True)
         self.btn_nav_editor.clicked.connect(self._show_editor)
-        self.btn_nav_settings.clicked.connect(self._show_settings)
         v.addWidget(self.btn_nav_editor)
-        v.addWidget(self.btn_nav_settings)
-        v.addSpacing(10)
 
-        # 上下文区：圆盘编辑时显示方案列表，设置时显示锚点
+        self.btn_nav_settings = self._nav_btn("设置", "gear")
+        self._nav_texts.append((self.btn_nav_settings, "设置"))
+        self._nav_group.addButton(self.btn_nav_settings)
+        self.btn_nav_settings.clicked.connect(self._show_settings)
+        v.addWidget(self.btn_nav_settings)
+
+        v.addSpacing(8)
+
+        # ---- 上下文区：圆盘编辑时显示方案列表，设置时显示分类锚点 ----
         self._ctx_stack = QStackedWidget()
         self._ctx_stack.addWidget(self._build_profiles_panel())
         self._ctx_stack.addWidget(self._build_anchor_panel())
         v.addWidget(self._ctx_stack, 1)
+
+        # ---- 底部固定操作区 ----
+        bottom = QHBoxLayout()
+        bottom.setSpacing(6)
+        self.btn_more = QPushButton("⋯")
+        self.btn_more.setProperty("class", "iconBtn")
+        self.btn_more.setToolTip(T("复制 / 重命名 / 删除 / 导入 / 导出"))
+        self.btn_more.clicked.connect(self._show_profile_menu)
+        bottom.addStretch(1)
+        bottom.addWidget(self.btn_more)
+        v.addLayout(bottom)
         return panel
 
-    def _nav_btn(self, text: str) -> QPushButton:
+    @staticmethod
+    def _app_logo_pixmap(size: int = 22) -> QPixmap:
+        """代码绘制品牌圆盘图标（跟随深浅色）"""
+        ui = get_ui()
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        cx = cy = size / 2
+        r = size / 2 - 3
+        p.setPen(QPen(QColor(ui.accent), 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        for i in range(8):
+            ang = -math.pi / 2 + i * math.pi / 4
+            px = cx + r * 0.65 * math.cos(ang)
+            py = cy + r * 0.65 * math.sin(ang)
+            p.setBrush(QColor(ui.accent))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(QPointF(px, py), 1.8, 1.8)
+        p.end()
+        return pm
+
+    def _nav_icon(self, kind: str) -> QIcon:
+        """导航按钮图标（圆盘 / 齿轮，跟随深浅色）"""
+        ui = get_ui()
+        s = 18
+        pm = QPixmap(s, s)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        col = QColor(ui.text_secondary)
+        p.setPen(QPen(col, 1.6))
+        p.setBrush(Qt.NoBrush)
+        if kind == "disc":
+            p.drawEllipse(QPointF(s / 2, s / 2), 6.0, 6.0)
+            for i in range(8):
+                ang = -math.pi / 2 + i * math.pi / 4
+                px = s / 2 + 4.2 * math.cos(ang)
+                py = s / 2 + 4.2 * math.sin(ang)
+                p.setBrush(col)
+                p.setPen(Qt.NoPen)
+                p.drawEllipse(QPointF(px, py), 1.2, 1.2)
+                p.setBrush(Qt.NoBrush)
+                p.setPen(QPen(col, 1.6))
+        else:  # gear
+            for i in range(8):
+                ang = -math.pi / 2 + i * math.pi / 4
+                px = s / 2 + 5.0 * math.cos(ang)
+                py = s / 2 + 5.0 * math.sin(ang)
+                p.drawLine(QPointF(s / 2 + 2.6 * math.cos(ang),
+                                   s / 2 + 2.6 * math.sin(ang)),
+                           QPointF(px, py))
+            p.drawEllipse(QPointF(s / 2, s / 2), 3.2, 3.2)
+        p.end()
+        return QIcon(pm)
+
+    def _nav_btn(self, text: str, icon_kind: str) -> QPushButton:
         b = QPushButton(text)
         b.setCheckable(True)
         b.setProperty("class", "nav")
+        b.setIcon(self._nav_icon(icon_kind))
         b.setCursor(Qt.PointingHandCursor)
         return b
 
@@ -215,51 +361,44 @@ class QConfigGUI(QMainWindow):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(8)
+        v.setSpacing(6)
+        # 标题行：小标题 + 右侧新增按钮
         head = QHBoxLayout()
-        t = QLabel("配置方案")
-        t.setStyleSheet(f"color: {UI.text_muted}; font-size: {FONT_XS}px; "
-                        "font-weight: 600; padding-left: 8px;")
-        head.addWidget(t)
+        head.setSpacing(4)
+        self._lb_profiles = QLabel(T("配置方案"))
+        self._lb_profiles.setObjectName("pageSub")
+        head.addWidget(self._lb_profiles)
         head.addStretch(1)
+        self.btn_add = QPushButton("＋")
+        self.btn_add.setProperty("class", "iconBtn")
+        self.btn_add.setToolTip(T("新增方案"))
+        self.btn_add.clicked.connect(self._add_profile)
+        head.addWidget(self.btn_add)
         v.addLayout(head)
 
         self.profile_list = QListWidget()
+        self.profile_list.setObjectName("ctxList")
         self.profile_list.setFocusPolicy(Qt.NoFocus)
         self.profile_list.itemClicked.connect(self._on_profile_clicked)
         self.profile_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.profile_list.customContextMenuRequested.connect(
             self._profile_list_menu)
         v.addWidget(self.profile_list, 1)
-
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        btn_add = QPushButton("＋ 新增")
-        btn_add.clicked.connect(self._add_profile)
-        btn_more = QPushButton("⋯")
-        btn_more.setProperty("class", "iconBtn")
-        btn_more.setToolTip("复制 / 重命名 / 删除 / 导入 / 导出")
-        btn_more.clicked.connect(self._show_profile_menu)
-        row.addWidget(btn_add, 1)
-        row.addWidget(btn_more)
-        v.addLayout(row)
         return w
 
     def _build_anchor_panel(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(8)
-        t = QLabel("设置分类")
-        t.setStyleSheet(f"color: {UI.text_muted}; font-size: {FONT_XS}px; "
-                        "font-weight: 600; padding-left: 8px;")
-        v.addWidget(t)
+        v.setSpacing(6)
+        self._lb_anchor = QLabel(T("设置分类"))
+        self._lb_anchor.setObjectName("pageSub")
+        v.addWidget(self._lb_anchor)
         self.anchor_list = QListWidget()
+        self.anchor_list.setObjectName("ctxList")
         self.anchor_list.setFocusPolicy(Qt.NoFocus)
-        for key, name in (("appearance", "外观"), ("trigger", "触发手感"),
-                          ("size", "圆盘尺寸"), ("general", "常规"),
-                          ("maintenance", "维护")):
-            item = QListWidgetItem(name)
+        for key, zh in _SETTINGS_PAGES:
+            item = QListWidgetItem(T(zh))
             item.setData(Qt.UserRole, key)
             self.anchor_list.addItem(item)
         self.anchor_list.itemClicked.connect(self._on_anchor_clicked)
@@ -267,7 +406,8 @@ class QConfigGUI(QMainWindow):
         return w
 
     def _on_anchor_clicked(self, item):
-        self._settings_panel.scroll_to(item.data(Qt.UserRole))
+        key = item.data(Qt.UserRole)
+        self._show_setting(key)
 
     def _show_profile_menu(self):
         menu = self._build_profile_menu()
@@ -280,13 +420,38 @@ class QConfigGUI(QMainWindow):
 
     def _build_profile_menu(self) -> QMenu:
         menu = QMenu(self)
-        menu.addAction("复制方案", self._copy_profile)
-        menu.addAction("重命名", self._rename_profile)
-        menu.addAction("删除方案", self._delete_profile)
+        menu.addAction(T("复制方案"), self._copy_profile)
+        menu.addAction(T("重命名"), self._rename_profile)
+        menu.addAction(T("删除方案"), self._delete_profile)
+        # 绑定：只显示与当前方案 target 匹配的那一项
+        # （CAD 方案只能设为 AutoCAD 应用方案，中望方案只能设为中望CAD 应用方案）
+        target = self.config.get("profiles", {}).get(
+            self.current_profile, {}).get("target")
+        if target == "autocad":
+            menu.addSeparator()
+            menu.addAction(T("设为 AutoCAD 应用方案"),
+                           lambda: self._set_profile_binding("autocad"))
+        elif target == "zwcad":
+            menu.addSeparator()
+            menu.addAction(T("设为中望CAD 应用方案"),
+                           lambda: self._set_profile_binding("zwcad"))
         menu.addSeparator()
-        menu.addAction("导入方案", self._import_profile)
-        menu.addAction("导出方案", self._export_profile)
+        menu.addAction(T("导入方案"), self._import_profile)
+        menu.addAction(T("导出方案"), self._export_profile)
         return menu
+
+    def _set_profile_binding(self, target: str):
+        """把当前方案设为 AutoCAD / 中望CAD 的应用方案"""
+        if set_profile_for_target(self.config, target, self.current_profile):
+            self._push_undo()
+            self._refresh_profiles()
+            self._autosave_timer.start()
+            cad_name = {"autocad": "AutoCAD", "zwcad": T("中望CAD")}.get(
+                target, target)
+            self._set_status(T("已设为 {cad} 的应用方案").format(cad=cad_name))
+        else:
+            QMessageBox.warning(self, T("错误"),
+                                T("方案类型与目标 CAD 不匹配"))
 
     # ========== 主区页面 ==========
 
@@ -308,35 +473,35 @@ class QConfigGUI(QMainWindow):
         self.pill_profile.setObjectName("pill")
         top.addWidget(self.pill_profile, 0, Qt.AlignVCenter)
         top.addStretch(1)
-        self._btn_undo = QPushButton("撤销")
+        self._btn_undo = QPushButton(T("撤销"))
         self._btn_undo.setIcon(self.style().standardIcon(
             QStyle.StandardPixmap.SP_ArrowBack))
         self._btn_undo.setEnabled(False)
-        self._btn_undo.setToolTip("撤销上一步操作 (Ctrl+Z)")
+        self._btn_undo.setToolTip(T("撤销上一步操作 (Ctrl+Z)"))
         self._btn_undo.clicked.connect(self._undo)
-        self._btn_redo = QPushButton("重做")
+        self._btn_redo = QPushButton(T("重做"))
         self._btn_redo.setIcon(self.style().standardIcon(
             QStyle.StandardPixmap.SP_ArrowForward))
         self._btn_redo.setEnabled(False)
-        self._btn_redo.setToolTip("重做被撤销的操作 (Ctrl+Y)")
+        self._btn_redo.setToolTip(T("重做被撤销的操作 (Ctrl+Y)"))
         self._btn_redo.clicked.connect(self._redo)
         for b in (self._btn_undo, self._btn_redo):
             b.setFixedHeight(28)
-            b.setStyleSheet(_TOP_BTN_QSS)
+            b.setProperty("class", "topBtn")
         top.addWidget(self._btn_undo, 0, Qt.AlignVCenter)
         top.addWidget(self._btn_redo, 0, Qt.AlignVCenter)
-        self._btn_clear_all = QPushButton("一键清除")
-        self._btn_clear_all.setToolTip("清空当前方案的全部命令")
+        self._btn_clear_all = QPushButton(T("一键清除"))
+        self._btn_clear_all.setToolTip(T("清空当前方案的全部命令"))
         self._btn_clear_all.clicked.connect(self._clear_all_sectors)
         self._btn_clear_all.setFixedHeight(28)
-        self._btn_clear_all.setStyleSheet(
-            _TOP_BTN_QSS + f"QPushButton {{ color: {UI.danger}; }}")
+        self._btn_clear_all.setProperty("class", "topBtn")
+        self._btn_clear_all.setObjectName("btnClearAll")
         top.addWidget(self._btn_clear_all, 0, Qt.AlignVCenter)
-        self._btn_reset_default = QPushButton("恢复默认")
-        self._btn_reset_default.setToolTip("把当前方案恢复为默认命令")
+        self._btn_reset_default = QPushButton(T("恢复默认"))
+        self._btn_reset_default.setToolTip(T("把当前方案恢复为默认命令"))
         self._btn_reset_default.clicked.connect(self._reset_default_profile)
         self._btn_reset_default.setFixedHeight(28)
-        self._btn_reset_default.setStyleSheet(_TOP_BTN_QSS)
+        self._btn_reset_default.setProperty("class", "topBtn")
         top.addWidget(self._btn_reset_default, 0, Qt.AlignVCenter)
 
         # 主体：左栏（顶栏 + 圆盘 + 工具栏）| 命令库从页面顶到底，覆盖顶栏高度
@@ -402,31 +567,24 @@ class QConfigGUI(QMainWindow):
     def _build_preset_panel(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("presetPanel")
-        # 命令库作为右侧独立面板：自带背景与左边框，折叠/展开边界清晰
-        panel.setStyleSheet(f"""
-            QWidget#presetPanel {{
-                background: {UI.bg_raised};
-                border-left: 1px solid {UI.border_strong};
-            }}
-            QWidget#presetPanel QLabel {{ background: transparent; }}
-        """)
+        # 命令库作为右侧独立面板：自带背景与左边框（样式在全局 QSS），折叠/展开边界清晰
         v = QVBoxLayout(panel)
         v.setContentsMargins(14, 12, 14, 12)
         v.setSpacing(8)
         head = QHBoxLayout()
-        t = QLabel("命令库")
-        t.setStyleSheet("font-size: 14px; font-weight: 600;")
-        head.addWidget(t)
+        self._lb_library = QLabel(T("命令库"))
+        self._lb_library.setStyleSheet("font-size: 14px; font-weight: 600;")
+        head.addWidget(self._lb_library)
         head.addStretch(1)
-        self._btn_expand_toggle = QPushButton("全部折叠 ▸")
+        self._btn_expand_toggle = QPushButton(T("全部折叠 ▸"))
         self._btn_expand_toggle.setProperty("class", "ghost")
-        self._btn_expand_toggle.setToolTip("折叠所有分类")
+        self._btn_expand_toggle.setToolTip(T("折叠所有分类"))
         self._btn_expand_toggle.clicked.connect(self._toggle_expand_all)
         head.addWidget(self._btn_expand_toggle)
         v.addLayout(head)
 
         self.search_entry = QLineEdit()
-        self.search_entry.setPlaceholderText("搜索命令…  (Ctrl+F)")
+        self.search_entry.setPlaceholderText(T("搜索命令…  (Ctrl+F)"))
         self.search_entry.textChanged.connect(self._on_search)
         v.addWidget(self.search_entry)
 
@@ -446,10 +604,9 @@ class QConfigGUI(QMainWindow):
         self.preset_tree.customContextMenuRequested.connect(self._on_preset_context)
         v.addWidget(self.preset_tree, 1)
 
-        tip = QLabel("点扇区即编辑；选扇区后点命令直接应用；未选扇区时点命令进入放置模式")
-        tip.setWordWrap(True)
-        tip.setStyleSheet(f"color: {UI.text_muted}; font-size: {FONT_XS}px;")
-        v.addWidget(tip)
+        self._tip = QLabel(T("点扇区即编辑；选扇区后点命令直接应用；未选扇区时点命令进入放置模式"))
+        self._tip.setWordWrap(True)
+        v.addWidget(self._tip)
         return panel
 
     def _toggle_presets(self):
@@ -504,8 +661,8 @@ class QConfigGUI(QMainWindow):
         n = self.preset_tree.topLevelItemCount()
         all_expanded = n > 0 and all(
             self.preset_tree.topLevelItem(i).isExpanded() for i in range(n))
-        btn.setText("全部折叠 ▸" if all_expanded else "全部展开 ▾")
-        btn.setToolTip("折叠所有分类" if all_expanded else "展开所有分类")
+        btn.setText(T("全部折叠 ▸") if all_expanded else T("全部展开 ▾"))
+        btn.setToolTip(T("折叠所有分类") if all_expanded else T("展开所有分类"))
 
     def _sync_category_icons(self):
         """同步分类标题的 ▾/▸ 前缀，保证与展开状态一致"""
@@ -525,22 +682,55 @@ class QConfigGUI(QMainWindow):
     # ========== 页面切换 ==========
 
     def _show_settings(self):
+        """进入设置：上下文区显示分类锚点，默认打开第一个分类页"""
+        self.btn_nav_settings.setChecked(True)
+        self._ctx_stack.setCurrentIndex(1)
+        self._set_status(T("全局设置：修改即时保存"))
+        # 锚点默认选中当前分类
+        cur = self._current_setting_key()
+        self._highlight_anchor(cur)
+        self._show_setting(cur)
+
+    def _current_setting_key(self) -> str:
+        """当前设置分类 key（根据主区索引推算，默认外观）"""
+        idx = self._main_stack.currentIndex()
+        if 1 <= idx <= len(_SETTINGS_PAGES):
+            return _SETTINGS_PAGES[idx - 1][0]
+        return _SETTINGS_PAGES[0][0]
+
+    def _highlight_anchor(self, key: str):
+        for i in range(self.anchor_list.count()):
+            it = self.anchor_list.item(i)
+            if it.data(Qt.UserRole) == key:
+                self.anchor_list.setCurrentItem(it)
+                break
+
+    def _show_setting(self, key: str):
+        """进入指定设置分类页（锚点点击）"""
+        page = self._setting_pages[key]
         profile = self.config.get("profiles", {}).get(self.current_profile)
-        self._settings_panel.refresh(self.config, profile)
-        self._main_stack.setCurrentIndex(1)
+        page.refresh(self.config, profile)
+        idx = 1 + [k for k, _ in _SETTINGS_PAGES].index(key)
+        self._main_stack.setCurrentIndex(idx)
         self._ctx_stack.setCurrentIndex(1)
         self.btn_nav_settings.setChecked(True)
-        self.statusBar().showMessage("全局设置：修改即时保存")
+        self._highlight_anchor(key)
+        self._set_status(T("全局设置：修改即时保存"))
 
     def _show_editor(self):
         self._main_stack.setCurrentIndex(0)
         self._ctx_stack.setCurrentIndex(0)
         self.btn_nav_editor.setChecked(True)
         self.preview.update_config(self.config)
-        self.statusBar().showMessage("圆盘编辑")
+        self._set_status(T("圆盘编辑"))
 
     def _on_settings_saved(self):
         self.preview.update_config(self.config)
+
+    def _set_status(self, msg: str):
+        """记录最近状态消息（语言切换后按需重译显示）"""
+        self._last_status = msg
+        self.statusBar().showMessage(msg)
 
     def _open_config_dir(self):
         d = os.path.dirname(get_config_path())
@@ -557,27 +747,59 @@ class QConfigGUI(QMainWindow):
     def _refresh_profiles(self):
         self.profile_list.clear()
         profiles = self.config.get("profiles", {})
+        settings = self.config.get("settings", {})
         groups = {
-            "AutoCAD": [n for n, p in profiles.items() if p.get("target") == "autocad"],
-            "中望CAD": [n for n, p in profiles.items() if p.get("target") == "zwcad"],
-            "其他": [n for n, p in profiles.items()
-                    if p.get("target") not in ("autocad", "zwcad")],
+            T("AutoCAD"): [n for n, p in profiles.items() if p.get("target") == "autocad"],
+            T("中望CAD"): [n for n, p in profiles.items() if p.get("target") == "zwcad"],
+            T("其他"): [n for n, p in profiles.items()
+                        if p.get("target") not in ("autocad", "zwcad")],
         }
+        # 各 CAD 当前应用方案（绑定或首个匹配），与运行时规则一致
+        bound = {}
+        for tgt, label in (("autocad", "AutoCAD"), ("zwcad", T("中望CAD"))):
+            prof = get_profile_for_window(self.config, tgt)
+            if prof is not None:
+                bound[label] = prof.get("name", "")
         for gname, names in groups.items():
             if not names:
                 continue
-            head = QListWidgetItem(gname)
+            current_name = bound.get(gname)
+            head_text = gname
+            if current_name and names and current_name in names:
+                head_text = T("{cad}（当前：{name}）").format(
+                    cad=gname, name=current_name)
+            head = QListWidgetItem(head_text)
             head.setFlags(Qt.NoItemFlags)
-            head.setForeground(QColor(UI.accent))
+            head.setForeground(QColor(get_ui().accent))
             f = head.font()
             f.setBold(True)
             f.setPixelSize(11)
             head.setFont(f)
             self.profile_list.addItem(head)
             for name in names:
-                item = QListWidgetItem(profiles[name].get("name", name))
+                text = profiles[name].get("name", name)
+                item = QListWidgetItem(text)
                 item.setData(Qt.UserRole, name)
                 self.profile_list.addItem(item)
+                # 当前应用方案：方案名左对齐，「● 当前」标记右对齐
+                if current_name == profiles[name].get("name", name):
+                    item.setText("")
+                    w = QWidget()
+                    lay = QHBoxLayout(w)
+                    lay.setContentsMargins(8, 0, 8, 0)
+                    lay.setSpacing(0)
+                    lb_name = QLabel(text)
+                    f2 = item.font()
+                    f2.setBold(True)
+                    lb_name.setFont(f2)
+                    lb_name.setStyleSheet("background: transparent;")
+                    lb_tag = QLabel(T("● 当前"))
+                    lb_tag.setStyleSheet(
+                        "background: transparent; color: %s;" % get_ui().accent)
+                    lay.addWidget(lb_name)
+                    lay.addStretch(1)
+                    lay.addWidget(lb_tag)
+                    self.profile_list.setItemWidget(item, w)
         self._highlight_profile()
 
     def _highlight_profile(self):
@@ -597,7 +819,7 @@ class QConfigGUI(QMainWindow):
         self.preview.set_data(self.config, profile)
 
         display = profile.get("name", name)
-        cad_name = {"autocad": "AutoCAD", "zwcad": "中望CAD"}.get(
+        cad_name = {"autocad": "AutoCAD", "zwcad": T("中望CAD")}.get(
             profile.get("target", "autocad"),
             (profile.get("target", "autocad") or "autocad").upper())
         # 主次顺序：CAD 名（主标题）在前，配置方案名（pill）在后
@@ -626,8 +848,9 @@ class QConfigGUI(QMainWindow):
             self._place_popup()
         self._popup.show()
         self._popup.raise_()
-        self.statusBar().showMessage(
-            f"编辑 {_layer_name(layer)}扇区 {idx}：点击外部关闭")
+        self._set_status(
+            T("编辑 {layer}扇区 {idx}：点击外部关闭")
+            .format(layer=T(_layer_name(layer)), idx=idx))
 
     def _confirm_discard(self) -> str:
         """有未保存修改时弹确认框。返回 'save' / 'discard' / 'cancel'；
@@ -635,8 +858,8 @@ class QConfigGUI(QMainWindow):
         if not self._popup._dirty:
             return "discard"
         box = QMessageBox(self)
-        box.setWindowTitle("未保存的修改")
-        box.setText(f"扇区编辑有未保存的修改，要保存吗？")
+        box.setWindowTitle(T("未保存的修改"))
+        box.setText(T("扇区编辑有未保存的修改，要保存吗？"))
         btn_save = box.addButton("保存", QMessageBox.ButtonRole.AcceptRole)
         btn_discard = box.addButton("放弃", QMessageBox.ButtonRole.DestructiveRole)
         btn_cancel = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
@@ -681,9 +904,9 @@ class QConfigGUI(QMainWindow):
         """浮层关闭（外部点击 / Esc / 切走）：清理选中状态"""
         if self._selected_sector is not None:
             if self._popup._dirty:
-                self.statusBar().showMessage("修改未保存，已丢弃")
+                self._set_status(T("修改未保存，已丢弃"))
             else:
-                self.statusBar().showMessage("已取消选择")
+                self._set_status(T("已取消选择"))
             self._selected_sector = None
             self.preview.selected = None
             self.preview.hovered = None
@@ -751,7 +974,7 @@ class QConfigGUI(QMainWindow):
         }
         self._popup.mark_saved()
         self.preview.update()
-        self.statusBar().showMessage("● 保存中…")
+        self._set_status(T("● 保存中…"))
         self._autosave_timer.start()
 
     def _on_popup_cleared(self):
@@ -764,7 +987,8 @@ class QConfigGUI(QMainWindow):
         if str(idx) in sectors:
             del sectors[str(idx)]
         self.preview.update()
-        self.statusBar().showMessage(f"已清空{_layer_name(layer)}扇区 {idx}")
+        self._set_status(
+            T("已清空{layer}扇区 {idx}").format(layer=T(_layer_name(layer)), idx=idx))
         self._autosave_timer.start()
 
     def _on_sector_swapped(self, f_layer, f_idx, t_layer, t_idx):
@@ -792,20 +1016,21 @@ class QConfigGUI(QMainWindow):
         if self._popup.isVisible():
             self._popup.close()
         verb = "交换" if a is not None and b is not None else "移动"
-        self.statusBar().showMessage(
-            f"已{verb}命令：{_layer_name(f_layer)}扇区 {f_idx} ↔ "
-            f"{_layer_name(t_layer)}扇区 {t_idx}")
+        self._set_status(
+            T("已{verb}命令：{f_layer}扇区 {f_idx} ↔ {t_layer}扇区 {t_idx}")
+            .format(verb=T(verb), f_layer=T(_layer_name(f_layer)), f_idx=f_idx,
+                    t_layer=T(_layer_name(t_layer)), t_idx=t_idx))
 
     def _on_sector_cleared(self):
         """点击圆盘外取消选择：关闭浮层并清空选中"""
         self._selected_sector = None
         self._popup.close()
-        self.statusBar().showMessage("已取消选择")
+        self._set_status(T("已取消选择"))
 
     def _delete_selected(self):
         """Delete 键删除当前选中扇区的命令"""
         if not getattr(self, "_selected_sector", None):
-            self.statusBar().showMessage("请先在圆盘上选择一个扇区")
+            self._set_status(T("请先在圆盘上选择一个扇区"))
             return
         self._push_undo()
         layer, idx = self._selected_sector
@@ -814,7 +1039,9 @@ class QConfigGUI(QMainWindow):
         if str(idx) in sectors:
             del sectors[str(idx)]
         self.preview.update()
-        self.statusBar().showMessage(f"已删除{_layer_name(layer)}扇区 {idx} 的命令")
+        self._set_status(
+            T("已删除{layer}扇区 {idx} 的命令").format(
+                layer=T(_layer_name(layer)), idx=idx))
         self._autosave_timer.start()
 
     def _clear_all_sectors(self):
@@ -823,12 +1050,12 @@ class QConfigGUI(QMainWindow):
         has = any(profile.get(k, {}) for k in
                   ("sectors", "outer_sectors", "extension_sectors"))
         if not has:
-            self.statusBar().showMessage("当前方案本来就没有命令")
+            self._set_status(T("当前方案本来就没有命令"))
             return
         ret = QMessageBox.question(
-            self, "一键清除",
-            f"确定清空方案「{self.current_profile}」的全部命令吗？\n"
-            "（可用 Ctrl+Z 撤销）")
+            self, T("一键清除"),
+            T("确定清空方案「{name}」的全部命令吗？\n（可用 Ctrl+Z 撤销）")
+            .format(name=self.current_profile))
         if ret != QMessageBox.StandardButton.Yes:
             return
         self._push_undo()
@@ -836,7 +1063,7 @@ class QConfigGUI(QMainWindow):
             profile[k] = {}
         self.preview.update()
         self._autosave_timer.start()
-        self.statusBar().showMessage("已清空全部命令")
+        self._set_status(T("已清空全部命令"))
 
     def _reset_default_profile(self):
         """恢复默认：把当前方案的三圈命令恢复为默认配置"""
@@ -854,12 +1081,12 @@ class QConfigGUI(QMainWindow):
                     defp = dp
                     break
         if defp is None:
-            self.statusBar().showMessage("未找到可恢复的默认配置")
+            self._set_status(T("未找到可恢复的默认配置"))
             return
         ret = QMessageBox.question(
-            self, "恢复默认",
-            f"确定把方案「{self.current_profile}」的三圈命令\n"
-            "恢复为默认内容吗？（可用 Ctrl+Z 撤销）")
+            self, T("恢复默认"),
+            T("确定把方案「{name}」的三圈命令\n恢复为默认内容吗？（可用 Ctrl+Z 撤销）")
+            .format(name=self.current_profile))
         if ret != QMessageBox.StandardButton.Yes:
             return
         self._push_undo()
@@ -867,7 +1094,8 @@ class QConfigGUI(QMainWindow):
             profile[k] = copy.deepcopy(defp.get(k, {}))
         self.preview.update()
         self._autosave_timer.start()
-        self.statusBar().showMessage(f"已恢复方案「{self.current_profile}」的默认命令")
+        self._set_status(
+            T("已恢复方案「{name}」的默认命令").format(name=self.current_profile))
 
     # ========== 命令库 ==========
 
@@ -898,7 +1126,7 @@ class QConfigGUI(QMainWindow):
         if not data:
             return
         menu = QMenu(self)
-        act = menu.addAction("放置到圆盘扇区…")
+        act = menu.addAction(T("放置到圆盘扇区…"))
         act.triggered.connect(lambda: self._start_pending_place(data))
         menu.exec(self.preset_tree.viewport().mapToGlobal(pos))
 
@@ -907,8 +1135,9 @@ class QConfigGUI(QMainWindow):
         self._pending_preset = data
         self.preview.pending = data
         self.preview.setCursor(Qt.CrossCursor)
-        self.statusBar().showMessage(
-            f"点击圆盘扇区放置「{data.get('label', '')}」，右键 / Esc 取消")
+        self._set_status(
+            T("点击圆盘扇区放置「{label}」，右键 / Esc 取消")
+            .format(label=data.get("label", "")))
         self.preview.update()
 
     def _cancel_pending(self):
@@ -917,7 +1146,7 @@ class QConfigGUI(QMainWindow):
             self.preview.pending = None
             self.preview.setCursor(Qt.ArrowCursor)
             self.preview.update()
-            self.statusBar().showMessage("已取消放置")
+            self._set_status(T("已取消放置"))
 
     def _on_drop(self, layer, idx, data):
         """放置模式：命令放到指定扇区（添加/替换）"""
@@ -929,8 +1158,10 @@ class QConfigGUI(QMainWindow):
         self._selected_sector = (layer, idx)
         self.preview.selected = (layer, idx)
         self._edit_guard = False
-        self.statusBar().showMessage(
-            f"已将「{data.get('label', '')}」放置到{_layer_name(layer)}扇区 {idx}")
+        self._set_status(
+            T("已将「{label}」放置到{layer}扇区 {idx}")
+            .format(label=data.get("label", ""),
+                    layer=T(_layer_name(layer)), idx=idx))
         self._autosave_timer.start()
 
     def _apply_preset(self, info):
@@ -941,7 +1172,9 @@ class QConfigGUI(QMainWindow):
         sectors[str(idx)] = info.copy()
         self._edit_guard = False
         self.preview.update()
-        self.statusBar().showMessage(f"已将「{info.get('label', '')}」应用到扇区 {idx}")
+        self._set_status(
+            T("已将「{label}」应用到扇区 {idx}")
+            .format(label=info.get("label", ""), idx=idx))
         self._autosave_timer.start()
 
     def _populate_presets(self, filter_text=""):
@@ -949,40 +1182,44 @@ class QConfigGUI(QMainWindow):
         if not getattr(self, "_preset_commands", None):
             return
         filter_text = filter_text.strip().lower()
+        ui = get_ui()
         for category, commands in self._preset_commands.items():
+            cat_zh = T(category)
             if filter_text:
                 filtered = {k: v for k, v in commands.items()
                             if filter_text in k.lower()
-                            or filter_text in v.get("label", "").lower()
+                            or filter_text in T(v.get("label", "")).lower()
                             or filter_text in v.get("key", "").lower()
                             or filter_text in v.get("description", "").lower()}
                 if not filtered:
                     continue
             else:
                 filtered = commands
-            cat = QTreeWidgetItem([f"▸ {category}"])
+            cat = QTreeWidgetItem([f"▸ {cat_zh}"])
             f = cat.font(0)
             f.setBold(True)
             f.setPixelSize(11)
             cat.setFont(0, f)
-            cat.setForeground(0, QColor(UI.text_muted))
+            cat.setForeground(0, QColor(ui.text_muted))
             cat.setSizeHint(0, QSize(0, 26))
             cat.setExpanded(True)
-            cat.setText(0, f"▾ {category}")
+            cat.setText(0, f"▾ {cat_zh}")
             cat.setFirstColumnSpanned(True)
             for name, data in filtered.items():
-                label = data.get("label", name)
+                label = T(data.get("label", name))
                 key = data.get("key", "")
                 child = QTreeWidgetItem([label, key])
                 child.setData(0, Qt.UserRole, data)
                 child.setSizeHint(0, QSize(0, 30))
-                child.setForeground(0, QColor(UI.text))
+                child.setForeground(0, QColor(ui.text))
                 child.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
-                child.setForeground(1, QColor(UI.text_muted))
+                child.setForeground(1, QColor(ui.text_muted))
                 child.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
                 child.setToolTip(
-                    0, f"命令: {label}\n快捷键: {key}\nCAD 命令: {data.get('description', '')}\n\n"
-                       f"拖拽到圆盘扇区即可新增/更换，也可左键应用到选中扇区")
+                    0, T("命令: {label}\n快捷键: {key}\nCAD 命令: {desc}\n\n"
+                         "拖拽到圆盘扇区即可新增/更换，也可左键应用到选中扇区")
+                    .format(label=label, key=key,
+                            desc=data.get("description", "")))
                 cat.addChild(child)
             self.preset_tree.addTopLevelItem(cat)
         self._update_expand_btn()
@@ -990,16 +1227,16 @@ class QConfigGUI(QMainWindow):
     # ========== 方案操作 ==========
 
     def _add_profile(self):
-        name, ok = QInputDialog.getText(self, "新增配置方案", "请输入方案名称:")
+        name, ok = QInputDialog.getText(self, T("新增配置方案"), T("请输入方案名称:"))
         if not ok or not name.strip():
             return
         name = name.strip()
         if name in self.config.get("profiles", {}):
-            QMessageBox.warning(self, "错误", f"方案「{name}」已存在")
+            QMessageBox.warning(self, T("错误"), T("方案「{name}」已存在").format(name=name))
             return
-        target, ok = QInputDialog.getItem(self, "选择目标软件",
-                                          "适用的 CAD 软件:",
-                                          ["AutoCAD", "中望CAD"], 0, False)
+        target, ok = QInputDialog.getItem(self, T("选择目标软件"),
+                                          T("适用的 CAD 软件:"),
+                                          ["AutoCAD", T("中望CAD")], 0, False)
         if not ok:
             return
         tgt = "autocad" if target == "AutoCAD" else "zwcad"
@@ -1016,13 +1253,15 @@ class QConfigGUI(QMainWindow):
 
     def _copy_profile(self):
         src = self.config.get("profiles", {}).get(self.current_profile, {})
-        new_name, ok = QInputDialog.getText(self, "复制配置方案", "请输入新方案名称:",
+        new_name, ok = QInputDialog.getText(self, T("复制配置方案"),
+                                            T("请输入新方案名称:"),
                                             text=f"{self.current_profile}-副本")
         if not ok or not new_name.strip():
             return
         new_name = new_name.strip()
         if new_name in self.config.get("profiles", {}):
-            QMessageBox.warning(self, "错误", f"方案「{new_name}」已存在")
+            QMessageBox.warning(self, T("错误"),
+                                T("方案「{name}」已存在").format(name=new_name))
             return
         new = copy.deepcopy(src)
         new["name"] = new_name
@@ -1033,20 +1272,25 @@ class QConfigGUI(QMainWindow):
         self._autosave_timer.start()
 
     def _rename_profile(self):
-        new_name, ok = QInputDialog.getText(self, "重命名配置方案", "请输入新名称:",
+        new_name, ok = QInputDialog.getText(self, T("重命名配置方案"), T("请输入新名称:"),
                                             text=self.current_profile)
         if not ok or not new_name.strip() or new_name.strip() == self.current_profile:
             return
         new_name = new_name.strip()
         if new_name in self.config.get("profiles", {}):
-            QMessageBox.warning(self, "错误", f"方案「{new_name}」已存在")
+            QMessageBox.warning(self, T("错误"),
+                                T("方案「{name}」已存在").format(name=new_name))
             return
         self._push_undo()
         profile = self.config["profiles"].pop(self.current_profile)
         profile["name"] = new_name
         self.config["profiles"][new_name] = profile
-        if self.config.get("settings", {}).get("active_profile") == self.current_profile:
-            self.config["settings"]["active_profile"] = new_name
+        s = self.config.get("settings", {})
+        if s.get("active_profile") == self.current_profile:
+            s["active_profile"] = new_name
+        for key in ("autocad_profile", "zwcad_profile"):
+            if s.get(key) == self.current_profile:
+                s[key] = new_name
         self.current_profile = new_name
         self._refresh_profiles()
         self._autosave_timer.start()
@@ -1054,42 +1298,46 @@ class QConfigGUI(QMainWindow):
     def _export_profile(self):
         profile = self.config.get("profiles", {}).get(self.current_profile, {})
         if not profile:
-            QMessageBox.warning(self, "提示", "没有可导出的配置")
+            QMessageBox.warning(self, T("提示"), T("没有可导出的配置"))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出方案", f"{self.current_profile}.json", "JSON 文件 (*.json)")
+            self, T("导出方案"), f"{self.current_profile}.json", "JSON 文件 (*.json)")
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(profile, f, ensure_ascii=False, indent=2)
-            self.statusBar().showMessage(f"已导出到: {path}")
+            self._set_status(f"{T('已从')} {path} {T('导出')}")
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"导出失败: {e}")
+            QMessageBox.warning(self, T("错误"), f"{T('导出失败')}: {e}")
 
     def _import_profile(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "导入方案", "", "JSON 文件 (*.json)")
+            self, T("导入方案"), "", "JSON 文件 (*.json)")
         if not path:
             return
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"导入失败（无法读取文件）: {e}")
+            QMessageBox.warning(self, T("错误"),
+                                T("导入失败（无法读取文件）: {e}").format(e=e))
             return
         if not isinstance(data, dict):
-            QMessageBox.warning(self, "错误", "导入失败：文件格式无效（应为对象）")
+            QMessageBox.warning(self, T("错误"),
+                                T("导入失败：文件格式无效（应为对象）"))
             return
         for key in ("sectors", "outer_sectors", "extension_sectors"):
             if key in data:
                 if not isinstance(data[key], dict):
-                    QMessageBox.warning(self, "错误", f"导入失败：{key} 格式无效")
+                    QMessageBox.warning(self, T("错误"),
+                                        T("导入失败：{key} 格式无效").format(key=key))
                     return
                 for v in data[key].values():
                     if not isinstance(v, dict):
-                        QMessageBox.warning(self, "错误",
-                                            f"导入失败：{key} 中存在无效数据")
+                        QMessageBox.warning(self, T("错误"),
+                                            T("导入失败：{key} 中存在无效数据")
+                                            .format(key=key))
                         return
         self._push_undo()
         profile = self.config.get("profiles", {}).get(self.current_profile, {})
@@ -1097,20 +1345,29 @@ class QConfigGUI(QMainWindow):
             if key in data:
                 profile[key] = data[key]
         self.preview.update()
-        self.statusBar().showMessage(f"已从 {path} 导入配置")
+        self._set_status(T("已从 {path} 导入配置").format(path=path))
         self._autosave_timer.start()
 
     def _delete_profile(self):
         if len(self.config.get("profiles", {})) <= 1:
-            QMessageBox.warning(self, "错误", "至少保留一个配置方案")
+            QMessageBox.warning(self, T("错误"), T("至少保留一个配置方案"))
             return
-        if QMessageBox.question(self, "确认",
-                                f"确定要删除「{self.current_profile}」吗?") != QMessageBox.Yes:
+        if QMessageBox.question(self, T("确认"),
+                                T("确定要删除「{name}」吗?").format(
+                                    name=self.current_profile)) != QMessageBox.Yes:
             return
         self._push_undo()
         del self.config["profiles"][self.current_profile]
         remaining = list(self.config.get("profiles", {}).keys())
-        self.config["settings"]["active_profile"] = remaining[0]
+        # 绑定字段引用了被删方案时，重置为该 target 下的第一个剩余方案
+        s = self.config.get("settings", {})
+        for key, tgt in (("autocad_profile", "autocad"),
+                         ("zwcad_profile", "zwcad")):
+            if s.get(key) == self.current_profile:
+                s[key] = next(
+                    (n for n in remaining
+                     if self.config["profiles"][n].get("target") == tgt), "")
+        s["active_profile"] = remaining[0]
         self._refresh_profiles()
         self._load_profile(remaining[0])
         self._autosave_timer.start()
@@ -1131,7 +1388,7 @@ class QConfigGUI(QMainWindow):
         self._redo_stack.append(copy.deepcopy(self.config))
         self._restore_config(before)
         self._update_undo_btns()
-        self.statusBar().showMessage("已撤销")
+        self._set_status(T("已撤销"))
 
     def _redo(self):
         if not self._redo_stack:
@@ -1140,7 +1397,7 @@ class QConfigGUI(QMainWindow):
         self._undo_stack.append(copy.deepcopy(self.config))
         self._restore_config(after)
         self._update_undo_btns()
-        self.statusBar().showMessage("已重做")
+        self._set_status(T("已重做"))
 
     def _restore_config(self, cfg):
         self.config = cfg
@@ -1170,11 +1427,12 @@ class QConfigGUI(QMainWindow):
     def _do_save(self):
         self.config["settings"]["active_profile"] = self.current_profile
         ok = save_config(self.config)
-        self.statusBar().showMessage("✓ 已保存" if ok else "保存失败")
+        self._set_status(T("✓ 已保存") if ok else T("保存失败"))
         if ok and self.on_save:
             self.on_save()
 
     def closeEvent(self, e):
+        remove_listener(self._lang_listener)
         if self._autosave_timer.isActive():
             self._autosave_timer.stop()
             self._do_save()

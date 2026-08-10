@@ -4,16 +4,16 @@
 （不再用 Qt.Popup，规避其关闭-重开竞态导致的黑边问题）；输入即时
 写回配置（发信号，由主窗口负责落盘）。只负责展示与交互，不持有配置数据。
 
-不用 QGraphicsDropShadowEffect：该效果绘制区域会超出窗口几何，在
-WA_TranslucentBackground 分层窗口上触发 UpdateLayeredWindowIndirect
-参数错误刷屏（dirty 区负坐标）。
+样式由全局 QSS 提供（build_app_qss 的 QFrame#popupCard 等规则），
+随界面模式（浅/深）自动切换；语言切换通过 retranslate 刷新文本。
 """
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QFormLayout, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QVBoxLayout)
 
-from src.theme import UI, RADIUS_LG, FONT_XS, FONT_SM
+from src.i18n import T
+from src.theme import FONT_SM
 
 
 class SectorEditorPopup(QFrame):
@@ -30,6 +30,9 @@ class SectorEditorPopup(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        # 浮层窗口自身保持透明（防止应用级 QSS 的背景规则污染）；
+        # 内容卡片背景由全局 QSS 的 QFrame#popupCard 提供（特异性更高）
+        self.setStyleSheet("QFrame { background: transparent; }")
         self._loading = False
         self._layer = "inner"
         self._idx = 0
@@ -37,37 +40,6 @@ class SectorEditorPopup(QFrame):
         self._dragging = False
         self._drag_offset = None
         self.user_moved = False   # 用户拖动过浮层：此后不再自动定位到圆盘下方
-
-        self.setStyleSheet(f"""
-            QFrame#popupCard {{
-                background: {UI.bg_overlay};
-                border: 1px solid {UI.border_strong};
-                border-radius: {RADIUS_LG}px;
-            }}
-            QFrame#popupCard QLabel {{ background: transparent; }}
-            QLabel#popupTitle {{
-                color: {UI.text}; font-size: {FONT_SM}px; font-weight: 600;
-            }}
-            QLabel#popupMeta {{ color: {UI.text_muted}; font-size: {FONT_XS}px; }}
-            QLabel#fieldName {{ color: {UI.text_muted}; font-size: {FONT_XS}px; }}
-            QLineEdit {{
-                background: {UI.bg_input}; border: 1px solid {UI.border_strong};
-                border-radius: 5px; padding: 4px 8px; min-height: 0;
-            }}
-            QLineEdit:focus {{ border-color: {UI.accent}; }}
-            QPushButton {{
-                background: {UI.bg_raised}; border: 1px solid {UI.border_strong};
-                border-radius: 5px; padding: 3px 10px; min-height: 0;
-                color: {UI.text};
-            }}
-            QPushButton:hover {{ background: {UI.bg_hover}; }}
-            QPushButton#clearBtn {{ color: {UI.danger}; }}
-            QPushButton.primary {{
-                background: {UI.accent}; border-color: {UI.accent};
-                color: {UI.accent_text}; font-weight: 600;
-            }}
-            QPushButton.primary:hover {{ background: {UI.accent_hover}; }}
-        """)
 
         root = QFrame(self)
         root.setObjectName("popupCard")
@@ -81,11 +53,9 @@ class SectorEditorPopup(QFrame):
         # 头部：所在层 · 扇区 N（整行是拖动把手，按住可移动浮层）
         head = QHBoxLayout()
         self.drag_handle = QLabel("⠿")
-        self.drag_handle.setToolTip("按住此处可拖动编辑窗")
-        self.drag_handle.setStyleSheet(
-            f"color: {UI.text_muted}; font-size: {FONT_SM}px;")
+        self.drag_handle.setToolTip(T("按住此处可拖动编辑窗"))
         self.drag_handle.setCursor(Qt.OpenHandCursor)
-        self.title = QLabel("扇区")
+        self.title = QLabel("")
         self.title.setObjectName("popupTitle")
         self.title.setCursor(Qt.OpenHandCursor)
         self.meta = QLabel("")
@@ -103,14 +73,14 @@ class SectorEditorPopup(QFrame):
         form.setSpacing(5)
         form.setLabelAlignment(Qt.AlignLeft)
         self.label_entry = QLineEdit()
-        self.label_entry.setPlaceholderText("圆盘上显示的名称")
+        self.label_entry.setPlaceholderText(T("圆盘上显示的名称"))
         self.key_entry = QLineEdit()
-        self.key_entry.setPlaceholderText("回退快捷键，如 L / CO")
+        self.key_entry.setPlaceholderText(T("回退快捷键，如 L / CO"))
         self.desc_entry = QLineEdit()
-        self.desc_entry.setPlaceholderText("发送到 CAD 的命令名，如 LINE")
-        form.addRow(self._field("显示名称"), self.label_entry)
-        form.addRow(self._field("快捷键"), self.key_entry)
-        form.addRow(self._field("CAD 命令"), self.desc_entry)
+        self.desc_entry.setPlaceholderText(T("发送到 CAD 的命令名，如 LINE"))
+        form.addRow(self._field(T("显示名称")), self.label_entry)
+        form.addRow(self._field(T("快捷键")), self.key_entry)
+        form.addRow(self._field(T("CAD 命令")), self.desc_entry)
         lay.addLayout(form)
 
         for w in (self.label_entry, self.key_entry, self.desc_entry):
@@ -119,24 +89,39 @@ class SectorEditorPopup(QFrame):
         # 按钮行：保存 / 清空
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        btn_save = QPushButton("保存")
-        btn_save.setProperty("class", "primary")
-        btn_save.setToolTip("保存该扇区的命令修改")
-        btn_save.clicked.connect(self.save_requested.emit)
-        btn_row.addWidget(btn_save)
-        btn_clear = QPushButton("清空")
-        btn_clear.setObjectName("clearBtn")
-        btn_clear.setToolTip("删除该扇区命令")
-        btn_clear.clicked.connect(self._on_clear)
-        btn_row.addWidget(btn_clear)
+        self.btn_save = QPushButton(T("保存"))
+        self.btn_save.setProperty("class", "primary")
+        self.btn_save.setToolTip(T("保存该扇区的命令修改"))
+        self.btn_save.clicked.connect(self.save_requested.emit)
+        btn_row.addWidget(self.btn_save)
+        self.btn_clear = QPushButton(T("清空"))
+        self.btn_clear.setObjectName("clearBtn")
+        self.btn_clear.setToolTip(T("删除该扇区命令"))
+        self.btn_clear.clicked.connect(self._on_clear)
+        btn_row.addWidget(self.btn_clear)
         btn_row.addStretch(1)
         lay.addLayout(btn_row)
 
     def _field(self, text: str) -> QLabel:
         lb = QLabel(text)
         lb.setObjectName("fieldName")
-        lb.setFixedWidth(64)
+        lb.setFixedWidth(72)
+        lb.setStyleSheet(f"font-size: {FONT_SM}px;")
         return lb
+
+    # ========== 语言切换 ==========
+
+    def retranslate(self):
+        """语言切换：刷新浮层内全部文本（打开状态时由主窗口调用）"""
+        self.drag_handle.setToolTip(T("按住此处可拖动编辑窗"))
+        self.label_entry.setPlaceholderText(T("圆盘上显示的名称"))
+        self.key_entry.setPlaceholderText(T("回退快捷键，如 L / CO"))
+        self.desc_entry.setPlaceholderText(T("发送到 CAD 的命令名，如 LINE"))
+        self.btn_save.setText(T("保存"))
+        self.btn_save.setToolTip(T("保存该扇区的命令修改"))
+        self.btn_clear.setText(T("清空"))
+        self.btn_clear.setToolTip(T("删除该扇区命令"))
+        self._update_title()
 
     # ========== 外部接口 ==========
 
@@ -145,26 +130,31 @@ class SectorEditorPopup(QFrame):
         self._layer = layer
         self._idx = idx
         self._loading = True
-        layer_names = {"inner": "内层", "outer": "外层", "extension": "扩展圈"}
-        self.title.setText(f"{layer_names.get(layer, layer)} · 扇区 {idx}")
-        self.meta.setText("已保存")
+        self._update_title()
+        self.meta.setText(T("已保存"))
         self._dirty = False
         self.label_entry.setText(cfg.get("label", ""))
         self.key_entry.setText(cfg.get("key", ""))
         self.desc_entry.setText(cfg.get("description", ""))
         self._loading = False
 
+    def _update_title(self):
+        layer_names = {"inner": T("内层"), "outer": T("外层"), "extension": T("扩展圈")}
+        self.title.setText(
+            T("{layer} · 扇区 {idx}").format(
+                layer=layer_names.get(self._layer, self._layer), idx=self._idx))
+
     # ========== 内部 ==========
 
     def _on_edited(self, text):
         if not self._loading:
             self._dirty = True
-            self.meta.setText("未保存")
+            self.meta.setText(T("未保存"))
             self.edited.emit()
 
     def mark_saved(self):
         self._dirty = False
-        self.meta.setText("已保存")
+        self.meta.setText(T("已保存"))
 
     def _on_clear(self):
         self.cleared.emit()

@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QLabel, QPushButton,
                                QToolTip, QTreeWidget, QWidget)
 
 from src.gesture_engine import calc_sector
-from src.theme import UI, theme_from_settings
+from src.i18n import T
+from src.theme import get_ui, theme_from_settings
 from src.qt_renderer import (INNER, OUTER, EXTENSION, draw_shadow, draw_ring,
                              draw_center)
 
@@ -59,8 +60,9 @@ class CommandTree(QTreeWidget):
         pm.fill(Qt.transparent)
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QColor(UI.accent_text))
-        p.setBrush(QColor(UI.accent_dim))
+        ui = get_ui()
+        p.setPen(QColor(ui.accent_text))
+        p.setBrush(QColor(ui.accent_dim))
         p.drawRoundedRect(1, 1, pm.width() - 2, pm.height() - 2, 6, 6)
         p.setPen(QColor("#ffffff"))
         f = QFont("Microsoft YaHei")
@@ -81,12 +83,13 @@ class _PanelToggleButton(QPushButton):
         self._collapsed = False
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(26, 60)
-        self.setToolTip("折叠命令库，圆盘全宽显示")
+        self.setToolTip(T("折叠命令库，圆盘全宽显示"))
 
     def set_collapsed(self, collapsed: bool):
         if collapsed != self._collapsed:
             self._collapsed = collapsed
-            self.setToolTip("展开命令库" if collapsed else "折叠命令库，圆盘全宽显示")
+            self.setToolTip(T("展开命令库") if collapsed
+                            else T("折叠命令库，圆盘全宽显示"))
             self.update()
 
     def paintEvent(self, e):
@@ -94,14 +97,15 @@ class _PanelToggleButton(QPushButton):
         p.setRenderHint(QPainter.Antialiasing)
         active = self.underMouse() or self.isDown()
         w, h = self.width(), self.height()
+        ui = get_ui()
 
         # 背景与命令库面板完全同色（不透明、直角），骑跨处与面板融为一体，
         # 只有露出预览区的那半形成一个短把手
         p.setPen(Qt.NoPen)
-        p.fillRect(0, 0, w, h, QColor(UI.bg_hover if active else UI.bg_raised))
+        p.fillRect(0, 0, w, h, QColor(ui.bg_hover if active else ui.bg_raised))
 
         # 双线 chevron：展开态朝右（指向面板），折叠态朝左（指向展开方向）
-        color = QColor(UI.accent if active else UI.text_secondary)
+        color = QColor(ui.accent if active else ui.text_secondary)
         p.setPen(QPen(color, 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.setBrush(Qt.NoBrush)
         cx, cy = w / 2, h / 2
@@ -365,18 +369,18 @@ class QRadialPreview(QWidget):
         outer = self._radius("outer_ring_radius", 180) * scale
         ext = self._radius("ext_ring_radius", 240) * scale
 
-        draw_shadow(p, cx, cy, ext)
+        draw_shadow(p, cx, cy, ext, light=t.light)
         sel = self._drag_from if self._drag_from is not None else self.selected
         hov = self._drag_hover if self._drag_from is not None else self.hovered
         draw_ring(p, cx, cy, outer, ext, n,
                   self.profile.get("extension_sectors", {}), t.extension,
-                  layer=EXTENSION, sel=sel, hov=hov)
+                  layer=EXTENSION, sel=sel, hov=hov, light=t.light)
         draw_ring(p, cx, cy, inner, outer, n,
                   self.profile.get("outer_sectors", {}), t.outer,
-                  layer=OUTER, sel=sel, hov=hov)
+                  layer=OUTER, sel=sel, hov=hov, light=t.light)
         draw_ring(p, cx, cy, dead, inner, n,
                   self.profile.get("sectors", {}), t.inner,
-                  layer=INNER, sel=sel, hov=hov)
+                  layer=INNER, sel=sel, hov=hov, light=t.light)
 
         label, sub = self._center_texts()
         draw_center(p, cx, cy, dead, t, min(self.width(), self.height()),
@@ -385,11 +389,12 @@ class QRadialPreview(QWidget):
 
     def _center_texts(self):
         if self.pending:
-            return f"放置: {self.pending.get('label', '')}", "点击扇区放置 · 右键取消"
+            return f"{T('放置')}: {self.pending.get('label', '')}", \
+                T("点击扇区放置 · 右键取消")
         if not self.selected:
             return "", self.profile.get("name", "") if self.profile else ""
         layer, idx = self.selected
         key = _layer_key(layer)
         cfg = self.profile.get(key, {}).get(str(idx), {})
-        sub = cfg.get("key", "").upper() if cfg.get("key") else _layer_name(layer)
+        sub = cfg.get("key", "").upper() if cfg.get("key") else T(_layer_name(layer))
         return cfg.get("label", ""), sub
