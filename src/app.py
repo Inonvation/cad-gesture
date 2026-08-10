@@ -94,8 +94,6 @@ class CADGestureApp:
         # 菜单被 Esc/左键取消时复位引擎手势状态，阻止松键补发命令
         self.menu._on_cancel = self.gesture_engine.cancel_gesture
 
-        self._menu_center_x = 0
-        self._menu_center_y = 0
         self._exit_poll_count = 0
         self._quitting = False
 
@@ -106,15 +104,18 @@ class CADGestureApp:
 
         self._setup_tray()
 
-        # 主循环定时器（菜单可见时 16ms 高频跟踪，不可见时 100ms 低频空转）
+        # 主循环定时器（菜单可见时 16ms 高频跟踪，不可见时 200ms 低频空转）
         self._timer = QTimer()
         self._timer.timeout.connect(self._process_queue)
         self._timer.start(16)
 
-        # 跟随系统：轮询系统主题变化（仅 system 模式生效，每次一次注册表读，3 秒间隔）
+        # 跟随系统：轮询系统主题变化（仅 system 模式运行，5 秒一次注册表读，
+        # 非 system 模式不启动，避免后台空转）
         self._theme_poll_timer = QTimer()
         self._theme_poll_timer.timeout.connect(self._poll_system_theme)
-        self._theme_poll_timer.start(3000)
+        self._theme_poll_timer.setInterval(5000)
+        if s.get("ui_mode", "dark") == "system":
+            self._theme_poll_timer.start()
 
     # ========== 事件入队 ==========
 
@@ -141,7 +142,6 @@ class CADGestureApp:
                     try:
                         if event_type == "show":
                             x, y, window_type = data
-                            self._menu_center_x, self._menu_center_y = x, y
                             self.profile = get_profile_for_window(self.config, window_type)
                             if self.profile is None:
                                 self.profile = get_active_profile(self.config)
@@ -169,7 +169,7 @@ class CADGestureApp:
                                 desc = sector_cfg.get("description", "")
                                 target = profile.get("target", "autocad")
                                 if key:
-                                    execute_with_cancel(key, desc, target, menu_was_shown=True)
+                                    execute_with_cancel(key, desc, target)
                             except Exception as e:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)
                         elif event_type == "update_check_result":
@@ -213,7 +213,7 @@ class CADGestureApp:
             self.log.error("主循环异常: %s", e, exc_info=True)
         finally:
             if not self._quitting:
-                delay = 16 if self.menu.is_visible() else 100
+                delay = 16 if self.menu.is_visible() else 200
                 self._timer.setInterval(delay)
 
     # ========== 界面模式 ==========
@@ -230,9 +230,16 @@ class CADGestureApp:
                     set_title_bar_theme(w, self._applied_mode == "dark")
             except Exception:
                 pass
+        # 主题轮询仅在 system 模式运行，其余模式停止空转
+        timer = getattr(self, "_theme_poll_timer", None)
+        if timer is not None:
+            if mode == "system":
+                timer.start()
+            else:
+                timer.stop()
 
     def _poll_system_theme(self):
-        """system 模式下系统主题变化时自动刷新界面 + 顶栏（3 秒轮询）"""
+        """system 模式下系统主题变化时自动刷新界面 + 顶栏（5 秒轮询）"""
         if self.config.get("settings", {}).get("ui_mode", "dark") != "system":
             return
         # 必须主动读注册表：current_ui_mode() 是缓存值，只在 set_ui_mode 时
