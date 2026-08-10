@@ -20,7 +20,7 @@ _UI_FONT_SCALE = 1.0
 def set_ui_font_scale(scale: float) -> None:
     """设置界面整体字号缩放（0.8 ~ 1.5），重建 QSS 后生效"""
     global _UI_FONT_SCALE
-    _UI_FONT_SCALE = max(0.8, min(1.5, float(scale)))
+    _UI_FONT_SCALE = max(0.7, min(1.6, float(scale)))
 
 
 def font_px(px: int) -> int:

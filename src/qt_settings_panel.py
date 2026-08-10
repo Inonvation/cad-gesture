@@ -130,6 +130,7 @@ class _MenuPreview(QWidget):
                                    r["outer_ring_radius"], r["ext_ring_radius"])
         n = int(s.get("sector_count", 8))
         theme = theme_from_settings(s)
+        fs = float(s.get("menu_font_scale", 100)) / 100.0
 
         avail = min(self.width(), self.height()) / 2 - 24
         fit = avail / ext if ext else 1.0
@@ -139,16 +140,16 @@ class _MenuPreview(QWidget):
         draw_shadow(p, cx, cy, ext * fit)
         draw_ring(p, cx, cy, outer * fit, ext * fit, n,
                   prof.get("extension_sectors", {}), theme.extension,
-                  layer=EXTENSION, placeholder=True)
+                  layer=EXTENSION, placeholder=True, font_scale=fs)
         draw_ring(p, cx, cy, inner * fit, outer * fit, n,
                   prof.get("outer_sectors", {}), theme.outer,
-                  layer=OUTER, placeholder=True)
+                  layer=OUTER, placeholder=True, font_scale=fs)
         draw_ring(p, cx, cy, dead * fit, inner * fit, n,
                   prof.get("sectors", {}), theme.inner,
-                  layer=INNER, placeholder=True)
+                  layer=INNER, placeholder=True, font_scale=fs)
         name = prof.get("name", "") if prof else ""
         draw_center(p, cx, cy, dead * fit, theme,
-                    min(self.width(), self.height()), "", name)
+                    min(self.width(), self.height()), "", name, font_scale=fs)
 
         # 底部标注各层半径与实际直径
         p.setOpacity(1.0)
@@ -177,6 +178,7 @@ class _BasePage(QWidget):
         self.on_restore = None
         self.on_ui_mode_changed = None
         self.on_language_changed = None
+        self.on_ui_font_changed = None   # 界面字号实时变化回调
         self._slider_labels = {}       # key -> (name_lb, unit, val_lb, divisor, slider)
         self._tr = []                  # [(widget, zh_text)] 语言切换刷新
 
@@ -370,11 +372,11 @@ class AppearancePage(_BasePage):
 
         # 文字大小：圆盘 / 界面（百分比，100 = 默认）
         self._menu_font_slider, self._menu_font_label = self._slider_row(
-            "圆盘文字大小", "menu_font_scale", 80, 130, "%",
-            on_change=self._update_preview, divisor=100.0, container=lv)
+            "圆盘文字大小", "menu_font_scale", 70, 160, "%",
+            on_change=self._update_preview, container=lv)
         self._ui_font_slider, self._ui_font_label = self._slider_row(
-            "界面文字大小", "ui_font_scale", 85, 130, "%",
-            divisor=100.0, container=lv)
+            "界面文字大小", "ui_font_scale", 75, 160, "%",
+            on_change=self._on_ui_font_changed, container=lv)
         lv.addStretch(1)
 
         hbox.addWidget(left, 1)
@@ -385,6 +387,11 @@ class AppearancePage(_BasePage):
     def _update_preview(self):
         if getattr(self, "preview", None):
             self.preview.update()
+
+    def _on_ui_font_changed(self):
+        """界面字号滑杆拖动：实时重建界面 QSS（由主窗口注入回调）"""
+        if self.on_ui_font_changed:
+            self.on_ui_font_changed()
 
     # ---- 界面模式 ----
 

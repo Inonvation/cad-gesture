@@ -232,6 +232,12 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "ui_font_scale" not in settings:
         settings["ui_font_scale"] = 100
         migrated = True
+    # 旧版本 divisor 误用会把字号百分比写成小数（如 1.0=100%），归一为整数百分比
+    for _k in ("menu_font_scale", "ui_font_scale"):
+        _v = settings.get(_k)
+        if isinstance(_v, (int, float)) and 0 < _v <= 1.5:
+            settings[_k] = int(round(_v * 100))
+            migrated = True
     if "custom_text" not in settings:
         settings["custom_text"] = "#e9edf2"
         migrated = True

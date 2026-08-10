@@ -32,7 +32,8 @@ from src.config_manager import (load_config, save_config,
 from src.config_presets import get_preset_commands
 from src.i18n import T, add_listener, remove_listener
 from src.theme import (get_ui, set_ui_mode, build_app_qss,
-                       current_ui_mode, set_title_bar_theme, font_px)
+                       current_ui_mode, set_title_bar_theme, font_px,
+                       set_ui_font_scale)
 from src.qt_preview import (CommandTree, _PanelToggleButton, QRadialPreview,
                             _layer_key, _layer_name)
 from src.qt_sector_editor import SectorEditorPopup
@@ -142,6 +143,7 @@ class QConfigGUI(QMainWindow):
             page.on_restore = self._restore_full_config
             page.on_ui_mode_changed = self._on_ui_mode_changed
             page.on_language_changed = self._on_language_changed
+            page.on_ui_font_changed = self._refresh_font
             self._setting_pages[key] = page
             self._main_stack.addWidget(page)
         self._main_stack.setCurrentIndex(0)
@@ -725,6 +727,15 @@ class QConfigGUI(QMainWindow):
         """记录最近状态消息（语言切换后按需重译显示）"""
         self._last_status = msg
         self.statusBar().showMessage(msg)
+
+    def _refresh_font(self):
+        """界面字号滑杆拖动时实时重建 QSS（模块级字号缩放生效）"""
+        try:
+            set_ui_font_scale(self.config.get("settings", {}).get(
+                "ui_font_scale", 100) / 100.0)
+            self.setStyleSheet(build_app_qss(self._ui_mode))
+        except Exception:
+            pass
 
     def _open_config_dir(self):
         d = os.path.dirname(get_config_path())
