@@ -61,7 +61,7 @@ def test_center_texts_shows_command_and_key():
 
 
 def test_menu_scale_scales_radii():
-    """menu_scale ??????????????????????"""
+    """menu_scale 缩放时各圈半径同步缩放，窗口尺寸随扩展圈变大"""
     _app()
     from src.qt_radial_menu import QRadialMenu
     cfg = _cfg(185)
