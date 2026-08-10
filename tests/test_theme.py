@@ -85,9 +85,9 @@ def test_light_theme_quicker_style():
             for attr in ("normal", "empty", "highlight", "hover",
                          "outline", "outline_hl", "text", "text_dim"):
                 assert getattr(ring, attr), f"light {t.name}.{attr} 为空"
-            # 白字在主题色高亮扇面上可读
-            assert _contrast("#ffffff", ring.highlight) >= 3.0, \
-                f"light {t.name} 高亮白字对比不足: {_contrast('#ffffff', ring.highlight):.2f}"
+            # 深字在淡主题色高亮扇面上可读
+            assert _contrast(ring.text, ring.highlight) >= 3.0, \
+                f"light {t.name} 高亮深字对比不足: {_contrast(ring.text, ring.highlight):.2f}"
             # 深字在近白普通扇面上可读
             assert _contrast(ring.text, ring.normal) >= 6.0, \
                 f"light {t.name} 普通扇面深字对比不足"

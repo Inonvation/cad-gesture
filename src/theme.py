@@ -522,17 +522,18 @@ def _derive_ring_light(h: float, s_normal: float) -> RingColors:
     """从色相推导浅色扇区环配色（Quicker 风）。
 
     普通扇区 = 近白卡片底 + 深色文字；
-    高亮扇区 = 主题主色填充 + 白色粗体文字（对比反转，视觉明确）；
+    高亮扇区 = 淡主题色底 + 主题色描边 + 深色粗体文字（浅色界面下的
+    高亮应保持"浅"，不用深色填充，否则看起来像深色模式的高亮）；
     描边 = 浅灰，弱化分割（靠扇区间隙分隔）。
     """
     s_hl = max(0.55, min(0.75, s_normal + 0.38))
     return RingColors(
         normal=_hls(h, 0.975, 0.04),
         empty=_hls(h, 0.91, 0.05),
-        highlight=_hls(h, 0.36, s_hl),
+        highlight=_hls(h, 0.82, 0.38),   # 淡主题色底（浅色高亮）
         hover=_hls(h, 0.90, 0.07),
         outline=_hls(h, 0.80, 0.06),
-        outline_hl=_hls(h, 0.30, s_hl),
+        outline_hl=_hls(h, 0.48, s_hl),  # 主题色描边（高亮边界清晰）
         text="#1f2430",
         text_dim=_hls(h, 0.46, min(0.35, s_normal + 0.10)),
     )
@@ -561,7 +562,7 @@ def make_light_theme(t: MenuTheme) -> MenuTheme:
         dead_zone=_hls(h, 0.985, 0.03),
         dead_zone_outline=_hls(h, 0.80, 0.06),
         center_text="#20242c",
-        selected_border=_hls(h, 0.36, s_hl),
+        selected_border=_hls(h, 0.48, s_hl),
         border=_hls(h, 0.78, 0.05),
         accent_dim=_hls(h, 0.80, min(0.45, _hex_to_hls(t.inner.normal)[2] + 0.20)),
         light=True,

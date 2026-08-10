@@ -214,7 +214,7 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
     gap = 0.0
     # 浅色主题不用 gap 缝隙分割：缝隙是窗口透明区域，会透出 CAD 深色
     # 背景变成黑缝；统一用白色描边线条分割
-    glow_color = rc.highlight if light else "#ffffff"
+    glow_color = rc.outline_hl if light else "#ffffff"
     for i in range(n):
         cfg = sectors.get(str(i), {})
         label = cfg.get("label", "")
@@ -259,9 +259,9 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
                       hl_fade if is_hl else 1.0, glow_color)
         if label:
             if light:
-                # 高亮/选中：白字；其余：深字（无投影，浅底对比足够）
-                color = QColor("#ffffff") if (is_hl or is_sel) \
-                    else QColor(rc.text)
+                # 浅色主题：高亮扇区是淡主题色底，一律用深字（淡底深字对比高，
+                # 且高亮不"变深"——之前白字方案在绿色/紫色主题对比不足）
+                color = QColor(rc.text)
             else:
                 color = QColor(rc.text if (is_hl or is_sel or is_hov)
                                else rc.text_dim)
