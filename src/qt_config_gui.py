@@ -8,7 +8,6 @@
 """
 
 import copy
-import json
 import math
 import os
 
@@ -34,6 +33,10 @@ from src.theme import (get_ui, set_ui_mode, build_app_qss,
 from src.qt_preview import (CommandTree, _PanelToggleButton, QRadialPreview,
                             _layer_key, _layer_name)
 from src.qt_sector_editor import SectorEditorPopup
+from src.qt_popup import PopupController
+from src.qt_profile_ops import (add_profile, copy_profile, rename_profile,
+                                delete_profile, export_profile,
+                                load_profile_data, apply_profile_data)
 from src.qt_settings_panel import (AppearancePage, TriggerPage, SizePage,
                                    GeneralPage, MaintenancePage)
 
@@ -89,12 +92,15 @@ class QConfigGUI(QMainWindow):
 
         # 扇区编辑浮层（普通无边框窗 + 应用级事件过滤器管理外部点击关闭）
         self._popup = SectorEditorPopup(self)
-        self._popup.save_requested.connect(self._on_sector_saved)
-        self._popup.cleared.connect(self._on_popup_cleared)
-        self._popup.closed.connect(self._on_popup_closed)
-        self._popup.blank_clicked.connect(self._on_popup_blank_clicked)
-        self._popup.esc_requested.connect(self._on_popup_esc)
-        self._popup.reposition_requested.connect(self._place_popup)
+        self._popup_ctrl = PopupController(
+            self._popup,
+            on_save=self._on_sector_saved,
+            on_clear=self._on_popup_cleared,
+            on_closed=self._on_popup_closed,
+            on_blank_clicked=self._on_popup_blank_clicked,
+            on_esc=self._on_popup_esc,
+            on_reposition=self._place_popup,
+        )
         QApplication.instance().installEventFilter(self)
 
         # 快捷键
@@ -812,12 +818,11 @@ class QConfigGUI(QMainWindow):
         profile = self.config.get("profiles", {}).get(self.current_profile, {})
         cfg = profile.get(_layer_key(layer), {}).get(str(idx), {})
         n = self.config.get("settings", {}).get("sector_count", 8)
-        self._popup.show_sector(layer, idx, cfg, n)
+        self._popup_ctrl.fill(layer, idx, cfg, n)
         # 用户拖动过浮层则保持其位置，否则固定显示在圆盘下方
         if not self._popup.user_moved:
             self._place_popup()
-        self._popup.show()
-        self._popup.raise_()
+        self._popup_ctrl.show()
         self._set_status(
             T("编辑 {layer}扇区 {idx}：点击外部关闭")
             .format(layer=T(_layer_name(layer)), idx=idx))
@@ -889,23 +894,9 @@ class QConfigGUI(QMainWindow):
         切换到别的扇区（"点扇区 B 未生效"）。固定放在圆盘外侧、不随
         鼠标位置变化，彻底避开圆盘。
         """
-        self._popup.adjustSize()
-        geo = self.screen().availableGeometry()
-        w, h = self._popup.width(), self._popup.height()
-        cg = self.preview.mapToGlobal(self.preview.rect().center())
-        disc_r = self.preview.outermost_radius_px()
-        gap = 12
-
-        x = cg.x() - w // 2
-        y = cg.y() + disc_r + gap
-        if y + h > geo.bottom() - 8:
-            y = cg.y() - disc_r - gap - h  # 下方放不下，改放上方
-        x = max(geo.left() + 8, min(x, geo.right() - w - 8))
-        y = max(geo.top() + 8, min(y, geo.bottom() - h - 8))
-        self._popup.move(x, y)
-        # 上方也放不下时退化为覆盖 preview 底部（极矮屏幕兜底）
-        if y + h > geo.bottom() - 8:
-            self._popup.move(x, geo.bottom() - h - 8)
+        self._popup_ctrl.place(
+            self.preview.mapToGlobal(self.preview.rect().center()),
+            self.preview.outermost_radius_px())
 
     def _on_popup_blank_clicked(self, gx: float, gy: float):
         """点击浮层空白处：确认未保存修改后关闭浮层，把点击转发给预览圆盘，
@@ -1210,18 +1201,17 @@ class QConfigGUI(QMainWindow):
             return
         tgt = "autocad" if target == "AutoCAD" else "zwcad"
         self._push_undo()
-        n = self.config.get("settings", {}).get("sector_count", 8)
-        sectors = {str(i): {"label": "", "key": "", "description": ""} for i in range(n)}
-        self.config.setdefault("profiles", {})[name] = {
-            "name": name, "target": tgt, "sectors": sectors,
-            "outer_sectors": {}, "extension_sectors": {},
-        }
+        ok, err = add_profile(
+            self.config, name, tgt,
+            self.config.get("settings", {}).get("sector_count", 8), tr=T)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), err)
+            return
         self._refresh_profiles()
         self._load_profile(name)
         self._autosave_timer.start()
 
     def _copy_profile(self):
-        src = self.config.get("profiles", {}).get(self.current_profile, {})
         new_name, ok = QInputDialog.getText(self, T("复制配置方案"),
                                             T("请输入新方案名称:"),
                                             text=f"{self.current_profile}-副本")
@@ -1232,10 +1222,11 @@ class QConfigGUI(QMainWindow):
             QMessageBox.warning(self, T("错误"),
                                 T("方案「{name}」已存在").format(name=new_name))
             return
-        new = copy.deepcopy(src)
-        new["name"] = new_name
         self._push_undo()
-        self.config["profiles"][new_name] = new
+        ok, err = copy_profile(self.config, self.current_profile, new_name, tr=T)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), err)
+            return
         self._refresh_profiles()
         self._load_profile(new_name)
         self._autosave_timer.start()
@@ -1251,15 +1242,10 @@ class QConfigGUI(QMainWindow):
                                 T("方案「{name}」已存在").format(name=new_name))
             return
         self._push_undo()
-        profile = self.config["profiles"].pop(self.current_profile)
-        profile["name"] = new_name
-        self.config["profiles"][new_name] = profile
-        s = self.config.get("settings", {})
-        if s.get("active_profile") == self.current_profile:
-            s["active_profile"] = new_name
-        for key in ("autocad_profile", "zwcad_profile"):
-            if s.get(key) == self.current_profile:
-                s[key] = new_name
+        ok, err = rename_profile(self.config, self.current_profile, new_name, tr=T)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), err)
+            return
         self.current_profile = new_name
         self._refresh_profiles()
         self._autosave_timer.start()
@@ -1273,46 +1259,24 @@ class QConfigGUI(QMainWindow):
             self, T("导出方案"), f"{self.current_profile}.json", "JSON 文件 (*.json)")
         if not path:
             return
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(profile, f, ensure_ascii=False, indent=2)
-            self._set_status(f"{T('已从')} {path} {T('导出')}")
-        except Exception as e:
-            QMessageBox.warning(self, T("错误"), f"{T('导出失败')}: {e}")
+        ok, err = export_profile(profile, path, tr=T)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), err)
+            return
+        self._set_status(f"{T('已从')} {path} {T('导出')}")
 
     def _import_profile(self):
         path, _ = QFileDialog.getOpenFileName(
             self, T("导入方案"), "", "JSON 文件 (*.json)")
         if not path:
             return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as e:
-            QMessageBox.warning(self, T("错误"),
-                                T("导入失败（无法读取文件）: {e}").format(e=e))
+        ok, data = load_profile_data(path, tr=T)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), data)
             return
-        if not isinstance(data, dict):
-            QMessageBox.warning(self, T("错误"),
-                                T("导入失败：文件格式无效（应为对象）"))
-            return
-        for key in ("sectors", "outer_sectors", "extension_sectors"):
-            if key in data:
-                if not isinstance(data[key], dict):
-                    QMessageBox.warning(self, T("错误"),
-                                        T("导入失败：{key} 格式无效").format(key=key))
-                    return
-                for v in data[key].values():
-                    if not isinstance(v, dict):
-                        QMessageBox.warning(self, T("错误"),
-                                            T("导入失败：{key} 中存在无效数据")
-                                            .format(key=key))
-                        return
         self._push_undo()
         profile = self.config.get("profiles", {}).get(self.current_profile, {})
-        for key in ("sectors", "outer_sectors", "extension_sectors"):
-            if key in data:
-                profile[key] = data[key]
+        apply_profile_data(profile, data)
         self.preview.update()
         self._set_status(T("已从 {path} 导入配置").format(path=path))
         self._autosave_timer.start()
@@ -1326,17 +1290,11 @@ class QConfigGUI(QMainWindow):
                                     name=self.current_profile)) != QMessageBox.Yes:
             return
         self._push_undo()
-        del self.config["profiles"][self.current_profile]
+        ok, err = delete_profile(self.config, self.current_profile, tr=T)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), err)
+            return
         remaining = list(self.config.get("profiles", {}).keys())
-        # 绑定字段引用了被删方案时，重置为该 target 下的第一个剩余方案
-        s = self.config.get("settings", {})
-        for key, tgt in (("autocad_profile", "autocad"),
-                         ("zwcad_profile", "zwcad")):
-            if s.get(key) == self.current_profile:
-                s[key] = next(
-                    (n for n in remaining
-                     if self.config["profiles"][n].get("target") == tgt), "")
-        s["active_profile"] = remaining[0]
         self._refresh_profiles()
         self._load_profile(remaining[0])
         self._autosave_timer.start()
