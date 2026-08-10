@@ -177,6 +177,8 @@ class _BasePage(QWidget):
         self.on_import = None
         self.on_export = None
         self.on_open_dir = None
+        self.on_backup = None
+        self.on_restore = None
         self.on_ui_mode_changed = None
         self.on_language_changed = None
         self._slider_labels = {}       # key -> (name_lb, unit, val_lb, divisor, slider)
@@ -373,6 +375,15 @@ class AppearancePage(_BasePage):
         self._opacity_slider, self._opacity_label = self._slider_row(
             "不透明度", "menu_opacity", 30, 100, "%",
             on_change=self._update_preview, divisor=100.0, container=lv)
+
+        # 手势轨迹线（从中心引出跟随光标）
+        self.chk_trail = QCheckBox(T("手势轨迹线"))
+        self.chk_trail.setToolTip(T("滑动时显示从中心引出的轨迹线"))
+        self.chk_trail.setChecked(
+            config.get("settings", {}).get("gesture_trail", True))
+        self.chk_trail.toggled.connect(lambda b: self._set("gesture_trail", b))
+        self.register_text(self.chk_trail, "手势轨迹线")
+        lv.addWidget(self.chk_trail)
         lv.addStretch(1)
 
         hbox.addWidget(left, 1)
@@ -482,21 +493,56 @@ class AppearancePage(_BasePage):
         self._sync_color_buttons(s.get("custom_accent", _CUSTOM_ACCENT))
         self._refresh_theme_thumbnails()
         self._refresh_sliders()
+        self.chk_trail.blockSignals(True)
+        self.chk_trail.setChecked(s.get("gesture_trail", True))
+        self.chk_trail.blockSignals(False)
         self.preview.set_data(config, profile)
 
 
 class TriggerPage(_BasePage):
-    """触发手感：长按延迟、触发距离"""
+    """触发手感：触发按键、长按延迟、触发距离"""
 
     def __init__(self, config, parent=None):
         self.title_zh = "触发手感"
         super().__init__(config, parent)
         self.title.setText(T(self.title_zh))
+
+        # 触发按键（右键 / 中键 / 侧键）
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        self._lb_btn = QLabel(T("触发按键"))
+        self.register_text(self._lb_btn, "触发按键")
+        btn_row.addWidget(self._lb_btn)
+        self.btn_combo = QComboBox()
+        self.btn_combo.addItem(T("右键"), "right")
+        self.btn_combo.addItem(T("中键"), "middle")
+        self.btn_combo.addItem(T("侧键 1（后退）"), "x1")
+        self.btn_combo.addItem(T("侧键 2（前进）"), "x2")
+        cur = config.get("settings", {}).get("trigger_button", "right")
+        idx = self.btn_combo.findData(cur)
+        self.btn_combo.setCurrentIndex(max(0, idx))
+        self.btn_combo.currentIndexChanged.connect(self._on_btn_changed)
+        btn_row.addWidget(self.btn_combo)
+        btn_row.addStretch(1)
+        self.body.addLayout(btn_row)
+
         self._hold_slider, self._hold_label = self._slider_row(
             "长按延迟", "hold_threshold_ms", 0, 200, "ms")
         self._trig_slider, self._trig_label = self._slider_row(
             "触发距离", "trigger_distance", 5, 40, "px")
         self.body.addStretch(1)
+
+    def _on_btn_changed(self, idx):
+        self._set("trigger_button", self.btn_combo.itemData(idx))
+
+    def refresh(self, config, profile=None):
+        self.config = config
+        self._refresh_sliders()
+        idx = self.btn_combo.findData(
+            config.get("settings", {}).get("trigger_button", "right"))
+        self.btn_combo.blockSignals(True)
+        self.btn_combo.setCurrentIndex(max(0, idx))
+        self.btn_combo.blockSignals(False)
 
 
 class SizePage(_BasePage):
@@ -717,6 +763,24 @@ class MaintenancePage(_BasePage):
         row.addStretch(1)
         row.addWidget(btn_reset)
         self.body.addLayout(row)
+
+        # 整包配置备份 / 恢复
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        btn_backup = QPushButton(T("备份配置"))
+        btn_backup.setToolTip(T("把全部配置（设置 + 方案）备份到文件"))
+        btn_backup.clicked.connect(
+            lambda: self.on_backup() if self.on_backup else None)
+        self.register_text(btn_backup, "备份配置")
+        btn_restore = QPushButton(T("恢复配置"))
+        btn_restore.setToolTip(T("从备份文件恢复全部配置"))
+        btn_restore.clicked.connect(
+            lambda: self.on_restore() if self.on_restore else None)
+        self.register_text(btn_restore, "恢复配置")
+        row2.addWidget(btn_backup)
+        row2.addWidget(btn_restore)
+        row2.addStretch(1)
+        self.body.addLayout(row2)
         self.body.addStretch(1)
 
     def _change_config_dir(self):
@@ -759,3 +823,154 @@ class MaintenancePage(_BasePage):
     def refresh(self, config, profile=None):
         self.config = config
         self._config_dir_label.setText(get_config_path())
+
+
+class FeedbackPage(_BasePage):
+    """命令反馈：执行命令后屏幕提示的位置 / 内容 / 时长"""
+
+    def __init__(self, config, parent=None):
+        self.title_zh = "命令反馈"
+        super().__init__(config, parent)
+        self.title.setText(T(self.title_zh))
+
+        self.chk_feedback = QCheckBox(T("显示命令反馈"))
+        self.chk_feedback.setToolTip(T("执行命令后在屏幕上短暂提示"))
+        self.chk_feedback.setChecked(
+            config.get("settings", {}).get("command_feedback", True))
+        self.chk_feedback.toggled.connect(
+            lambda b: self._set("command_feedback", b))
+        self.body.addWidget(self.chk_feedback)
+        self.register_text(self.chk_feedback, "显示命令反馈")
+
+        # 提示位置
+        pos_row = QHBoxLayout()
+        pos_row.setSpacing(10)
+        self._lb_pos = QLabel(T("提示位置"))
+        self.register_text(self._lb_pos, "提示位置")
+        pos_row.addWidget(self._lb_pos)
+        self.pos_combo = QComboBox()
+        self.pos_combo.addItem(T("中间偏下"), "bottom_center")
+        self.pos_combo.addItem(T("屏幕中心"), "center")
+        self.pos_combo.addItem(T("顶部居中"), "top_center")
+        self.pos_combo.addItem(T("右下角"), "bottom_right")
+        cur = config.get("settings", {}).get("feedback_position", "bottom_center")
+        idx = self.pos_combo.findData(cur)
+        self.pos_combo.setCurrentIndex(max(0, idx))
+        self.pos_combo.currentIndexChanged.connect(self._on_pos_changed)
+        pos_row.addWidget(self.pos_combo)
+        pos_row.addStretch(1)
+        self.body.addLayout(pos_row)
+
+        # 显示内容：命令名称 / 快捷键
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+        self.chk_name = QCheckBox(T("显示命令名称"))
+        self.chk_name.setChecked(
+            config.get("settings", {}).get("feedback_show_name", True))
+        self.chk_name.toggled.connect(
+            lambda b: self._set("feedback_show_name", b))
+        content_row.addWidget(self.chk_name)
+        self.chk_key = QCheckBox(T("显示快捷键"))
+        self.chk_key.setChecked(
+            config.get("settings", {}).get("feedback_show_key", True))
+        self.chk_key.toggled.connect(
+            lambda b: self._set("feedback_show_key", b))
+        content_row.addWidget(self.chk_key)
+        content_row.addStretch(1)
+        self.body.addLayout(content_row)
+        self.register_text(self.chk_name, "显示命令名称")
+        self.register_text(self.chk_key, "显示快捷键")
+
+        # 停留时长
+        self._dur_slider, self._dur_label = self._slider_row(
+            "提示时长", "feedback_duration_ms", 500, 3000, "ms")
+        self.body.addStretch(1)
+
+    def _on_pos_changed(self, idx):
+        self._set("feedback_position", self.pos_combo.itemData(idx))
+
+    def refresh(self, config, profile=None):
+        self.config = config
+        self._refresh_sliders()
+        s = config.get("settings", {})
+        self.chk_feedback.blockSignals(True)
+        self.chk_feedback.setChecked(s.get("command_feedback", True))
+        self.chk_feedback.blockSignals(False)
+        self.chk_name.blockSignals(True)
+        self.chk_name.setChecked(s.get("feedback_show_name", True))
+        self.chk_name.blockSignals(False)
+        self.chk_key.blockSignals(True)
+        self.chk_key.setChecked(s.get("feedback_show_key", True))
+        self.chk_key.blockSignals(False)
+        idx = self.pos_combo.findData(
+            s.get("feedback_position", "bottom_center"))
+        self.pos_combo.blockSignals(True)
+        self.pos_combo.setCurrentIndex(max(0, idx))
+        self.pos_combo.blockSignals(False)
+
+
+class TestPage(_BasePage):
+    """手势测试：真实配置圆盘预览，移动鼠标查看扇区命令"""
+
+    _LAYER_KEY = {"inner": "sectors", "outer": "outer_sectors",
+                  "extension": "extension_sectors"}
+
+    def __init__(self, config, parent=None):
+        self.title_zh = "测试"
+        super().__init__(config, parent)
+        self.title.setText(T(self.title_zh))
+
+        tip = QLabel(T("在圆盘上移动鼠标查看各扇区命令；悬停处会显示将触发的命令。"))
+        tip.setWordWrap(True)
+        tip.setObjectName("pageSub")
+        self.body.addWidget(tip)
+
+        from src.qt_preview import QRadialPreview
+        self.preview = QRadialPreview()
+        self.preview.setMinimumSize(420, 420)
+        self.body.addWidget(self.preview, 0, Qt.AlignHCenter)
+
+        self.info = QLabel("")
+        self.info.setAlignment(Qt.AlignCenter)
+        self.info.setMinimumHeight(28)
+        self.body.addWidget(self.info)
+
+        # 低频轮询 hover 状态，实时显示将触发命令
+        self._timer = QTimer(self)
+        self._timer.setInterval(100)
+        self._timer.timeout.connect(self._update_info)
+        self._timer.start()
+
+        self.body.addStretch(1)
+
+    def refresh(self, config, profile=None):
+        self.config = config
+        self.preview.update_config(config)
+        if profile is None:
+            profile = config.get("profiles", {}).get(
+                config.get("settings", {}).get(
+                    "active_profile", "AutoCAD-常用"))
+        self.preview.set_data(config, profile)
+        self._update_info()
+
+    def _update_info(self):
+        try:
+            if not self.preview.hovered:
+                if self.info.text():
+                    self.info.setText("")
+                return
+            layer, idx = self.preview.hovered
+            key = self._LAYER_KEY.get(layer, "sectors")
+            cfg = (self.preview.profile or {}).get(key, {}).get(str(idx), {})
+            if cfg.get("label") or cfg.get("key"):
+                name = cfg.get("label", "") or cfg.get("description", "")
+                key_text = cfg.get("key", "")
+                text = T("将触发：{name}    快捷键 {key}").format(
+                    name=name,
+                    key=key_text.upper() if key_text else "—")
+            else:
+                text = T("空扇区（未设置命令）")
+            if text != self.info.text():
+                self.info.setText(text)
+        except Exception:
+            pass

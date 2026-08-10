@@ -10,6 +10,7 @@
 import copy
 import math
 import os
+from datetime import datetime
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
                             QPoint, QPointF, QSettings, QSize, Qt, QTimer,
@@ -26,7 +27,8 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame,
 
 from src.config_manager import (load_config, save_config,
                                 get_config_path, get_profile_for_window,
-                                set_profile_for_target, _default_config)
+                                set_profile_for_target, _default_config,
+                                export_full_config, import_full_config)
 from src.config_presets import get_preset_commands
 from src.i18n import T, add_listener, remove_listener
 from src.theme import (get_ui, set_ui_mode, build_app_qss,
@@ -39,12 +41,14 @@ from src.qt_profile_ops import (add_profile, copy_profile, rename_profile,
                                 delete_profile, export_profile,
                                 load_profile_data, apply_profile_data)
 from src.qt_settings_panel import (AppearancePage, TriggerPage, SizePage,
-                                   GeneralPage, MaintenancePage)
+                                   GeneralPage, MaintenancePage,
+                                   FeedbackPage, TestPage)
 
 # 侧边栏分类页元数据：(分类 key, 中文标题)
 _SETTINGS_PAGES = (("appearance", "外观"), ("trigger", "触发手感"),
-                   ("size", "圆盘尺寸"), ("general", "常规"),
-                   ("maintenance", "维护"))
+                   ("size", "圆盘尺寸"), ("feedback", "命令反馈"),
+                   ("general", "常规"), ("maintenance", "维护"),
+                   ("test", "测试"))
 
 
 class QConfigGUI(QMainWindow):
@@ -124,8 +128,9 @@ class QConfigGUI(QMainWindow):
         # 设置分类页（外观 / 触发手感 / 圆盘尺寸 / 常规 / 维护）
         self._setting_pages = {}
         page_cls = {"appearance": AppearancePage, "trigger": TriggerPage,
-                    "size": SizePage, "general": GeneralPage,
-                    "maintenance": MaintenancePage}
+                    "size": SizePage, "feedback": FeedbackPage,
+                    "general": GeneralPage, "maintenance": MaintenancePage,
+                    "test": TestPage}
         for key, _zh in _SETTINGS_PAGES:
             page = page_cls[key](self.config)
             page.on_saved = self._on_settings_saved
@@ -133,6 +138,8 @@ class QConfigGUI(QMainWindow):
             page.on_import = self._import_profile
             page.on_export = self._export_profile
             page.on_open_dir = self._open_config_dir
+            page.on_backup = self._backup_full_config
+            page.on_restore = self._restore_full_config
             page.on_ui_mode_changed = self._on_ui_mode_changed
             page.on_language_changed = self._on_language_changed
             self._setting_pages[key] = page
@@ -723,6 +730,52 @@ class QConfigGUI(QMainWindow):
         d = os.path.dirname(get_config_path())
         os.makedirs(d, exist_ok=True)
         os.startfile(d)
+
+    def _backup_full_config(self):
+        """整包配置备份：settings + profiles 导出为 JSON"""
+        path, _ = QFileDialog.getSaveFileName(
+            self, T("备份配置"),
+            f"CADGesture-config-{datetime.now().strftime('%Y%m%d')}.json",
+            T("JSON 文件 (*.json)"))
+        if not path:
+            return
+        ok, err = export_full_config(path)
+        if ok:
+            QMessageBox.information(
+                self, T("备份完成"),
+                T("配置已备份到：\n{path}").format(path=path))
+        else:
+            QMessageBox.warning(
+                self, T("错误"), T("备份失败：{e}").format(e=err))
+
+    def _restore_full_config(self):
+        """整包配置恢复：校验备份文件后覆盖当前配置并立即生效"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, T("恢复配置"), "", T("JSON 文件 (*.json)"))
+        if not path:
+            return
+        ok, data = import_full_config(path)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), data)
+            return
+        if QMessageBox.question(
+                self, T("确认"),
+                T("确定用备份文件覆盖当前全部配置吗？")) != QMessageBox.Yes:
+            return
+        save_config(data)
+        self.config = data
+        self.current_profile = data.get("settings", {}).get(
+            "active_profile", "AutoCAD-常用")
+        self._refresh_profiles()
+        self._load_profile(self.current_profile)
+        self._populate_presets(self.search_entry.text())
+        profile = data.get("profiles", {}).get(self.current_profile)
+        for page in self._setting_pages.values():
+            page.refresh(data, profile)
+        if self.on_save:
+            self.on_save()
+        QMessageBox.information(
+            self, T("已恢复"), T("配置已恢复，立即生效。"))
 
     # ========== 方案列表 ==========
 
