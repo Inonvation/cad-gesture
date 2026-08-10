@@ -102,6 +102,20 @@ class GestureEngine:
             wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
         ]
         user32.CallNextHookEx.restype = ctypes.c_ssize_t
+        # 进程名查询 API（_detect_cad_window 用）：必须显式声明 64 位句柄类型
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD)]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
 
     @property
     def menu_scale(self) -> float:
@@ -183,6 +197,17 @@ class GestureEngine:
             if "autocad" in ts:
                 self._window_cache = ("autocad", now)
                 return "autocad"
+
+            # 标题/类名未命中时按进程名判断（AutoCAD=acad.exe，中望=zwcad.exe），
+            # 避免中望CAD 标题不含"zwcad/中望"时被 afx 类名兜底误判成 AutoCAD
+            exe = self._foreground_exe(hwnd)
+            if exe:
+                if "zwcad" in exe:
+                    self._window_cache = ("zwcad", now)
+                    return "zwcad"
+                if "acad" in exe:
+                    self._window_cache = ("autocad", now)
+                    return "autocad"
             
             if "afx" in cs and "zwcad" not in cs:
                 self._window_cache = ("autocad", now)
@@ -192,6 +217,30 @@ class GestureEngine:
                 self._log(f"窗口检测异常: {e}")
         self._window_cache = ("", now)
         return ""
+
+    def _foreground_exe(self, hwnd) -> str:
+        """前台窗口所属进程的可执行文件名（小写）；失败返回空串。"""
+        try:
+            pid = wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(
+                hwnd, ctypes.byref(pid))
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            kernel32 = ctypes.windll.kernel32
+            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                     False, pid.value)
+            if not h:
+                return ""
+            try:
+                buf = ctypes.create_unicode_buffer(1024)
+                size = wintypes.DWORD(1024)
+                if kernel32.QueryFullProcessImageNameW(
+                        h, 0, buf, ctypes.byref(size)):
+                    return buf.value.lower()
+                return ""
+            finally:
+                kernel32.CloseHandle(h)
+        except Exception:
+            return ""
 
     def _hook_proc(self, nCode: int, wParam: wintypes.WPARAM,
                    lParam: wintypes.LPARAM) -> ctypes.c_ssize_t:

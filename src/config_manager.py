@@ -283,9 +283,10 @@ def get_profile_for_window(config: Dict[str, Any], window_type: str) -> Optional
     # 2. 该 target 下第一个方案（向后兼容旧行为）
     for name, profile in config.get("profiles", {}).items():
         if profile.get("target", "") == window_type:
-            # 绑定字段为空时自动补全，让界面显示一致
+            # 绑定字段为空时自动补全并落盘，避免内存态与磁盘态不一致
             if not settings.get(f"{window_type}_profile"):
                 settings[f"{window_type}_profile"] = name
+                save_config(config)
             return profile
 
     # 3. 无匹配，返回当前 active

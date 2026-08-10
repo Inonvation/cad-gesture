@@ -17,7 +17,7 @@ import math
 from PySide6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation, QRectF,
                             Qt, QTimer)
 from PySide6.QtGui import (QColor, QFont, QFontMetrics, QGuiApplication,
-                           QPainter, QPen, QRadialGradient, QCursor)
+                           QPainter, QPen, QPixmap, QRadialGradient, QCursor)
 from PySide6.QtWidgets import QWidget
 
 from src.gesture_engine import calc_sector
@@ -51,6 +51,7 @@ class QRadialMenu(QWidget):
         self._in_extension_zone = False
         self._theme = theme_from_settings(
             config.get("settings", {}))
+        self._shadow_pm = None  # 投影层缓存（重绘开销最大，缓存在 QPixmap）
 
         # 窗口尺寸覆盖到扩展圈判定范围（第三圈区域透明）
         self._apply_size()
@@ -75,6 +76,7 @@ class QRadialMenu(QWidget):
         """
         self._size = self.ext_ring_radius * 2 + 120
         self.setFixedSize(self._size, self._size)
+        self._shadow_pm = None  # 尺寸变化后投影缓存失效
 
     @property
     def menu_scale(self) -> float:
@@ -166,6 +168,7 @@ class QRadialMenu(QWidget):
     def update_config(self, config: dict):
         self.config = config
         self._theme = theme_from_settings(config.get("settings", {}))
+        self._shadow_pm = None   # 主题变化后投影缓存失效
         self._apply_size()   # 圆盘尺寸设置改变时同步窗口大小，防止裁切
 
     def update_highlight(self, mouse_x: int, mouse_y: int):
@@ -237,6 +240,20 @@ class QRadialMenu(QWidget):
 
     # ========== 绘制 ==========
 
+    def _shadow_pixmap(self) -> QPixmap:
+        """投影层缓存：投影每帧重画 10 层环形路径开销最大，缓存到 QPixmap"""
+        if self._shadow_pm is None:
+            size = self._size
+            pm = QPixmap(size, size)
+            pm.fill(Qt.transparent)
+            p = QPainter(pm)
+            p.setRenderHint(QPainter.Antialiasing)
+            draw_shadow(p, size / 2, size / 2, self.ext_ring_radius,
+                        light=self._theme.light)
+            p.end()
+            self._shadow_pm = pm
+        return self._shadow_pm
+
     def paintEvent(self, event):
         if self._profile is None:
             return
@@ -254,7 +271,7 @@ class QRadialMenu(QWidget):
         else:
             hl_layer = INNER
 
-        draw_shadow(p, cx, cy, self.ext_ring_radius, light=t.light)
+        p.drawPixmap(0, 0, self._shadow_pixmap())
 
         draw_ring(p, cx, cy, self.outer_ring_radius, self.ext_ring_radius,
                   n, self._profile.get("extension_sectors", {}), t.extension,

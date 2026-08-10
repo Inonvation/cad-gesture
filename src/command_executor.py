@@ -188,11 +188,20 @@ def _send_via_com(key: str, cmd_name: str = "", target: str = "autocad") -> bool
     return _send_com_command(f"{key}\n", target)
 
 
-def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -> str:
-    """执行 CAD 命令 — 优先 COM，失败回退 pyautogui
+def _cancel_context_menu():
+    """连发两次 ESC 取消 CAD 的右键上下文菜单。
 
-    回退路径先发两次 ESC 取消 CAD 可能弹出的右键菜单（快速甩动未显示
-    圆盘时同样需要取消），再模拟按键。
+    钩子不拦截右键，CAD 收到释放会弹菜单；必须在 COM 命令之前发，
+    否则命令进入命令行后 ESC 会把它取消。
+    """
+    pyautogui.press('esc', _pause=False)
+    time.sleep(0.02)
+    pyautogui.press('esc', _pause=False)
+    time.sleep(0.02)
+
+
+def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -> str:
+    """执行 CAD 命令 — 先 ESC 取消右键菜单，再优先 COM，失败回退 pyautogui
 
     Returns:
         "ok": 通过 COM 成功发送
@@ -202,6 +211,10 @@ def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -
     if not key:
         return "failed"
 
+    # 先取消 CAD 可能弹出的右键菜单（快速甩动未显示圆盘时同样需要取消）。
+    # 顺序必须在 COM 之前：COM 命令进入命令行后，ESC 会取消该命令。
+    _cancel_context_menu()
+
     # COM 路径（最快，不干扰鼠标）
     if _send_via_com(key, cmd_name, target):
         return "ok"
@@ -210,13 +223,6 @@ def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -
     try:
         # 输入法切英文，否则按键会被 IME 吞成中文
         _switch_to_english_ime()
-
-        # 先 ESC 取消 CAD 可能弹出的右键菜单（钩子不拦截，CAD 收到右键释放
-        # 会弹上下文菜单；快速甩动路径同样需要取消）
-        pyautogui.press('esc', _pause=False)
-        time.sleep(0.02)
-        pyautogui.press('esc', _pause=False)
-        time.sleep(0.02)
 
         parts = [k.strip().lower() for k in key.split("+")]
         if len(parts) == 1:
