@@ -39,3 +39,13 @@ def test_poll_noop_when_system_theme_unchanged(monkeypatch):
     monkeypatch.setattr(app_mod, "system_ui_mode", lambda: "light")
     app_mod.CADGestureApp._poll_system_theme(fa)
     assert fa.calls == []
+
+
+def test_wake_queue_wakes_on_put():
+    """事件入队立即唤醒主线程（呼出菜单低延迟的关键）"""
+    calls = []
+    q = app_mod._WakeQueue(lambda: calls.append(1))
+    q.put(("show", (1, 2, "autocad")))
+    assert calls == [1]
+    q.put(("hide", None))
+    assert calls == [1, 1]

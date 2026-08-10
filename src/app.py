@@ -8,7 +8,8 @@ import threading
 import tempfile
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QPointF, QTimer, QEvent, QObject
+from PySide6.QtCore import (Qt, QPointF, QTimer, QEvent, QObject,
+                           QCoreApplication)
 from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QMenu, QMessageBox, QWidget,
                                QProgressDialog, QSystemTrayIcon)
@@ -33,6 +34,39 @@ from src.version import __version__
 
 _CHECK_INTERVAL_SEC = 24 * 3600  # 启动自动检查的最小间隔
 _UPDATE_NOTES_MAX = 800
+
+# 跨线程唤醒事件类型：钩子线程入队后 postEvent 到主线程，立即处理
+_WAKE_EVENT_TYPE = QEvent.registerEventType()
+
+
+class _WakeQueue(queue.Queue):
+    """事件队列：put 后立即调用 wake_cb 唤醒主线程，
+    菜单呼出/命令执行不再受定时器轮询间隔限制"""
+
+    def __init__(self, wake_cb):
+        super().__init__()
+        self._wake = wake_cb
+
+    def put(self, item, *args, **kwargs):
+        super().put(item, *args, **kwargs)
+        try:
+            self._wake()
+        except Exception:
+            pass
+
+
+class _WakeReceiver(QObject):
+    """接收跨线程唤醒事件，回调主线程处理事件队列"""
+
+    def __init__(self, cb):
+        super().__init__()
+        self._cb = cb
+
+    def event(self, e):
+        if e.type() == _WAKE_EVENT_TYPE:
+            self._cb()
+            return True
+        return super().event(e)
 
 
 class _TitleBarFilter(QObject):
@@ -83,7 +117,10 @@ class CADGestureApp:
         self.menu = QRadialMenu(self.config)
         self.profile = get_active_profile(self.config)
 
-        self.event_queue = queue.Queue()
+        # 事件队列：put 后立即唤醒主线程（postEvent 线程安全），
+        # 菜单呼出不再受定时器轮询间隔限制
+        self._wake_receiver = _WakeReceiver(self._process_queue)
+        self.event_queue = _WakeQueue(self._wake)
         self.gesture_engine = GestureEngine(
             config=self.config,
             on_gesture=self._queue_gesture,
@@ -104,7 +141,8 @@ class CADGestureApp:
 
         self._setup_tray()
 
-        # 主循环定时器（菜单可见时 16ms 高频跟踪，不可见时 200ms 低频空转）
+        # 主循环定时器：菜单可见时 16ms 高频跟踪光标；隐藏时 500ms 低频空转
+        # （事件入队由 _wake 即时唤醒，空转只做日志落盘与退出轮询）
         self._timer = QTimer()
         self._timer.timeout.connect(self._process_queue)
         self._timer.start(16)
@@ -130,6 +168,14 @@ class CADGestureApp:
 
     def _queue_extension_hint(self, is_in_zone: bool):
         self.event_queue.put(("extension_hint", is_in_zone))
+
+    def _wake(self):
+        """跨线程唤醒主线程立即处理事件队列（postEvent 线程安全）"""
+        try:
+            QCoreApplication.postEvent(
+                self._wake_receiver, QEvent(_WAKE_EVENT_TYPE))
+        except Exception:
+            pass
 
     # ========== 主循环 ==========
 
@@ -201,7 +247,7 @@ class CADGestureApp:
 
             # 低频检查：被新实例请求覆盖退出时优雅退出
             self._exit_poll_count += 1
-            if self._exit_poll_count % 32 == 0:
+            if self._exit_poll_count % 8 == 0:
                 try:
                     if is_exit_requested():
                         self.log.info("收到新实例覆盖请求，正在退出当前实例")
@@ -213,7 +259,7 @@ class CADGestureApp:
             self.log.error("主循环异常: %s", e, exc_info=True)
         finally:
             if not self._quitting:
-                delay = 16 if self.menu.is_visible() else 200
+                delay = 16 if self.menu.is_visible() else 500
                 self._timer.setInterval(delay)
 
     # ========== 界面模式 ==========
