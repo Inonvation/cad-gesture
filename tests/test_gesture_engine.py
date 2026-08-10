@@ -71,3 +71,36 @@ def test_should_trigger_now_long_press():
 def test_should_trigger_now_hold_without_move():
     """按住不动（位移 0）不触发"""
     assert not should_trigger_now(0.0, 500.0, 10.0, 80.0)
+
+
+def test_trigger_button_mapping():
+    """触发键映射：右键 / 中键 / 侧键 1 / 侧键 2"""
+    import src.gesture_engine as ge
+    from src.gesture_engine import GestureEngine
+
+    def make(btn):
+        eng = GestureEngine(config={"settings": {"trigger_button": btn}},
+                            on_gesture=lambda *a: None,
+                            on_menu_show=lambda *a: None,
+                            on_menu_hide=lambda: None,
+                            on_extension_hint=lambda *a: None)
+        return eng
+
+    eng = make("right")
+    assert eng._trigger_down(ge.WM_RBUTTONDOWN, 0)
+    assert eng._trigger_up(ge.WM_RBUTTONUP, 0)
+    assert not eng._trigger_down(ge.WM_MBUTTONDOWN, 0)
+
+    eng = make("middle")
+    assert eng._trigger_down(ge.WM_MBUTTONDOWN, 0)
+    assert eng._trigger_up(ge.WM_MBUTTONUP, 0)
+    assert not eng._trigger_down(ge.WM_RBUTTONDOWN, 0)
+
+    eng = make("x1")
+    assert eng._trigger_down(ge.WM_XBUTTONDOWN, ge.XBUTTON1 << 16)
+    assert not eng._trigger_down(ge.WM_XBUTTONDOWN, ge.XBUTTON2 << 16)
+    assert eng._trigger_up(ge.WM_XBUTTONUP, ge.XBUTTON1 << 16)
+
+    eng = make("x2")
+    assert eng._trigger_down(ge.WM_XBUTTONDOWN, ge.XBUTTON2 << 16)
+    assert not eng._trigger_down(ge.WM_XBUTTONDOWN, ge.XBUTTON1 << 16)

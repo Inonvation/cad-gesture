@@ -236,3 +236,43 @@ def test_get_sector_command_no_inner_fallback():
     assert get_sector_command(profile, "outer", 0) == {}      # 外层空 -> 不触发
     assert get_sector_command(profile, "extension", 0)["key"] == "xl"
     assert get_sector_command(profile, "extension", 1) == {}  # 扩展圈空 -> 不触发
+
+
+def test_full_config_backup_restore(tmp_path):
+    """整包配置备份/恢复往返"""
+    from src.config_manager import (load_config, save_config,
+                                    export_full_config, import_full_config)
+    cfg = load_config()
+    cfg["settings"]["trigger_button"] = "middle"
+    save_config(cfg)
+    path = str(tmp_path / "backup.json")
+    ok, err = export_full_config(path)
+    assert ok and err is None
+    ok, data = import_full_config(path)
+    assert ok
+    assert data["settings"]["trigger_button"] == "middle"
+    assert "profiles" in data
+
+
+def test_full_config_rejects_invalid(tmp_path):
+    """备份文件结构无效时拒绝恢复"""
+    from src.config_manager import import_full_config
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"foo": 1}', encoding="utf-8")
+    ok, msg = import_full_config(str(bad))
+    assert not ok and msg
+
+
+def test_migrate_adds_new_settings():
+    """新设置项（触发键/轨迹线/反馈）迁移补全"""
+    from src.config_manager import _migrate_config
+    cfg = {"settings": {}, "profiles": {}}
+    assert _migrate_config(cfg)
+    s = cfg["settings"]
+    assert s["trigger_button"] == "right"
+    assert s["gesture_trail"] is True
+    assert s["command_feedback"] is True
+    assert s["feedback_position"] == "bottom_center"
+    assert s["feedback_show_name"] is True
+    assert s["feedback_show_key"] is True
+    assert s["feedback_duration_ms"] == 1500
