@@ -59,6 +59,21 @@ def test_center_texts_shows_command_and_key():
     assert sub == "L"
 
 
+
+def test_menu_scale_scales_radii():
+    """menu_scale ??????????????????????"""
+    _app()
+    from src.qt_radial_menu import QRadialMenu
+    cfg = _cfg(185)
+    cfg["settings"]["menu_scale"] = 150
+    menu = QRadialMenu(cfg)
+    assert menu.ext_ring_radius == int(185 * 1.5)
+    assert menu.ring_radius == int(100 * 1.5)
+    assert menu.outer_ring_radius == int(135 * 1.5)
+    assert menu.dead_zone == int(24 * 1.5)
+    assert menu.width() >= int(185 * 1.5) * 2
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

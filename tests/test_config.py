@@ -73,6 +73,7 @@ def test_migrate_config():
     assert old["settings"]["version"] == 1
     assert old["settings"]["outer_ring_radius"] == 135
     assert old["settings"]["ext_ring_radius"] == 185
+    assert old["settings"]["menu_scale"] == 100
     assert old["settings"]["auto_switch_profile"] == True
     assert old["profiles"]["AutoCAD-常用"]["target"] == "autocad"
     assert "outer_sectors" in old["profiles"]["AutoCAD-常用"]

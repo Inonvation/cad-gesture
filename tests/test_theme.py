@@ -1,11 +1,15 @@
-"""主题系统测试：生成器 / 自定义主题 / 对比度 / QSS"""
+"""主题系统测试：生成器 / 自定义主题 / 对比度 / QSS / 界面模式解析"""
 
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pytest
+
 from src.theme import (MENU_THEMES, get_menu_theme, make_custom_theme,
-                       theme_from_settings, make_light_theme, build_qss, UI)
+                       theme_from_settings, make_light_theme, build_qss,
+                       effective_ui_mode, set_ui_mode, current_ui_mode,
+                       get_ui, UI_DARK, UI_LIGHT, UI)
 
 
 def _lum(hexc):
@@ -96,6 +100,57 @@ def test_build_qss():
     assert UI.bg in qss          # 背景 token 注入
     assert UI.accent in qss      # 强调色 token 注入
     assert "QPushButton" in qss
+
+
+# ========== 界面模式解析（含跟随系统） ==========
+
+
+@pytest.fixture(autouse=True)
+def _save_ui_mode_state():
+    """保存并恢复模块级模式状态，避免测试间相互污染"""
+    import src.theme as theme
+    saved = (theme._CONFIGURED_MODE, theme._CURRENT_MODE)
+    yield
+    theme._CONFIGURED_MODE, theme._CURRENT_MODE = saved
+
+
+def test_effective_ui_mode_plain():
+    assert effective_ui_mode("dark") == "dark"
+    assert effective_ui_mode("light") == "light"
+    assert effective_ui_mode("whatever") == "dark"   # 非法值回退深色
+    assert effective_ui_mode(None) == "dark"
+
+
+def test_effective_ui_mode_system(monkeypatch):
+    monkeypatch.setattr("src.theme.system_ui_mode", lambda: "light")
+    assert effective_ui_mode("system") == "light"
+    monkeypatch.setattr("src.theme.system_ui_mode", lambda: "dark")
+    assert effective_ui_mode("system") == "dark"
+
+
+def test_set_ui_mode_system_follows_system(monkeypatch):
+    monkeypatch.setattr("src.theme.system_ui_mode", lambda: "light")
+    set_ui_mode("system")
+    assert current_ui_mode() == "light"
+    assert get_ui() is UI_LIGHT
+    monkeypatch.setattr("src.theme.system_ui_mode", lambda: "dark")
+    set_ui_mode("system")
+    assert current_ui_mode() == "dark"
+    assert get_ui() is UI_DARK
+
+
+def test_get_ui_explicit_mode():
+    assert get_ui("light") is UI_LIGHT
+    assert get_ui("dark") is UI_DARK
+
+
+def test_theme_from_settings_system(monkeypatch):
+    monkeypatch.setattr("src.theme.system_ui_mode", lambda: "light")
+    t = theme_from_settings({"menu_theme": "azure", "ui_mode": "system"})
+    assert t.light is True
+    monkeypatch.setattr("src.theme.system_ui_mode", lambda: "dark")
+    t = theme_from_settings({"menu_theme": "azure", "ui_mode": "system"})
+    assert t.light is False
 
 
 if __name__ == "__main__":
