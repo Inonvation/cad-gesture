@@ -25,9 +25,9 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame,
                                QVBoxLayout, QWidget)
 
 from src.config_manager import (load_config, save_config,
-                                get_preset_commands, get_config_path,
-                                get_profile_for_window, set_profile_for_target,
-                                _default_config)
+                                get_config_path, get_profile_for_window,
+                                set_profile_for_target, _default_config)
+from src.config_presets import get_preset_commands
 from src.i18n import T, add_listener, remove_listener
 from src.theme import (get_ui, set_ui_mode, build_app_qss,
                        current_ui_mode, set_title_bar_theme)

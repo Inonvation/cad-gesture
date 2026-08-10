@@ -10,7 +10,7 @@ import math
 from PySide6.QtCore import QMimeData, QPoint, QSize, Qt
 from PySide6.QtGui import (QColor, QDrag, QFont, QPainter, QPen, QPixmap,
                            QPolygon)
-from PySide6.QtWidgets import (QAbstractItemView, QLabel, QPushButton,
+from PySide6.QtWidgets import (QAbstractItemView, QPushButton,
                                QToolTip, QTreeWidget, QWidget)
 
 from src.gesture_engine import calc_sector

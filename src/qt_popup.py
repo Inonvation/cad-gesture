@@ -6,7 +6,6 @@ PopupController 负责浮层打开/定位，place_under 提供可独立测试的
 """
 
 from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QWidget
 
 from src.qt_sector_editor import SectorEditorPopup
 

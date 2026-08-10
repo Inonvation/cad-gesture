@@ -6,7 +6,7 @@ import time
 import threading
 import ctypes
 import ctypes.wintypes as wintypes
-from typing import Callable, Optional, Tuple
+from typing import Callable, Tuple
 
 from src.logger import get_logger
 from src.menu_geometry import menu_scale, scaled_radius
@@ -465,6 +465,8 @@ class GestureEngine:
             self._hook_thread = None
             self._starting = False
             self._hook_ready.clear()
+            # 复位按压状态，让触发判定线程在下一轮立即退出（用户按住右键时退出程序）
+            self._is_pressed = False
 
         # 在锁外执行可能阻塞的 API 调用（避免死锁）
         self._log("停止手势引擎")

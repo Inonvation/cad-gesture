@@ -7,7 +7,9 @@ import copy
 import winreg
 from typing import Dict, Any, Optional, List
 
-from src.config_presets import get_preset_commands, _default_config
+from src.logger import get_logger
+
+from src.config_presets import _default_config
 
 
 def _user_config_dir() -> str:
@@ -122,7 +124,7 @@ def load_config() -> Dict[str, Any]:
     except Exception as e:
         # 兜底任何结构异常（profiles 为 list、settings 缺失等），
         # 避免异常穿透导致整个程序启动崩溃
-        print(f"配置文件加载失败: {e}")
+        get_logger().error("配置文件加载失败: %s", e)
         return _default_config()
 
 

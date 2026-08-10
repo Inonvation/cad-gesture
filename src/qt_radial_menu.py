@@ -14,10 +14,9 @@ if __package__ in (None, ""):
 
 import math
 
-from PySide6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation, QRectF,
+from PySide6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation,
                             Qt, QTimer)
-from PySide6.QtGui import (QColor, QFont, QFontMetrics, QGuiApplication,
-                           QPainter, QPen, QPixmap, QRadialGradient, QCursor)
+from PySide6.QtGui import (QGuiApplication, QPainter, QPixmap, QCursor)
 from PySide6.QtWidgets import QWidget
 
 from src.gesture_engine import calc_sector
@@ -25,7 +24,7 @@ from src.i18n import T
 from src.menu_geometry import menu_scale, scaled_radius
 from src.theme import theme_from_settings
 from src.qt_renderer import (INNER, OUTER, EXTENSION, draw_shadow, draw_ring,
-                             draw_center, draw_label)
+                             draw_center)
 
 
 class QRadialMenu(QWidget):

@@ -14,8 +14,6 @@
 - on_language_changed(lang)  语言切换（主窗口调 i18n.set_language）
 """
 
-import os
-
 from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
@@ -30,7 +28,7 @@ from src.i18n import T
 from src.menu_geometry import scaled_radii
 from src.theme import (get_ui, MENU_THEMES, make_custom_theme,
                        make_light_theme, theme_from_settings,
-                       effective_ui_mode, FONT_XS, RADIUS_LG, _CUSTOM_ACCENT)
+                       effective_ui_mode, FONT_XS, _CUSTOM_ACCENT)
 from src.qt_renderer import (draw_shadow, draw_ring, draw_center,
                              INNER, OUTER, EXTENSION)
 
