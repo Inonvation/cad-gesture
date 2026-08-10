@@ -28,7 +28,7 @@ def _contrast(a, b):
 
 
 def test_theme_count():
-    assert len(MENU_THEMES) >= 8
+    assert len(MENU_THEMES) == 5  # 预设精简为 5 套，其余走自定义
 
 
 def test_every_theme_complete():
@@ -47,7 +47,7 @@ def test_unknown_theme_fallback():
 
 def test_custom_theme_follows_accent():
     """自定义主题：主色相跟随用户主色"""
-    t = make_custom_theme("#ff8844")
+    t = make_custom_theme("#e9edf2", "#ff8844", "#1a202b", "#2a3a4d")
     assert t.name == "custom"
     assert t.label == "自定义"
     # 橙色色相：#ff8844 的 hue 应明显偏暖（>0.05 且 <0.15 附近的橙红）
@@ -58,9 +58,15 @@ def test_custom_theme_follows_accent():
 
 
 def test_theme_from_settings_custom():
-    t = theme_from_settings({"menu_theme": "custom", "custom_accent": "#22aa66"})
+    t = theme_from_settings({"menu_theme": "custom",
+                             "custom_text": "#e9edf2",
+                             "custom_highlight": "#22aa66",
+                             "custom_bg": "#1a202b",
+                             "custom_hover": "#2a3a4d"})
     assert t is not None
     assert t.name == "custom"
+    assert t.inner.highlight == "#22aa66"
+    assert t.inner.text == "#e9edf2"
 
 
 def test_text_contrast_on_normal():

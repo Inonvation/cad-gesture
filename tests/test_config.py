@@ -276,3 +276,5 @@ def test_migrate_adds_new_settings():
     assert s["feedback_show_name"] is True
     assert s["feedback_show_key"] is True
     assert s["feedback_duration_ms"] == 1500
+    assert s["feedback_offset_x"] == 0
+    assert s["feedback_offset_y"] == 0

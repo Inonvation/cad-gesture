@@ -32,7 +32,9 @@ def test_feedback_page_controls():
     assert page.chk_name.isChecked() is True
     assert page.chk_key.isChecked() is True
     assert "feedback_duration_ms" in page._slider_labels
-    assert page.pos_combo.count() >= 4
+    assert "feedback_offset_x" in page._slider_labels
+    assert "feedback_offset_y" in page._slider_labels
+    assert page.pos_combo.count() >= 7
 
 
 def test_test_page_constructs():
@@ -43,3 +45,21 @@ def test_test_page_constructs():
     assert page.preview is not None
     assert page.info is not None
     page._timer.stop()
+
+
+def test_feedback_tip_offset_clamped():
+    """反馈提示：偏移微调生效且夹紧在屏幕可用区内"""
+    _app()
+    from src.qt_feedback import QFeedbackTip
+    tip = QFeedbackTip()
+    screen = tip.screen().availableGeometry()
+    tip.show_feedback("直线", "L", {
+        "feedback_duration_ms": 500,
+        "feedback_position": "bottom_center",
+        "feedback_offset_x": -99999,
+        "feedback_offset_y": 99999,
+    })
+    assert tip.x() >= screen.left()
+    assert tip.y() <= screen.bottom() - tip.height()
+    tip._hide_timer.stop()
+    tip.hide()
