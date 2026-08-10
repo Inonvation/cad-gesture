@@ -81,9 +81,10 @@ QPushButton:disabled {{ color: {UI.text_muted}; }}
 class QConfigGUI(QMainWindow):
     """Qt 配置界面主窗口（导航式布局）"""
 
-    def __init__(self, on_save=None, parent=None):
+    def __init__(self, on_save=None, on_check_update=None, parent=None):
         super().__init__(parent)
         self.on_save = on_save
+        self.on_check_update = on_check_update
         self.config = load_config()
         self.current_profile = self.config.get("settings", {}).get(
             "active_profile", "AutoCAD-常用")
@@ -144,6 +145,7 @@ class QConfigGUI(QMainWindow):
         self._settings_panel = QSettingsPanel(self.config)
         self._settings_panel.on_back = self._show_editor
         self._settings_panel.on_saved = self._on_settings_saved
+        self._settings_panel.on_check_update = self.on_check_update
         self._settings_panel.on_import = self._import_profile
         self._settings_panel.on_export = self._export_profile
         self._settings_panel.on_open_dir = self._open_config_dir
@@ -1181,9 +1183,9 @@ class QConfigGUI(QMainWindow):
         super().closeEvent(e)
 
 
-def open_config_gui(on_save=None, master=None):
+def open_config_gui(on_save=None, on_check_update=None, master=None):
     """打开配置界面（返回窗口实例以便保持引用）"""
-    win = QConfigGUI(on_save=on_save)
+    win = QConfigGUI(on_save=on_save, on_check_update=on_check_update)
     win.show()
     win.raise_()
     win.activateWindow()

@@ -12,7 +12,10 @@
     "auto_start": false,
     "auto_switch_profile": true,
     "open_config_on_start": false,
-    "menu_theme": "azure"
+    "menu_theme": "azure",
+    "check_update_on_start": true,
+    "update_source_url": "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest",
+    "last_update_check": ""
   },
   "profiles": {
     "AutoCAD-常用": {

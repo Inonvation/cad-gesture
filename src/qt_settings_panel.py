@@ -9,7 +9,7 @@
 
 import os
 
-from PySide6.QtCore import QEasingCurve, QPoint, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QPoint, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
                                QComboBox, QFileDialog, QFormLayout,
@@ -275,6 +275,7 @@ class QSettingsPanel(QWidget):
         self.on_import = None
         self.on_export = None
         self.on_open_dir = None
+        self.on_check_update = None
         self.setStyleSheet(build_qss(UI) + _SECTION_QSS)
         self._slider_labels = {}
         self._cards = {}
@@ -459,7 +460,22 @@ class QSettingsPanel(QWidget):
         self.chk_startup = QCheckBox("开机自启")
         self.chk_startup.toggled.connect(self._on_startup)
         card.lay.addWidget(self.chk_startup)
+        self.chk_update = QCheckBox("启动时检查更新")
+        self.chk_update.toggled.connect(lambda b: self._set("check_update_on_start", b))
+        card.lay.addWidget(self.chk_update)
+        self.btn_check_update = QPushButton("检查更新")
+        self.btn_check_update.setToolTip("立即检查是否有新版本")
+        self.btn_check_update.clicked.connect(self._on_check_update_click)
+        card.lay.addWidget(self.btn_check_update)
         return card
+
+    def _on_check_update_click(self):
+        """手动检查更新（结果由 app 层弹窗/气泡提示）"""
+        if self.on_check_update:
+            self.on_check_update()
+        # 防连点：短暂禁用后恢复
+        self.btn_check_update.setEnabled(False)
+        QTimer.singleShot(5000, lambda: self.btn_check_update.setEnabled(True))
 
     def _build_maintenance_card(self):
         card = self._section("maintenance", "维护")
@@ -620,12 +636,13 @@ class QSettingsPanel(QWidget):
         """从配置刷新控件（进入设置面板时调用）"""
         self.config = config
         s = config.get("settings", {})
-        for w in (self.chk_open, self.chk_auto, self.chk_startup):
+        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
             w.blockSignals(True)
         self.chk_open.setChecked(bool(s.get("open_config_on_start", False)))
         self.chk_auto.setChecked(bool(s.get("auto_switch_profile", True)))
         self.chk_startup.setChecked(get_auto_start())
-        for w in (self.chk_open, self.chk_auto, self.chk_startup):
+        self.chk_update.setChecked(bool(s.get("check_update_on_start", True)))
+        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
             w.blockSignals(False)
 
         # 主题选中态（断连防递归，刷新后重连）

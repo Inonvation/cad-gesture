@@ -5,10 +5,13 @@ import sys
 import math
 import queue
 import threading
+import tempfile
+from datetime import datetime
 
 from PySide6.QtCore import Qt, QPointF, QTimer
 from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import (QApplication, QMenu, QMessageBox,
+                               QProgressDialog, QSystemTrayIcon)
 
 from src.config_manager import (
     load_config, save_config, get_active_profile,
@@ -21,6 +24,12 @@ from src.qt_config_gui import open_config_gui
 from src.command_executor import execute_with_cancel
 from src.single_instance import is_exit_requested
 from src.logger import get_logger
+from src.updater import (check_for_update, download_update, run_installer,
+                         UpdateCancelled, UpdateError)
+from src.version import __version__
+
+_CHECK_INTERVAL_SEC = 24 * 3600  # 启动自动检查的最小间隔
+_UPDATE_NOTES_MAX = 800
 
 
 class CADGestureApp:
@@ -55,6 +64,11 @@ class CADGestureApp:
         self._menu_center_y = 0
         self._exit_poll_count = 0
         self._quitting = False
+
+        # 更新流程状态
+        self._update_info = None
+        self._update_cancel = False
+        self._update_progress = None
 
         self._setup_tray()
 
@@ -119,6 +133,12 @@ class CADGestureApp:
                                     execute_with_cancel(key, desc, target, menu_was_shown=True)
                             except Exception as e:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)
+                        elif event_type == "update_check_result":
+                            self._on_update_check_result(data)
+                        elif event_type == "update_progress":
+                            self._on_update_progress(data)
+                        elif event_type == "update_download_done":
+                            self._on_update_download_done(data)
                     except Exception as e:
                         self.log.error("事件处理错误 (%s): %s", event_type, e, exc_info=True)
             except queue.Empty:
@@ -228,6 +248,9 @@ class CADGestureApp:
         act_cfg = QAction("配置", menu)
         act_cfg.triggered.connect(lambda _=False: self._open_config())
         menu.addAction(act_cfg)
+        act_update = QAction("检查更新", menu)
+        act_update.triggered.connect(lambda _=False: self._check_update(manual=True))
+        menu.addAction(act_update)
         act_exit = QAction("退出", menu)
         act_exit.triggered.connect(lambda _=False: self._quit())
         menu.addAction(act_exit)
@@ -258,7 +281,9 @@ class CADGestureApp:
     def _open_config(self):
         """打开配置界面（Qt 版，独立窗口）"""
         try:
-            self._config_win = open_config_gui(on_save=self._reload_config)
+            self._config_win = open_config_gui(
+                on_save=self._reload_config,
+                on_check_update=lambda: self._check_update(manual=True))
         except Exception as e:
             self.log.error("打开配置界面失败: %s", e, exc_info=True)
 
@@ -271,6 +296,184 @@ class CADGestureApp:
             self.menu.update_config(self.config)
         except Exception as e:
             self.log.error("重载配置失败: %s", e, exc_info=True)
+
+    # ========== 自动更新 ==========
+
+    def _check_update(self, manual: bool):
+        """检查更新（后台线程执行网络请求，结果经事件队列回主线程）"""
+        if manual is False and not self._should_auto_check():
+            return
+        url = self.config.get("settings", {}).get(
+            "update_source_url",
+            "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest")
+        threading.Thread(target=self._check_worker, args=(url, manual),
+                         daemon=True).start()
+
+    def _check_worker(self, url: str, manual: bool):
+        try:
+            info = check_for_update(__version__, url)
+            result = {"ok": True, "info": info, "error": None, "manual": manual}
+        except UpdateError as e:
+            result = {"ok": False, "info": None, "error": str(e), "manual": manual}
+        except Exception as e:
+            result = {"ok": False, "info": None,
+                      "error": f"检查更新异常: {e}", "manual": manual}
+        self.event_queue.put(("update_check_result", result))
+
+    def _should_auto_check(self) -> bool:
+        """启动自动检查：开关开启 + 距上次检查超过 24h"""
+        s = self.config.get("settings", {})
+        if not s.get("check_update_on_start", True):
+            return False
+        last = s.get("last_update_check", "")
+        if not last:
+            return True
+        try:
+            t = datetime.fromisoformat(last)
+            return (datetime.now() - t).total_seconds() >= _CHECK_INTERVAL_SEC
+        except Exception:
+            return True
+
+    def _on_update_check_result(self, data: dict):
+        """主线程处理检查结果（弹窗/气泡都在主线程安全操作）"""
+        ok = data.get("ok")
+        manual = data.get("manual", False)
+        if ok and data.get("info"):
+            self._set_last_update_check()
+            self._show_update_dialog(data["info"])
+        elif ok:
+            self._set_last_update_check()
+            if manual:
+                # 托盘气泡在 Windows 上可能被通知设置屏蔽，手动检查用弹窗确保可见
+                try:
+                    QMessageBox.information(
+                        None, "检查更新", f"已是最新版本（v{__version__}）")
+                except Exception as e:
+                    self.log.error("提示弹窗失败: %s", e, exc_info=True)
+        else:
+            if manual:
+                try:
+                    QMessageBox.warning(
+                        None, "检查更新",
+                        data.get("error", "检查更新失败") +
+                        "\n\n提示：GitHub 接口有限频（约 60 次/小时），如提示 403 请稍后再试")
+                except Exception as e:
+                    self.log.error("提示弹窗失败: %s", e, exc_info=True)
+            else:
+                self.log.warning("启动时自动检查更新失败: %s",
+                                 data.get("error", "未知错误"))
+
+    def _set_last_update_check(self):
+        try:
+            s = self.config.setdefault("settings", {})
+            s["last_update_check"] = datetime.now().isoformat(timespec="seconds")
+            save_config(self.config)
+        except Exception as e:
+            self.log.error("记录检查时间失败: %s", e, exc_info=True)
+
+    def _tray_message(self, title: str, msg: str, icon=None, ms: int = 3000):
+        try:
+            self.tray.showMessage(title, msg, icon or QSystemTrayIcon.Information, ms)
+        except Exception:
+            pass
+
+    def _show_update_dialog(self, info: dict):
+        """有新版本：弹出更新说明对话框"""
+        self._update_info = info
+        box = QMessageBox()
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("发现新版本")
+        box.setText(f"CAD鼠标手势 v{info.get('version', '')} 已发布"
+                    f"（当前 v{__version__}）")
+        notes = (info.get("notes") or "").strip() or "（无更新说明）"
+        if len(notes) > _UPDATE_NOTES_MAX:
+            notes = notes[:_UPDATE_NOTES_MAX] + "..."
+        box.setInformativeText(notes)
+        btn_now = box.addButton("立即更新", QMessageBox.AcceptRole)
+        box.addButton("稍后再说", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is btn_now:
+            self._start_update_download(info)
+
+    def _start_update_download(self, info: dict):
+        """开始后台下载安装包，主线程显示进度条"""
+        self._update_cancel = False
+        dest = os.path.join(tempfile.gettempdir(), "CADGesture-Setup.exe")
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        total = info.get("size") or 0
+        self._update_progress = QProgressDialog(
+            f"正在下载 v{info.get('version', '')} 更新包...", "取消", 0,
+            100 if total > 0 else 0)
+        self._update_progress.setWindowTitle("CAD鼠标手势 - 更新")
+        self._update_progress.setWindowModality(Qt.WindowModal)
+        self._update_progress.setMinimumDuration(0)
+        self._update_progress.canceled.connect(
+            lambda: setattr(self, "_update_cancel", True))
+        self._update_progress.show()
+        threading.Thread(target=self._download_worker, args=(info, dest),
+                         daemon=True).start()
+
+    def _download_worker(self, info: dict, dest: str):
+        ok = download_update(info.get("download_url", ""), dest,
+                             info.get("size") or 0,
+                             progress_cb=self._download_progress)
+        self.event_queue.put(("update_download_done", (ok, dest)))
+
+    def _download_progress(self, downloaded: int, total: int):
+        """下载线程回调：检查取消 + 进度入队"""
+        if self._update_cancel:
+            raise UpdateCancelled("下载被取消")
+        self.event_queue.put(("update_progress", (downloaded, total)))
+
+    def _on_update_progress(self, data: tuple):
+        try:
+            downloaded, total = data
+            if self._update_progress is None:
+                return
+            if total > 0:
+                pct = int(downloaded * 100 / total)
+                self._update_progress.setValue(min(pct, 100))
+                self._update_progress.setLabelText(
+                    f"正在下载更新包... {downloaded // 1024} KB / "
+                    f"{total // 1024} KB")
+            else:
+                self._update_progress.setValue(0)
+        except Exception as e:
+            self.log.error("更新进度更新失败: %s", e, exc_info=True)
+
+    def _on_update_download_done(self, data: tuple):
+        """下载完成：确认后静默安装并退出"""
+        ok, dest = data
+        if self._update_progress is not None:
+            self._update_progress.close()
+            self._update_progress = None
+        if self._update_cancel:
+            self._tray_message("CAD鼠标手势", "更新已取消")
+            return
+        if not ok:
+            self._tray_message("CAD鼠标手势", "下载失败，请检查网络后重试",
+                               QSystemTrayIcon.Warning)
+            return
+        box = QMessageBox()
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("更新就绪")
+        box.setText("更新包已下载完成。")
+        box.setInformativeText("将退出程序并自动完成更新，更新完成后会重新启动。")
+        btn_now = box.addButton("立即更新", QMessageBox.AcceptRole)
+        box.addButton("取消", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is not btn_now:
+            self._tray_message("CAD鼠标手势", "已取消更新")
+            return
+        if not run_installer(dest):
+            self._tray_message("CAD鼠标手势", "启动安装程序失败，请手动运行更新包",
+                               QSystemTrayIcon.Warning)
+            return
+        self.log.info("更新流程启动，即将退出当前实例")
+        self._quit()
 
     # ========== 退出 ==========
 
@@ -304,4 +507,6 @@ class CADGestureApp:
         # 首次运行或配置了"启动时打开此界面"则自动打开配置
         if self._is_first_run or self.config.get("settings", {}).get("open_config_on_start", False):
             QTimer.singleShot(500, self._open_config)
+        # 启动后延迟自动检查更新（后台线程，不阻塞启动；24h 内不重复）
+        QTimer.singleShot(8000, lambda: self._check_update(manual=False))
         sys.exit(self.app.exec())

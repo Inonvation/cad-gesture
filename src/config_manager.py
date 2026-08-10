@@ -191,6 +191,15 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "menu_opacity" not in settings:
         settings["menu_opacity"] = 0.95
         migrated = True
+    if "check_update_on_start" not in settings:
+        settings["check_update_on_start"] = True
+        migrated = True
+    if "update_source_url" not in settings:
+        settings["update_source_url"] = "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest"
+        migrated = True
+    if "last_update_check" not in settings:
+        settings["last_update_check"] = ""
+        migrated = True
     # 为旧配置中的 profile 添加 target、outer_sectors 和 extension_sectors
     # 记录哪些 profile 原本缺少 extension_sectors 字段（区分"旧配置缺失"与"用户主动清空"）
     missing_ext = set()

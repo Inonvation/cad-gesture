@@ -222,7 +222,10 @@ def _default_config() -> Dict[str, Any]:
             "auto_start": False,
             "auto_switch_profile": True,
             "open_config_on_start": False,
-            "menu_theme": "azure"
+            "menu_theme": "azure",
+            "check_update_on_start": True,
+            "update_source_url": "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest",
+            "last_update_check": ""
         },
         "profiles": {
             "AutoCAD-常用": {
