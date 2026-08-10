@@ -35,8 +35,10 @@ from src.version import __version__
 _CHECK_INTERVAL_SEC = 24 * 3600  # 启动自动检查的最小间隔
 _UPDATE_NOTES_MAX = 800
 
-# 跨线程唤醒事件类型：钩子线程入队后 postEvent 到主线程，立即处理
-_WAKE_EVENT_TYPE = QEvent.registerEventType()
+# 跨线程唤醒事件类型：钩子线程入队后 postEvent 到主线程，立即处理。
+# 必须包成 QEvent.Type：PySide6 的 QEvent(int) 不接受裸 int，否则抛 TypeError
+# 被 _wake 吞掉后唤醒永远不生效（事件只能等定时器轮询，呼出延迟不稳定）
+_WAKE_EVENT_TYPE = QEvent.Type(QEvent.registerEventType())
 
 
 class _WakeQueue(queue.Queue):
@@ -141,8 +143,8 @@ class CADGestureApp:
 
         self._setup_tray()
 
-        # 主循环定时器：菜单可见时 16ms 高频跟踪光标；隐藏时 500ms 低频空转
-        # （事件入队由 _wake 即时唤醒，空转只做日志落盘与退出轮询）
+        # 主循环定时器：菜单可见时 16ms 高频跟踪光标；隐藏时 250ms 低频空转
+        # （事件入队由 _wake 即时唤醒，定时器仅作日志落盘与退出轮询的兜底）
         self._timer = QTimer()
         self._timer.timeout.connect(self._process_queue)
         self._timer.start(16)
@@ -259,7 +261,7 @@ class CADGestureApp:
             self.log.error("主循环异常: %s", e, exc_info=True)
         finally:
             if not self._quitting:
-                delay = 16 if self.menu.is_visible() else 500
+                delay = 16 if self.menu.is_visible() else 250
                 self._timer.setInterval(delay)
 
     # ========== 界面模式 ==========
