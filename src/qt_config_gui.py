@@ -12,7 +12,8 @@ import math
 import os
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
-                            QPoint, QPointF, QSize, Qt, QTimer, QVariantAnimation)
+                            QPoint, QPointF, QSettings, QSize, Qt, QTimer,
+                            QVariantAnimation)
 from PySide6.QtGui import (QColor, QIcon, QPainter, QPen, QPixmap,
                            QKeySequence, QMouseEvent, QShortcut)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame,
@@ -150,6 +151,10 @@ class QConfigGUI(QMainWindow):
 
     def showEvent(self, e):
         super().showEvent(e)
+        # 记忆上次关闭时的窗口位置/大小（QSettings 存注册表，不污染配置文件）
+        geo = QSettings("CADGesture", "CADGesture").value("config_win_geometry")
+        if geo is not None:
+            self.restoreGeometry(geo)
         set_title_bar_theme(self, current_ui_mode() == "dark")
         # 窗口完全显示后 DWM 属性更稳定，延迟再应用一次（覆盖显示时序问题）
         QTimer.singleShot(150,
@@ -343,6 +348,7 @@ class QConfigGUI(QMainWindow):
         head.setSpacing(4)
         self._lb_profiles = QLabel(T("配置方案"))
         self._lb_profiles.setObjectName("pageSub")
+        self._lb_profiles.setFixedHeight(28)
         head.addWidget(self._lb_profiles)
         head.addStretch(1)
         self.btn_add = QPushButton("＋")
@@ -367,9 +373,14 @@ class QConfigGUI(QMainWindow):
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
+        head = QHBoxLayout()
+        head.setSpacing(4)
         self._lb_anchor = QLabel(T("设置分类"))
         self._lb_anchor.setObjectName("pageSub")
-        v.addWidget(self._lb_anchor)
+        self._lb_anchor.setFixedHeight(28)
+        head.addWidget(self._lb_anchor)
+        head.addStretch(1)
+        v.addLayout(head)
         self.anchor_list = QListWidget()
         self.anchor_list.setObjectName("ctxList")
         self.anchor_list.setFocusPolicy(Qt.NoFocus)
@@ -835,9 +846,9 @@ class QConfigGUI(QMainWindow):
         box = QMessageBox(self)
         box.setWindowTitle(T("未保存的修改"))
         box.setText(T("扇区编辑有未保存的修改，要保存吗？"))
-        btn_save = box.addButton("保存", QMessageBox.ButtonRole.AcceptRole)
-        btn_discard = box.addButton("放弃", QMessageBox.ButtonRole.DestructiveRole)
-        btn_cancel = box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        btn_save = box.addButton(T("保存"), QMessageBox.ButtonRole.AcceptRole)
+        btn_discard = box.addButton(T("放弃"), QMessageBox.ButtonRole.DestructiveRole)
+        btn_cancel = box.addButton(T("取消"), QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(btn_save)
         box.exec()
         clicked = box.clickedButton()
@@ -1256,7 +1267,8 @@ class QConfigGUI(QMainWindow):
             QMessageBox.warning(self, T("提示"), T("没有可导出的配置"))
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, T("导出方案"), f"{self.current_profile}.json", "JSON 文件 (*.json)")
+            self, T("导出方案"), f"{self.current_profile}.json",
+            T("JSON 文件 (*.json)"))
         if not path:
             return
         ok, err = export_profile(profile, path, tr=T)
@@ -1267,7 +1279,7 @@ class QConfigGUI(QMainWindow):
 
     def _import_profile(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, T("导入方案"), "", "JSON 文件 (*.json)")
+            self, T("导入方案"), "", T("JSON 文件 (*.json)"))
         if not path:
             return
         ok, data = load_profile_data(path, tr=T)
@@ -1359,6 +1371,8 @@ class QConfigGUI(QMainWindow):
             self.on_save()
 
     def closeEvent(self, e):
+        QSettings("CADGesture", "CADGesture").setValue(
+            "config_win_geometry", self.saveGeometry())
         remove_listener(self._lang_listener)
         if self._autosave_timer.isActive():
             self._autosave_timer.stop()

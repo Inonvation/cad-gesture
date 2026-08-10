@@ -350,7 +350,8 @@ QListWidget#ctxList::item {{
 }}
 QListWidget#ctxList::item:hover {{ background: {t.bg_hover}; }}
 QListWidget#ctxList::item:selected {{
-    background: {t.bg_selected}; color: {t.text}; }}
+    background: transparent; color: {t.accent};
+    border-left: 3px solid {t.accent}; padding-left: 7px; }}
 
 /* ---- 顶栏操作按钮（撤销/重做/清除/恢复默认） ---- */
 QPushButton.topBtn {{

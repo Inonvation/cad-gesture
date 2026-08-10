@@ -526,8 +526,7 @@ class SizePage(_BasePage):
                                         ("dead_zone_radius", "中心圆半径", 8, 60, "px"),
                                         ("ring_radius", "第一圈半径", 40, 160, "px"),
                                         ("outer_ring_radius", "第二圈半径", 90, 260, "px"),
-                                        ("ext_ring_radius", "最外圈半径", 140, 360, "px"),
-                                        ("sector_count", "扇区数量", 4, 16, "")):
+                                        ("ext_ring_radius", "最外圈半径", 140, 360, "px")):
             sl, lb = self._slider_row(text, key, lo, hi, unit,
                                       on_change=self._on_size_changed,
                                       container=lv)
