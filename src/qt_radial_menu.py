@@ -196,6 +196,10 @@ class QRadialMenu(QWidget):
             self._in_extension_zone = new_ext
             self._start_hl_fade()
             self.update()
+        elif self._trail_enabled():
+            # 轨迹线开启时：鼠标在同一扇区内移动也要重绘，
+            # 否则轨迹只在跨扇区时才跳变，看起来卡顿不跟手
+            self.update()
 
     def set_extension_hint(self, is_in_zone: bool):
         if is_in_zone != self._in_extension_zone:
@@ -297,9 +301,13 @@ class QRadialMenu(QWidget):
         self._draw_trail(p, cx, cy, t)
         p.end()
 
+    def _trail_enabled(self) -> bool:
+        """手势轨迹线开关（设置 → 外观）"""
+        return bool(self.config.get("settings", {}).get("gesture_trail", True))
+
     def _draw_trail(self, p: QPainter, cx: float, cy: float, t) -> None:
         """手势轨迹线：从中心死区边缘引到当前光标，跟随鼠标（Quicker 风格）"""
-        if not bool(self.config.get("settings", {}).get("gesture_trail", True)):
+        if not self._trail_enabled():
             return
         if self._trail_dx is None or self._trail_dy is None:
             return
