@@ -138,3 +138,15 @@ def test_undo_stack_limit(gui):
     assert len(gui._undo_stack) == 50
     gui._undo()
     assert len(gui._undo_stack) == 49
+def test_undo_redo_restores_config(gui):
+    """撤销恢复上一次配置，重做恢复修改后的配置（_restore_config 会替换 config 对象，
+    断言前须重新获取 profile 引用）"""
+    p = _profile(gui)
+    p["sectors"]["0"] = {"label": "A", "key": "a", "description": "AAA"}
+    gui._push_undo()
+    _profile(gui)["sectors"]["0"] = {"label": "B", "key": "b",
+                                     "description": "BBB"}
+    gui._undo()
+    assert _profile(gui)["sectors"]["0"]["label"] == "A"
+    gui._redo()
+    assert _profile(gui)["sectors"]["0"]["label"] == "B"
