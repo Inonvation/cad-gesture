@@ -84,6 +84,10 @@ a = Analysis(
         'matplotlib', 'numpy', 'scipy', 'pandas',
         'cv2', 'torch', 'tensorflow',
         'tkinter', '_tkinter',  # 程序不用 tkinter，排除可省 tcl/tk DLL
+        'unittest', 'pydoc', 'doctest', 'pydoc_data',
+        'sqlite3', 'mailbox', 'venv', 'ensurepip', 'lib2to3',
+        'http.server', 'http.cookiejar',
+        'xmlrpc.client', 'xmlrpc.server',
         # PySide6 用不到的 Qt 模块（每个 DLL 数 MB，排除可显著减小体积）
         'PySide6.QtQml', 'PySide6.QtQuick', 'PySide6.QtQmlMeta',
         'PySide6.QtQmlModels', 'PySide6.QtQmlWorkerScript',
