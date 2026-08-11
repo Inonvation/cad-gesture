@@ -184,7 +184,7 @@ class QConfigGUI(QMainWindow):
         save_config(self.config)
         self._apply_ui_mode(mode)
         if self.on_save:
-            self.on_save()  # app 层重载配置 → 运行时圆盘主题跟随
+            self.on_save(self.config)  # app 层重载配置 → 运行时圆盘主题跟随
 
     def _apply_ui_mode(self, mode: str):
         self._ui_mode = mode
@@ -725,7 +725,7 @@ class QConfigGUI(QMainWindow):
         self.preview.update_config(self.config)
         # 设置页改动即时生效：通知 app 重载配置（菜单/引擎/全局 QSS 跟随更新）
         if self.on_save:
-            self.on_save()
+            self.on_save(self.config)
 
     def _set_status(self, msg: str):
         """记录最近状态消息（语言切换后按需重译显示）"""
@@ -788,7 +788,7 @@ class QConfigGUI(QMainWindow):
         for page in self._setting_pages.values():
             page.refresh(data, profile)
         if self.on_save:
-            self.on_save()
+            self.on_save(self.config)
         QMessageBox.information(
             self, T("已恢复"), T("配置已恢复，立即生效。"))
 
@@ -1436,17 +1436,23 @@ class QConfigGUI(QMainWindow):
         ok = save_config(self.config)
         self._set_status(T("✓ 已保存") if ok else T("保存失败"))
         if ok and self.on_save:
-            self.on_save()
+            self.on_save(self.config)
 
     def closeEvent(self, e):
         QSettings("CADGesture", "CADGesture").setValue(
             "config_win_geometry", self.saveGeometry())
         remove_listener(self._lang_listener)
+        # 设置页防抖中的修改先落盘（各页共享同一 config 对象）
+        for page in self._setting_pages.values():
+            try:
+                page.flush_save()
+            except Exception:
+                pass
         if self._autosave_timer.isActive():
             self._autosave_timer.stop()
             self._do_save()
         if self.on_save:
-            self.on_save()
+            self.on_save(self.config)
         super().closeEvent(e)
 
 

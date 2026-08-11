@@ -215,6 +215,14 @@ class _BasePage(QWidget):
         self._tr = []                  # [(widget, zh_text)] 语言切换刷新
         self._help_items = []          # [_HelpIcon] 语言切换刷新 tooltip
 
+        # 保存防抖：连续修改 500ms 内合并成一次写盘（与编辑页 autosave 一致），
+        # 避免每个勾选/滑杆松手都触发「写盘 → 全量重载 → 重建全局 QSS」
+        self._save_dirty = False
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(500)
+        self._save_timer.timeout.connect(self._save_now)
+
         # 页面骨架：标题 + 滚动内容区
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 16, 24, 16)
@@ -328,9 +336,24 @@ class _BasePage(QWidget):
         self._save()
 
     def _save(self):
+        """设置变更后延迟落盘（500ms 合并连续修改）"""
+        self._save_dirty = True
+        self._save_timer.start()
+
+    def _save_now(self):
+        """防抖定时器到点 / 窗口关闭前落盘"""
+        if not self._save_dirty:
+            return
+        self._save_dirty = False
         ok = save_config(self.config)
         if ok and self.on_saved:
             self.on_saved()
+
+    def flush_save(self):
+        """窗口关闭前强制落盘未保存的修改"""
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+            self._save_now()
 
     def refresh(self, config, profile=None):
         """进入页面时同步控件状态（子类覆盖）"""

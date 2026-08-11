@@ -28,8 +28,8 @@ from src.single_instance import is_exit_requested
 from src.logger import get_logger
 from src.i18n import T, set_language, add_listener, remove_listener
 from src.theme import (build_app_qss, set_ui_mode, current_ui_mode,
-                       set_title_bar_theme, system_ui_mode,
-                       set_ui_font_scale)
+                       effective_ui_mode, set_title_bar_theme,
+                       system_ui_mode, set_ui_font_scale)
 from src.updater import (check_for_update, download_update, run_installer,
                          UpdateCancelled, UpdateError)
 from src.version import __version__
@@ -352,6 +352,8 @@ class CADGestureApp:
         set_ui_font_scale(self.config.get("settings", {}).get(
             "ui_font_scale", 100) / 100.0)
         self._applied_mode = current_ui_mode()
+        self._applied_font_scale = self.config.get("settings", {}).get(
+            "ui_font_scale", 100)
         self.app.setStyleSheet(build_app_qss(mode))
         for w in self.app.topLevelWidgets():
             try:
@@ -526,17 +528,25 @@ class CADGestureApp:
         except Exception as e:
             self.log.error("打开配置界面失败: %s", e, exc_info=True)
 
-    def _reload_config(self):
-        """配置保存后重载（主线程，Qt 信号槽安全）"""
+    def _reload_config(self, cfg=None):
+        """配置保存后重载（主线程，Qt 信号槽安全）
+
+        配置窗口把内存里的 config 对象直接传入，避免写盘后又从磁盘重读；
+        只有界面模式/字号真正变化时才重建全应用 QSS，普通设置（圆盘半径/
+        主题/触发阈值）只更新引擎与圆盘，不再触发全控件重刷。
+        """
         try:
-            self.config = load_config()
+            self.config = cfg if cfg is not None else load_config()
             self.profile = get_active_profile(self.config)
             self.gesture_engine.update_config(self.config)
             self.menu.update_config(self.config)
-            # 界面模式变化时同步全局（配置窗口已应用，这里保持模块状态一致）
-            mode = self.config.get("settings", {}).get("ui_mode", "dark")
-            # 无条件刷新：界面字号（ui_font_scale）变化也需重建 QSS
-            self._apply_ui_mode(mode)
+            s = self.config.get("settings", {})
+            mode = s.get("ui_mode", "dark")
+            font = s.get("ui_font_scale", 100)
+            # 界面模式（含 system 解析后）或字号变化才重建 QSS，其余设置跳过
+            if (effective_ui_mode(mode) != current_ui_mode()
+                    or font != self._applied_font_scale):
+                self._apply_ui_mode(mode)
         except Exception as e:
             self.log.error("重载配置失败: %s", e, exc_info=True)
 
