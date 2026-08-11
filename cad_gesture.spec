@@ -52,7 +52,8 @@ if pywin32_dll_dir is None:
             pywin32_dll_dir = p
             break
 
-datas = []
+# 打包 assets 目录（勾选框对勾 / 下拉箭头 / 图标）：onefile 运行时经 _MEIPASS 读取
+datas = [('assets', 'assets')]
 binaries = []
 if pywin32_dll_dir:
     py_ver = f"{sys.version_info.major}{sys.version_info.minor}"

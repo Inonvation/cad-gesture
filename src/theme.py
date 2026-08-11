@@ -8,6 +8,8 @@
 """
 
 import colorsys
+import os
+import sys
 from dataclasses import dataclass
 from typing import Dict
 
@@ -231,8 +233,25 @@ def set_title_bar_theme(win, dark: bool = True) -> None:
         pass
 
 
-def build_qss(t: UITheme) -> str:
+def _asset_path(name: str) -> str:
+    """返回打包资源绝对路径（开发仓库 / PyInstaller onefile 两种形态）"""
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        p = os.path.join(base, "assets", name)
+        if os.path.exists(p):
+            return p
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets", name)
+
+
+def build_qss(t: UITheme, mode: str = None) -> str:
     """从设计 token 生成全局样式表（界面统一风格，不再散落硬编码颜色）"""
+    if mode is None:
+        mode = "light" if t is UI_LIGHT else "dark"
+    # 下拉箭头按深浅色取对应版本，对勾统一白色（两种主题的 accent 上均清晰）
+    arrow = _asset_path(f"arrow_{mode}.png").replace("\\", "/")
+    check = _asset_path("check.png").replace("\\", "/")
     return f"""
 QMainWindow, QWidget {{ background: {t.bg}; color: {t.text};
                        font-size: {font_px(FONT_BASE)}px; }}
@@ -250,6 +269,8 @@ QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{ border-color: {t.accent}; }}
 QLineEdit:disabled, QComboBox:disabled {{
     color: {t.text_muted}; background: {t.bg_raised}; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
+QComboBox::down-arrow {{ image: url({arrow}); width: 12px; height: 7px; }}
+QComboBox:hover {{ border-color: {t.accent_dim}; }}
 QComboBox QAbstractItemView {{
     background: {t.bg_overlay}; border: 1px solid {t.border_strong};
     selection-background-color: {t.bg_selected}; selection-color: {t.text};
@@ -310,10 +331,13 @@ QSplitter::handle:hover {{ background: {t.accent}; }}
 QStatusBar {{ background: {t.bg_raised}; color: {t.text_muted}; }}
 
 /* ---- 开关与滑杆 ---- */
-QCheckBox {{ spacing: 6px; }}
-QCheckBox::indicator {{ width: 15px; height: 15px; border-radius: 4px;
+QCheckBox {{ spacing: 7px; }}
+QCheckBox:disabled {{ color: {t.text_muted}; }}
+QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 4px;
                         border: 1px solid {t.border_strong}; background: {t.bg_input}; }}
-QCheckBox::indicator:checked {{ background: {t.accent}; border-color: {t.accent}; }}
+QCheckBox::indicator:hover {{ border-color: {t.accent}; }}
+QCheckBox::indicator:checked {{ background: {t.accent}; border-color: {t.accent};
+                                image: url({check}); }}
 QSlider::groove:horizontal {{ height: 4px; background: {t.border_strong};
                               border-radius: 2px; }}
 QSlider::handle:horizontal {{ width: 14px; background: {t.accent};
