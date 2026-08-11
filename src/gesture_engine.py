@@ -54,6 +54,16 @@ def calc_sector(dx: int, dy: int, sector_count: int) -> int:
 _LONG_PRESS_MIN_DIST = 3
 
 
+def physical_to_logical(dist: float, dpr: float) -> float:
+    """物理像素距离 → 逻辑像素距离。
+
+    低级鼠标钩子回调给的是物理像素，圆盘半径（menu_geometry）是 Qt 逻辑像素；
+    高 DPI（如 125%）下直接比较会让圈层判定与圆盘显示不一致。
+    dpr 无效时按 1:1 处理。
+    """
+    return dist / dpr if dpr and dpr > 0 else dist
+
+
 def should_trigger_now(dist: float, held_ms: float,
                        trigger_distance: float,
                        hold_threshold_ms: float) -> bool:
@@ -177,6 +187,41 @@ class GestureEngine:
     @property
     def sector_count(self) -> int:
         return self.config.get("settings", {}).get("sector_count", 8)
+
+    def _dpr(self) -> float:
+        """当前手势位置所在屏幕的 DPI 缩放（物理像素 → 逻辑像素）。
+
+        优先按鼠标所在显示器查（混合 DPI 多屏时准确），失败回退系统 DPI，
+        再失败按 1:1 处理。
+        """
+        try:
+            user32 = ctypes.windll.user32
+            # 鼠标所在显示器（MONITOR_DEFAULTTONEAREST = 2）
+            user32.MonitorFromPoint.restype = wintypes.HMONITOR
+            user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            hmon = user32.MonitorFromPoint(
+                wintypes.POINT(self._latest_pos[0], self._latest_pos[1]), 2)
+            if hmon:
+                shcore = ctypes.windll.shcore
+                shcore.GetDpiForMonitor.restype = ctypes.c_long
+                shcore.GetDpiForMonitor.argtypes = [
+                    wintypes.HMONITOR, ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint)]
+                dpi_x = ctypes.c_uint()
+                dpi_y = ctypes.c_uint()
+                # MDT_EFFECTIVE_DPI = 0
+                if (shcore.GetDpiForMonitor(hmon, 0, ctypes.byref(dpi_x),
+                                           ctypes.byref(dpi_y)) == 0
+                        and dpi_x.value > 0):
+                    return dpi_x.value / 96.0
+            # 回退：系统 DPI（Windows 10 1607+）
+            user32.GetDpiForSystem.restype = ctypes.c_uint
+            dpi = user32.GetDpiForSystem()
+            if dpi > 0:
+                return dpi / 96.0
+        except Exception:
+            pass
+        return 1.0
 
     def _log(self, msg: str):
         """记录调试日志。
@@ -319,7 +364,9 @@ class GestureEngine:
                     break
                 dx = self._latest_pos[0] - self._press_pos[0]
                 dy = self._latest_pos[1] - self._press_pos[1]
-                dist = math.sqrt(dx * dx + dy * dy)
+                # 钩子给物理像素：换算成逻辑像素再与触发距离比较
+                dist = physical_to_logical(
+                    math.sqrt(dx * dx + dy * dy), self._dpr())
                 held_ms = (time.monotonic() - self._press_time) * 1000
                 if should_trigger_now(dist, held_ms,
                                       self.trigger_distance,
@@ -391,7 +438,8 @@ class GestureEngine:
                     self._latest_pos = (x, y)
                     if self._menu_shown:
                         dx, dy = x - self._press_pos[0], y - self._press_pos[1]
-                        dist = math.sqrt(dx * dx + dy * dy)
+                        dist = physical_to_logical(
+                            math.sqrt(dx * dx + dy * dy), self._dpr())
                         is_ext = dist > self.outer_ring_radius
                         if is_ext != self._in_extension_zone:
                             self._in_extension_zone = is_ext
@@ -405,7 +453,9 @@ class GestureEngine:
                 if self._is_pressed:
                     self._is_pressed = False
                     dx, dy = x - self._press_pos[0], y - self._press_pos[1]
-                    dist = math.sqrt(dx * dx + dy * dy)
+                    # 物理像素距离 → 逻辑像素，圈层/死区判定与圆盘显示一致
+                    dist = physical_to_logical(
+                        math.sqrt(dx * dx + dy * dy), self._dpr())
                     held_ms = (time.monotonic() - self._press_time) * 1000
                     if should_trigger_on_release(
                             self._menu_shown, dist, self.dead_zone,
@@ -434,7 +484,11 @@ class GestureEngine:
             self._hook, nCode, wParam, lParam)
 
     def _resolve_gesture(self, dx: int, dy: int, dist: float):
-        """根据拖动向量结算扇区与圈层（菜单路径与快速甩动路径共用）"""
+        """根据拖动向量结算扇区与圈层（菜单路径与快速甩动路径共用）。
+
+        dx/dy 可为物理像素（扇区只依赖角度，缩放后 atan2 不变）；
+        dist 必须是已换算成逻辑像素的距离，才能与逻辑像素的圆盘半径比较。
+        """
         sec = calc_sector(dx, dy, self.sector_count)
         if dist > self.outer_ring_radius:
             ring_type, layer = "extension", "扩展圈"

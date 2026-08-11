@@ -105,3 +105,49 @@ def test_trigger_button_mapping():
     eng = make("x2")
     assert eng._trigger_down(ge.WM_XBUTTONDOWN, ge.XBUTTON2 << 16)
     assert not eng._trigger_down(ge.WM_XBUTTONDOWN, ge.XBUTTON1 << 16)
+
+def test_physical_to_logical():
+    """物理像素→逻辑像素换算：DPR 有效时缩放，无效时按 1:1"""
+    from src.gesture_engine import physical_to_logical
+    assert physical_to_logical(80, 1.25) == 64.0
+    assert physical_to_logical(87.5, 1.25) == 70.0
+    assert physical_to_logical(80, 1.0) == 80.0
+    assert physical_to_logical(80, 0) == 80.0
+    assert physical_to_logical(80, -1) == 80.0
+
+
+def test_ring_resolution_matches_visual_at_dpi():
+    """高 DPI（125%）下松手圈层判定与圆盘显示一致（回归保护）
+
+    钩子给物理像素、圆盘半径是逻辑像素；若不做换算，物理距离落在
+    70~87.5px 区间会被判成外层，而圆盘显示仍是内层——"命令提示不同步"。
+    """
+    from src.gesture_engine import GestureEngine, physical_to_logical
+    from src.menu_geometry import scaled_radius
+
+    cfg = {"settings": {"menu_scale": 100}}
+    dpr = 1.25
+    eng = GestureEngine(config=cfg, on_gesture=lambda *a: None,
+                        on_gesture_feedback=lambda *a: None,
+                        on_menu_show=lambda *a: None,
+                        on_menu_hide=lambda: None,
+                        on_extension_hint=lambda *a: None)
+
+    def visual_ring(phys: float) -> str:
+        # 与 qt_radial_menu.update_highlight 一致：扩展圈边界是 outer_ring_radius
+        d = phys / dpr
+        if d > scaled_radius(cfg["settings"], "outer_ring_radius"):
+            return "extension"
+        if d > scaled_radius(cfg["settings"], "ring_radius"):
+            return "outer"
+        if d > scaled_radius(cfg["settings"], "dead_zone_radius"):
+            return "inner"
+        return "dead"
+
+    dead = scaled_radius(cfg["settings"], "dead_zone_radius")
+    for phys in range(0, 300):
+        logical = physical_to_logical(phys, dpr)
+        if logical <= dead:
+            continue  # 死区内不触发命令，不校验圈层
+        ring = eng._resolve_gesture(100, 0, logical)[1]
+        assert ring == visual_ring(phys), f"phys={phys}px"
