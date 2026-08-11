@@ -33,6 +33,10 @@ IMC_GETCONVERSIONMODE = 0x0001
 IMC_SETCONVERSIONMODE = 0x0002
 IME_CMODE_NATIVE = 0x0001
 
+# SendInput 全局串行锁：ESC 取消（主线程）与 pyautogui 回退（命令 worker）
+# 可能并发触发，用锁保证按键不交错
+_input_lock = threading.Lock()
+
 # 线程本地存储，确保每个线程独立初始化 COM
 _thread_local = threading.local()
 # 模块级缓存，按 target 分别缓存（autocad / zwcad）
@@ -193,11 +197,13 @@ def cancel_context_menu():
 
     钩子不拦截右键，CAD 收到右键释放会弹菜单；在松手时刻统一调用
     （app 的 hide 事件处理），无论是否触发命令都取消，避免菜单残留。
+    与命令回退的按键模拟共用 _input_lock，防止并发 SendInput 交错。
     """
-    pyautogui.press('esc', _pause=False)
-    time.sleep(0.02)
-    pyautogui.press('esc', _pause=False)
-    time.sleep(0.02)
+    with _input_lock:
+        pyautogui.press('esc', _pause=False)
+        time.sleep(0.02)
+        pyautogui.press('esc', _pause=False)
+        time.sleep(0.02)
 
 
 def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -> str:
@@ -223,23 +229,26 @@ def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -
         # 输入法切英文，否则按键会被 IME 吞成中文
         _switch_to_english_ime()
 
-        parts = [k.strip().lower() for k in key.split("+")]
-        if len(parts) == 1:
-            single = parts[0]
-            if len(single) > 1 and single in pyautogui.KEYBOARD_KEYS:
-                pyautogui.press(single, _pause=False)
+        # 与 cancel_context_menu 共用锁：worker 回退与主线程 ESC 的
+        # SendInput 按键不能交错，整个按键序列都在锁内
+        with _input_lock:
+            parts = [k.strip().lower() for k in key.split("+")]
+            if len(parts) == 1:
+                single = parts[0]
+                if len(single) > 1 and single in pyautogui.KEYBOARD_KEYS:
+                    pyautogui.press(single, _pause=False)
+                else:
+                    for ch in single:
+                        pyautogui.press(ch, _pause=False)
+                    time.sleep(0.01)
+                    pyautogui.press('enter', _pause=False)
+            elif len(parts) >= 2 and parts[0] in ("ctrl", "alt", "shift", "win"):
+                pyautogui.hotkey(*parts, _pause=False)
             else:
-                for ch in single:
-                    pyautogui.press(ch, _pause=False)
+                for k in parts:
+                    pyautogui.press(k, _pause=False)
                 time.sleep(0.01)
                 pyautogui.press('enter', _pause=False)
-        elif len(parts) >= 2 and parts[0] in ("ctrl", "alt", "shift", "win"):
-            pyautogui.hotkey(*parts, _pause=False)
-        else:
-            for k in parts:
-                pyautogui.press(k, _pause=False)
-            time.sleep(0.01)
-            pyautogui.press('enter', _pause=False)
         return "fallback"
     except Exception:
         return "failed"

@@ -63,3 +63,15 @@ def test_feedback_tip_offset_clamped():
     assert tip.y() <= screen.bottom() - tip.height()
     tip._hide_timer.stop()
     tip.hide()
+
+def test_feedback_hide_tip():
+    """hide_tip：立即隐藏提示并停掉隐藏计时器（防旧弹窗残留）"""
+    _app()
+    from src.qt_feedback import QFeedbackTip
+    tip = QFeedbackTip()
+    tip.show_feedback("直线", "L", {"feedback_duration_ms": 5000,
+                                    "feedback_position": "bottom_center"})
+    assert tip.isVisible()
+    tip.hide_tip()
+    assert not tip.isVisible()
+    assert not tip._hide_timer.isActive()

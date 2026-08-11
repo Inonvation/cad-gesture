@@ -46,7 +46,14 @@ class QFeedbackTip(QWidget):
         self.update()
         self.show()
         self.raise_()
+        self.repaint()   # 同步重绘，确保新内容立即替换旧弹窗
         self._hide_timer.start(self._duration_ms)
+
+    def hide_tip(self) -> None:
+        """立即隐藏当前提示：新一次手势开始时清除上一条残留弹窗"""
+        self._fade.stop()
+        self._hide_timer.stop()
+        self.hide()
 
     def _position_for(self, pos: str, offset_x: int = 0, offset_y: int = 0) -> None:
         """按预设锚点定位，再叠加像素偏移，最后夹紧在屏幕可用区内"""
@@ -83,9 +90,12 @@ class QFeedbackTip(QWidget):
         self._fade.stop()
         self._fade.setStartValue(self.windowOpacity())
         self._fade.setEndValue(0.0)
+        try:
+            self._fade.finished.disconnect(self.hide)
+        except (TypeError, RuntimeError):
+            pass
         self._fade.finished.connect(self.hide)
         self._fade.start()
-
     def paintEvent(self, e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)

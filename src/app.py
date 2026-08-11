@@ -138,6 +138,13 @@ class CADGestureApp:
         # 菜单被 Esc/左键取消时复位引擎手势状态，阻止松键补发命令
         self.menu._on_cancel = self.gesture_engine.cancel_gesture
 
+        # 命令执行 worker：COM SendCommand 在 CAD 忙时可能阻塞数秒，
+        # 放后台线程串行执行，主线程只做入队——弹窗/菜单/下一次手势即时响应
+        self._cmd_queue = queue.Queue()
+        self._cmd_worker = threading.Thread(
+            target=self._cmd_worker_loop, daemon=True)
+        self._cmd_worker.start()
+
         self._exit_poll_count = 0
         self._quitting = False
 
@@ -180,6 +187,17 @@ class CADGestureApp:
     def _queue_extension_hint(self, is_in_zone: bool):
         self.event_queue.put(("extension_hint", is_in_zone))
 
+    def _cmd_worker_loop(self):
+        """后台串行执行 CAD 命令（COM SendCommand 可能阻塞，不能占用主线程）"""
+        while True:
+            key, desc, target = self._cmd_queue.get()
+            try:
+                result = execute_with_cancel(key, desc, target)
+                if result != "ok":
+                    self.log.warning("命令执行结果: %s（%s）", result, key)
+            except Exception as e:
+                self.log.error("命令执行错误: %s", e, exc_info=True)
+
     def _show_feedback(self, cfg: dict):
         """松手触发命令后立即显示反馈提示（位置/内容/时长均由设置控制）"""
         try:
@@ -216,6 +234,8 @@ class CADGestureApp:
                     event_type, data = self.event_queue.get_nowait()
                     try:
                         if event_type == "show":
+                            # 新一次手势开始：清掉上一条残留弹窗，避免提示串台
+                            self._feedback.hide_tip()
                             x, y, window_type = data
                             self.profile = get_profile_for_window(self.config, window_type)
                             if self.profile is None:
@@ -239,6 +259,14 @@ class CADGestureApp:
                                 sector_cfg = get_sector_command(profile, ring_type, sector)
                                 if sector_cfg.get("key"):
                                     self._show_feedback(sector_cfg)
+                                    self.log.info(
+                                        "反馈: %s/%s扇区%d -> %s [%s]", window_type,
+                                        ring_type, sector,
+                                        sector_cfg.get("label", "") or sector_cfg.get("description", ""),
+                                        sector_cfg.get("key", "").upper())
+                                else:
+                                    # 空扇区不触发命令：同时清掉残留弹窗，避免显示上一条命令
+                                    self._feedback.hide_tip()
                             except Exception as e:
                                 self.log.error("命令反馈错误: %s", e, exc_info=True)
                         elif event_type == "hide":
@@ -263,7 +291,12 @@ class CADGestureApp:
                                 desc = sector_cfg.get("description", "")
                                 target = profile.get("target", "autocad")
                                 if key:
-                                    execute_with_cancel(key, desc, target)
+                                    self.log.info(
+                                        "执行: %s/%s扇区%d -> %s [%s]", window_type,
+                                        ring_type, sector,
+                                        sector_cfg.get("label", "") or desc, key.upper())
+                                    # 后台执行，主线程不被 COM SendCommand 阻塞
+                                    self._cmd_queue.put((key, desc, target))
                             except Exception as e:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)
                         elif event_type == "update_check_result":
