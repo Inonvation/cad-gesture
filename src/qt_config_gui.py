@@ -897,7 +897,8 @@ class QConfigGUI(QMainWindow):
         profile = self.config.get("profiles", {}).get(self.current_profile, {})
         cfg = profile.get(_layer_key(layer), {}).get(str(idx), {})
         n = self.config.get("settings", {}).get("sector_count", 8)
-        self._popup_ctrl.fill(layer, idx, cfg, n)
+        self._popup_ctrl.fill(
+            layer, idx, cfg, n, self.config.get("settings", {}))
         # 用户拖动过浮层则保持其位置，否则固定显示在圆盘下方
         if not self._popup.user_moved:
             self._place_popup()
@@ -1408,6 +1409,7 @@ class QConfigGUI(QMainWindow):
 
     def _restore_config(self, cfg):
         self.config = cfg
+        self._popup.set_settings(self.config.get("settings", {}))
         self.current_profile = self.config.get("settings", {}).get(
             "active_profile", "AutoCAD-常用")
         self._selected_sector = None

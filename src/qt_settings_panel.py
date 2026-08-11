@@ -19,7 +19,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
                                QComboBox, QFileDialog, QGridLayout,
                                QHBoxLayout, QLabel, QPushButton, QScrollArea,
-                               QSlider, QToolTip, QVBoxLayout, QWidget,
+                               QSlider, QSpinBox, QToolTip, QVBoxLayout, QWidget,
                                QMessageBox)
 
 from src.config_manager import (save_config, get_auto_start, set_auto_start,
@@ -211,7 +211,7 @@ class _BasePage(QWidget):
         self.on_language_changed = None
         self.on_ui_font_changed = None   # 界面字号实时变化回调
         self.on_open_test = None         # 打开手势测试页（维护页按钮）
-        self._slider_labels = {}       # key -> (name_lb, unit, val_lb, divisor, slider)
+        self._slider_labels = {}       # key -> (name_lb, unit, spinbox, divisor, slider)
         self._tr = []                  # [(widget, zh_text)] 语言切换刷新
         self._help_items = []          # [_HelpIcon] 语言切换刷新 tooltip
 
@@ -264,7 +264,11 @@ class _BasePage(QWidget):
 
     def _slider_row(self, zh_name, key, lo, hi, unit,
                     on_change=None, divisor=1.0, container=None, help=None):
-        """向页面添加一行：名称 | 滑杆 | 当前值。container 为 None 时加进 body"""
+        """添加统一的滑杆行：名称 | 滑杆 | 可输入数字。
+
+        滑杆和右侧数字框共用同一份整数范围，数字框显示经过 divisor 换算
+        前的编辑值。拖动时实时更新预览，松手或输入数字后通过防抖保存。
+        """
         row = QHBoxLayout()
         row.setSpacing(10)
         name = QLabel(T(zh_name))
@@ -275,26 +279,50 @@ class _BasePage(QWidget):
         raw = self.config.get("settings", {}).get(key, lo)
         val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
         val = max(lo, min(hi, val))
-        lb = QLabel(f"{val}{unit}")
-        lb.setFixedWidth(56)
-        lb.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
         sl = QSlider(Qt.Horizontal)
         sl.setRange(lo, hi)
         sl.setValue(val)
-        self._slider_labels[key] = (name, unit, lb, divisor, sl)
+        spin = QSpinBox()
+        spin.setRange(lo, hi)
+        spin.setValue(val)
+        spin.setSuffix(unit)
+        spin.setFixedWidth(82)
+        spin.setAlignment(Qt.AlignRight)
+        spin.setKeyboardTracking(False)
+        self._slider_labels[key] = (name, unit, spin, divisor, sl)
+        syncing = {"value": False}
 
-        def _on_value(v, l=lb, u=unit, k=key, d=divisor):
-            l.setText(f"{v}{u}")
+        def _write(v, k=key, d=divisor):
             self.config.setdefault("settings", {})[k] = v / d if d != 1.0 else v
             if on_change:
                 on_change()
-        sl.valueChanged.connect(_on_value)
+
+        def _on_slider(v):
+            if syncing["value"]:
+                return
+            syncing["value"] = True
+            spin.setValue(v)
+            syncing["value"] = False
+            _write(v)
+
+        def _on_spin(v):
+            if syncing["value"]:
+                return
+            syncing["value"] = True
+            sl.setValue(v)
+            syncing["value"] = False
+            _write(v)
+            self._save()
+
+        sl.valueChanged.connect(_on_slider)
+        spin.valueChanged.connect(_on_spin)
         sl.sliderReleased.connect(self._save)  # 拖动结束才保存
         row.addWidget(sl, 1)
-        row.addWidget(lb)
+        row.addWidget(spin)
         (container or self.body).addLayout(row)
         self.register_text(name, zh_name)
-        return sl, lb
+        return sl, spin
 
     def _section(self, zh: str, container=None):
         """分组小标题：把页面按逻辑分段，避免一长列平铺"""
@@ -361,13 +389,15 @@ class _BasePage(QWidget):
         self._refresh_sliders()
 
     def _refresh_sliders(self):
-        for key, (name_lb, unit, lb, divisor, sl) in self._slider_labels.items():
+        for key, (name_lb, unit, spin, divisor, sl) in self._slider_labels.items():
             raw = self.config.get("settings", {}).get(key, 0)
             val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
             sl.blockSignals(True)
+            spin.blockSignals(True)
             sl.setValue(val)
+            spin.setValue(val)
+            spin.blockSignals(False)
             sl.blockSignals(False)
-            lb.setText(f"{val}{unit}")
 
 
 class AppearancePage(_BasePage):
@@ -550,7 +580,11 @@ class AppearancePage(_BasePage):
             sl.setRange(v_min, v_max)
             sl.setValue(vals[k])
             sl.blockSignals(False)
-            self._slider_labels[k][2].setText(f"{vals[k]}px")
+            spin = self._slider_labels[k][2]
+            spin.blockSignals(True)
+            spin.setRange(v_min, v_max)
+            spin.setValue(vals[k])
+            spin.blockSignals(False)
 
     # ---- 界面模式 ----
 

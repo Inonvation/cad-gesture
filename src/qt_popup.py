@@ -40,9 +40,9 @@ class PopupController:
         popup.esc_requested.connect(on_esc)
         popup.reposition_requested.connect(on_reposition)
 
-    def fill(self, layer: str, idx: int, cfg: dict, n: int) -> None:
+    def fill(self, layer: str, idx: int, cfg: dict, n: int, settings=None) -> None:
         """填充扇区数据（浮层尚未显示，由调用方决定定位）"""
-        self.popup.show_sector(layer, idx, cfg, n)
+        self.popup.show_sector(layer, idx, cfg, n, settings)
 
     def show(self) -> None:
         self.popup.show()

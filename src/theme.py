@@ -251,6 +251,8 @@ def build_qss(t: UITheme, mode: str = None) -> str:
         mode = "light" if t is UI_LIGHT else "dark"
     # 下拉箭头按深浅色取对应版本，对勾统一白色（两种主题的 accent 上均清晰）
     arrow = _asset_path(f"arrow_{mode}.png").replace("\\", "/")
+    spin_up = _asset_path(f"spin_up_{mode}.png").replace("\\", "/")
+    spin_down = _asset_path(f"spin_down_{mode}.png").replace("\\", "/")
     check = _asset_path("check.png").replace("\\", "/")
     return f"""
 QMainWindow, QWidget {{ background: {t.bg}; color: {t.text};
@@ -266,8 +268,15 @@ QLineEdit, QComboBox, QSpinBox {{
     selection-background-color: {t.accent_dim};
 }}
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{ border-color: {t.accent}; }}
-QLineEdit:disabled, QComboBox:disabled {{
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
     color: {t.text_muted}; background: {t.bg_raised}; }}
+QSpinBox:hover {{ border-color: {t.accent_dim}; }}
+QSpinBox::up-button, QSpinBox::down-button {{
+    width: 18px; border: none; background: transparent; }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+    background: {t.bg_hover}; }}
+QSpinBox::up-arrow {{ image: url({spin_up}); width: 8px; height: 5px; }}
+QSpinBox::down-arrow {{ image: url({spin_down}); width: 8px; height: 5px; }}
 QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox::down-arrow {{ image: url({arrow}); width: 12px; height: 7px; }}
 QComboBox:hover {{ border-color: {t.accent_dim}; }}
@@ -428,6 +437,11 @@ QFrame#popupCard {{
     border-radius: {RADIUS_LG}px;
 }}
 QFrame#popupCard QLabel {{ background: transparent; }}
+QWidget#commandPreview {{
+    background: {t.bg_raised}; border: 1px solid {t.border};
+    border-radius: {RADIUS_MD}px; }}
+QLabel#previewCaption {{ color: {t.text_secondary};
+    font-size: {font_px(FONT_XS)}px; font-weight: 600; }}
 QLabel#popupTitle {{
     color: {t.text}; font-size: {font_px(FONT_SM)}px; font-weight: 600;
 }}

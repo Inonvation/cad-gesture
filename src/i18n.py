@@ -92,6 +92,7 @@ _EN: Dict[str, str] = {
     "显示名称": "Display Name",
     "快捷键": "Shortcut",
     "CAD 命令": "CAD Command",
+    "实时预览": "Live Preview",
     "保存": "Save",
     "清空": "Clear",
     "删除该扇区命令": "Delete this sector's command",

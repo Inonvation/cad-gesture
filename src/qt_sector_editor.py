@@ -9,11 +9,85 @@
 """
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (QFormLayout, QFrame, QHBoxLayout,
-                               QLabel, QLineEdit, QPushButton, QVBoxLayout)
+                               QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget)
 
 from src.i18n import T
-from src.theme import FONT_SM, font_px
+from src.menu_geometry import scaled_radii
+from src.qt_renderer import (draw_center, draw_ring, draw_shadow, EXTENSION, INNER, OUTER)
+from src.theme import FONT_SM, font_px, theme_from_settings
+
+
+class _CommandPreview(QWidget):
+    """命令编辑时的迷你圆盘预览，随输入框内容实时刷新。"""
+
+    _LAYER_KEY = {"inner": "sectors", "outer": "outer_sectors",
+                  "extension": "extension_sectors"}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("commandPreview")
+        self.setMinimumHeight(152)
+        self._settings = {}
+        self._layer = "inner"
+        self._idx = 0
+        self._count = 8
+        self._cfg = {}
+
+    def set_data(self, layer, idx, cfg, n, settings=None):
+        self._layer = layer
+        self._idx = idx
+        self._cfg = dict(cfg or {})
+        self._count = max(1, int(n or 8))
+        if settings is not None:
+            self._settings = settings
+        self.update()
+
+    def set_settings(self, settings):
+        self._settings = settings or {}
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        settings = self._settings or {}
+        theme = theme_from_settings(settings)
+        radii = scaled_radii(settings)
+        ext = max(1.0, float(radii.get("ext_ring_radius", 185)))
+        fit = max(0.01, (min(self.width(), self.height()) / 2 - 12) / ext)
+        cx = self.width() / 2
+        cy = self.height() / 2
+        dead = radii["dead_zone_radius"] * fit
+        inner = radii["ring_radius"] * fit
+        outer = radii["outer_ring_radius"] * fit
+        ext_r = radii["ext_ring_radius"] * fit
+        key = self._LAYER_KEY.get(self._layer, "sectors")
+        sectors = {key: {str(self._idx): self._cfg}}
+        font_scale = float(settings.get("menu_font_scale", 100)) / 100.0
+        light = getattr(theme, "light", False)
+
+        draw_shadow(p, cx, cy, ext_r, light=light)
+        draw_ring(p, cx, cy, outer, ext_r, self._count,
+                  sectors.get("extension_sectors", {}), theme.extension,
+                  layer=EXTENSION, sel=(self._layer, self._idx),
+                  placeholder=True, light=light, font_scale=font_scale)
+        draw_ring(p, cx, cy, inner, outer, self._count,
+                  sectors.get("outer_sectors", {}), theme.outer,
+                  layer=OUTER, sel=(self._layer, self._idx),
+                  placeholder=True, light=light, font_scale=font_scale)
+        draw_ring(p, cx, cy, dead, inner, self._count,
+                  sectors.get("sectors", {}), theme.inner,
+                  layer=INNER, sel=(self._layer, self._idx),
+                  placeholder=True, light=light, font_scale=font_scale)
+
+        label = self._cfg.get("label", "").strip() or T("未设置")
+        shortcut = self._cfg.get("key", "").strip().upper()
+        command = self._cfg.get("description", "").strip().upper()
+        sub = " · ".join(x for x in (shortcut, command) if x)
+        draw_center(p, cx, cy, dead, theme, min(self.width(), self.height()),
+                    label, sub, font_scale=font_scale)
+        p.end()
 
 
 class SectorEditorPopup(QFrame):
@@ -36,10 +110,12 @@ class SectorEditorPopup(QFrame):
         self._loading = False
         self._layer = "inner"
         self._idx = 0
+        self._count = 8
         self._dirty = False            # 有未保存的输入修改
         self._dragging = False
         self._drag_offset = None
         self.user_moved = False   # 用户拖动过浮层：此后不再自动定位到圆盘下方
+        self._settings = {}
 
         root = QFrame(self)
         root.setObjectName("popupCard")
@@ -83,6 +159,12 @@ class SectorEditorPopup(QFrame):
         form.addRow(self._field(T("CAD 命令")), self.desc_entry)
         lay.addLayout(form)
 
+        self.preview_title = QLabel(T("实时预览"))
+        self.preview_title.setObjectName("previewCaption")
+        lay.addWidget(self.preview_title)
+        self.command_preview = _CommandPreview(self)
+        lay.addWidget(self.command_preview)
+
         for w in (self.label_entry, self.key_entry, self.desc_entry):
             w.textChanged.connect(self._on_edited)
 
@@ -117,6 +199,7 @@ class SectorEditorPopup(QFrame):
         self.label_entry.setPlaceholderText(T("圆盘上显示的名称"))
         self.key_entry.setPlaceholderText(T("回退快捷键，如 L / CO"))
         self.desc_entry.setPlaceholderText(T("发送到 CAD 的命令名，如 LINE"))
+        self.preview_title.setText(T("实时预览"))
         self.btn_save.setText(T("保存"))
         self.btn_save.setToolTip(T("保存该扇区的命令修改"))
         self.btn_clear.setText(T("清空"))
@@ -125,10 +208,13 @@ class SectorEditorPopup(QFrame):
 
     # ========== 外部接口 ==========
 
-    def show_sector(self, layer: str, idx: int, cfg: dict, n: int) -> None:
-        """打开浮层显示某扇区配置。cfg 为扇区命令 dict（可能为空）。"""
+    def show_sector(self, layer: str, idx: int, cfg: dict, n: int, settings=None) -> None:
+        """打开浮层显示某扇区配置，并同步迷你圆盘预览。"""
         self._layer = layer
         self._idx = idx
+        self._count = max(1, int(n or 8))
+        if settings is not None:
+            self._settings = settings
         self._loading = True
         self._update_title()
         self.meta.setText(T("已保存"))
@@ -137,6 +223,19 @@ class SectorEditorPopup(QFrame):
         self.key_entry.setText(cfg.get("key", ""))
         self.desc_entry.setText(cfg.get("description", ""))
         self._loading = False
+        self.command_preview.set_data(
+            layer, idx, self._current_cfg(), n, self._settings)
+
+    def set_settings(self, settings):
+        self._settings = settings or {}
+        self.command_preview.set_settings(self._settings)
+
+    def _current_cfg(self):
+        return {
+            "label": self.label_entry.text(),
+            "key": self.key_entry.text(),
+            "description": self.desc_entry.text(),
+        }
 
     def _update_title(self):
         layer_names = {"inner": T("内层"), "outer": T("外层"), "extension": T("扩展圈")}
@@ -150,6 +249,9 @@ class SectorEditorPopup(QFrame):
         if not self._loading:
             self._dirty = True
             self.meta.setText(T("未保存"))
+            self.command_preview.set_data(
+                self._layer, self._idx, self._current_cfg(),
+                self._count, self._settings)
             self.edited.emit()
 
     def mark_saved(self):
