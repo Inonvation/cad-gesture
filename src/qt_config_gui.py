@@ -2,7 +2,7 @@
 
 结构：左侧导航栏 + 上下文区（方案列表），主区 QStackedWidget 多页：
   - 圆盘编辑页：大圆盘预览 + 可折叠命令库；点击扇区弹出就地编辑器
-  - 设置分类页：外观 / 触发手感 / 圆盘尺寸 / 常规 / 维护（侧边栏进入）
+  - 设置分类页：外观与尺寸 / 触发与反馈 / 常规 / 维护（侧边栏进入；测试页由维护页按钮进入）
 功能：方案增删改、命令库拖放/搜索/放置模式、撤销重做、自动保存、
 中英文切换、浅色/深色界面模式。
 """
@@ -41,15 +41,16 @@ from src.qt_popup import PopupController
 from src.qt_profile_ops import (add_profile, copy_profile, rename_profile,
                                 delete_profile, export_profile,
                                 load_profile_data, apply_profile_data)
-from src.qt_settings_panel import (AppearancePage, TriggerPage, SizePage,
-                                   GeneralPage, MaintenancePage,
-                                   FeedbackPage, TestPage)
+from src.qt_settings_panel import (AppearancePage, TriggerPage,
+                                   GeneralPage, MaintenancePage, TestPage)
 
 # 侧边栏分类页元数据：(分类 key, 中文标题)
-_SETTINGS_PAGES = (("appearance", "外观"), ("trigger", "触发手感"),
-                   ("size", "圆盘尺寸"), ("feedback", "命令反馈"),
+_SETTINGS_PAGES = (("appearance", "外观与尺寸"), ("trigger", "触发与反馈"),
                    ("general", "常规"), ("maintenance", "维护"),
                    ("test", "测试"))
+
+# 侧边栏锚点分类：与 _SETTINGS_PAGES 一致，但跳过「测试」（由维护页按钮进入）
+_ANCHOR_PAGES = tuple((k, zh) for k, zh in _SETTINGS_PAGES if k != "test")
 
 
 class QConfigGUI(QMainWindow):
@@ -126,10 +127,9 @@ class QConfigGUI(QMainWindow):
         self._main_stack = QStackedWidget()
         self._main_stack.addWidget(self._build_editor_page())
 
-        # 设置分类页（外观 / 触发手感 / 圆盘尺寸 / 常规 / 维护）
+        # 设置分类页（外观与尺寸 / 触发与反馈 / 常规 / 维护 / 测试）
         self._setting_pages = {}
         page_cls = {"appearance": AppearancePage, "trigger": TriggerPage,
-                    "size": SizePage, "feedback": FeedbackPage,
                     "general": GeneralPage, "maintenance": MaintenancePage,
                     "test": TestPage}
         for key, _zh in _SETTINGS_PAGES:
@@ -144,6 +144,7 @@ class QConfigGUI(QMainWindow):
             page.on_ui_mode_changed = self._on_ui_mode_changed
             page.on_language_changed = self._on_language_changed
             page.on_ui_font_changed = self._refresh_font
+            page.on_open_test = lambda: self._show_setting("test")
             self._setting_pages[key] = page
             self._main_stack.addWidget(page)
         self._main_stack.setCurrentIndex(0)
@@ -206,7 +207,7 @@ class QConfigGUI(QMainWindow):
         # 设置分类锚点文本
         for i in range(self.anchor_list.count()):
             it = self.anchor_list.item(i)
-            it.setText(T(_SETTINGS_PAGES[i][1]))
+            it.setText(T(_ANCHOR_PAGES[i][1]))
         self._refresh_profiles()
         self._load_profile(self.current_profile)
         self._populate_presets(self.search_entry.text())
@@ -393,7 +394,7 @@ class QConfigGUI(QMainWindow):
         self.anchor_list = QListWidget()
         self.anchor_list.setObjectName("ctxList")
         self.anchor_list.setFocusPolicy(Qt.NoFocus)
-        for key, zh in _SETTINGS_PAGES:
+        for key, zh in _ANCHOR_PAGES:
             item = QListWidgetItem(T(zh))
             item.setData(Qt.UserRole, key)
             self.anchor_list.addItem(item)

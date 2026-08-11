@@ -26,8 +26,8 @@ def test_feedback_tip_show_and_hide():
 def test_feedback_page_controls():
     """命令反馈设置页：开关 / 位置 / 名称 / 快捷键 / 时长齐全"""
     _app()
-    from src.qt_settings_panel import FeedbackPage
-    page = FeedbackPage({"settings": {}})
+    from src.qt_settings_panel import TriggerPage
+    page = TriggerPage({"settings": {}})
     assert page.chk_feedback.isChecked() is True
     assert page.chk_name.isChecked() is True
     assert page.chk_key.isChecked() is True

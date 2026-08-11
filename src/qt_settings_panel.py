@@ -1,11 +1,11 @@
 """设置分类页面 — 每个分类独立一页（由侧边栏导航切换进入）
 
 页面（与侧边栏分类一一对应，qt_config_gui 将其加入 QStackedWidget）：
-- AppearancePage  外观：界面模式（浅/深）、圆盘主题色板、自定义主色、不透明度
-- TriggerPage     触发手感：长按延迟、触发距离
-- SizePage        圆盘尺寸：5 个滑杆 + 实时预览
+- AppearancePage  外观与尺寸：界面模式、主题、自定义主色、不透明度、字号 + 圆盘大小/半径/屏幕内限制 + 实时预览
+- TriggerPage     触发与反馈：触发按键、长按延迟、触发距离、手势轨迹线 + 命令反馈提示
 - GeneralPage     常规：语言、启动项、检查更新
-- MaintenancePage 维护：配置目录、方案导入导出、恢复默认
+- MaintenancePage 维护：配置目录、方案操作、备份恢复、手势测试入口
+- TestPage        手势测试页保留在页面栈中，但不在侧边栏（由维护页按钮进入）
 
 公共基类 _BasePage 提供：slider_row / save / refresh 骨架 / retranslate 钩子。
 回调属性（由 qt_config_gui 注入）：
@@ -19,7 +19,8 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
                                QComboBox, QFileDialog, QGridLayout,
                                QHBoxLayout, QLabel, QPushButton, QScrollArea,
-                               QSlider, QVBoxLayout, QWidget, QMessageBox)
+                               QSlider, QToolTip, QVBoxLayout, QWidget,
+                               QMessageBox)
 
 from src.config_manager import (save_config, get_auto_start, set_auto_start,
                                 get_config_path, set_config_dir,
@@ -163,6 +164,36 @@ class _MenuPreview(QWidget):
         p.end()
 
 
+class _HelpIcon(QLabel):
+    """说明图标：选项标签后的 "?" 圆圈，鼠标悬浮立即显示说明"""
+
+    def __init__(self, help_zh: str, parent=None):
+        super().__init__("?", parent)
+        self.setProperty("class", "helpIcon")
+        self.setFixedSize(16, 16)
+        self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_Hover)
+        self._help_zh = help_zh
+
+    def set_help(self, zh: str):
+        """语言切换后刷新说明文案"""
+        self._help_zh = zh
+
+    def help_text(self) -> str:
+        return T(self._help_zh)
+
+    def enterEvent(self, e):
+        QToolTip.showText(
+            self.mapToGlobal(QPoint(0, self.height())),
+            self.help_text(), self)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        QToolTip.hideText()
+        super().leaveEvent(e)
+
+
 class _BasePage(QWidget):
     """设置分类页基类：公共布局骨架 + 公共能力（滑杆行/保存/刷新/重译）"""
 
@@ -179,8 +210,10 @@ class _BasePage(QWidget):
         self.on_ui_mode_changed = None
         self.on_language_changed = None
         self.on_ui_font_changed = None   # 界面字号实时变化回调
+        self.on_open_test = None         # 打开手势测试页（维护页按钮）
         self._slider_labels = {}       # key -> (name_lb, unit, val_lb, divisor, slider)
         self._tr = []                  # [(widget, zh_text)] 语言切换刷新
+        self._help_items = []          # [_HelpIcon] 语言切换刷新 tooltip
 
         # 页面骨架：标题 + 滚动内容区
         outer = QVBoxLayout(self)
@@ -212,18 +245,25 @@ class _BasePage(QWidget):
                 w.setText(T(zh))
             except Exception:
                 pass
+        for icon in self._help_items:
+            try:
+                icon.set_help(icon._help_zh)
+            except Exception:
+                pass
         self.title.setText(T(self.title_zh))
 
     # ---- 公共控件 ----
 
     def _slider_row(self, zh_name, key, lo, hi, unit,
-                    on_change=None, divisor=1.0, container=None):
+                    on_change=None, divisor=1.0, container=None, help=None):
         """向页面添加一行：名称 | 滑杆 | 当前值。container 为 None 时加进 body"""
         row = QHBoxLayout()
         row.setSpacing(10)
         name = QLabel(T(zh_name))
         name.setMinimumWidth(96)
         row.addWidget(name)
+        if help:
+            row.addWidget(self._help(help))
         raw = self.config.get("settings", {}).get(key, lo)
         val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
         val = max(lo, min(hi, val))
@@ -247,6 +287,39 @@ class _BasePage(QWidget):
         (container or self.body).addLayout(row)
         self.register_text(name, zh_name)
         return sl, lb
+
+    def _section(self, zh: str, container=None):
+        """分组小标题：把页面按逻辑分段，避免一长列平铺"""
+        lb = QLabel(T(zh))
+        lb.setObjectName("sectionTitle")
+        self.register_text(lb, zh)
+        (container or self.body).addWidget(lb)
+        return lb
+
+    def _help(self, zh: str) -> "_HelpIcon":
+        """创建一个说明图标并注册（调用方负责把它加入布局）"""
+        icon = _HelpIcon(zh, self)
+        self._help_items.append(icon)
+        return icon
+
+    def _check_row(self, zh, key, default, container=None, help=None,
+                   toggled=None):
+        """一行勾选项：名称（可带说明图标）。toggled 覆盖默认写配置行为"""
+        chk = QCheckBox(T(zh))
+        chk.setChecked(bool(self.config.get("settings", {}).get(key, default)))
+        if toggled is None:
+            chk.toggled.connect(lambda b: self._set(key, b))
+        else:
+            chk.toggled.connect(toggled)
+        self.register_text(chk, zh)
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        row.addWidget(chk)
+        if help:
+            row.addWidget(self._help(help))
+        row.addStretch(1)
+        (container or self.body).addLayout(row)
+        return chk
 
     # ---- 保存 / 配置 ----
 
@@ -275,10 +348,16 @@ class _BasePage(QWidget):
 
 
 class AppearancePage(_BasePage):
-    """外观：界面模式（浅/深）、圆盘主题色板、自定义主色、不透明度 + 实时预览"""
+    """外观与尺寸：界面模式、主题、自定义主色、不透明度、字号 + 圆盘大小/半径/屏幕内限制 + 实时预览"""
+
+    _RADIUS_KEYS = ("dead_zone_radius", "ring_radius",
+                    "outer_ring_radius", "ext_ring_radius")
+    _RADIUS_GAP = 10  # 相邻圈层最小间隔（px）
+    _RADIUS_DEFAULTS = {"dead_zone_radius": 24, "ring_radius": 70,
+                        "outer_ring_radius": 135, "ext_ring_radius": 185}
 
     def __init__(self, config, parent=None):
-        self.title_zh = "外观"
+        self.title_zh = "外观与尺寸"
         super().__init__(config, parent)
         self.title.setText(T(self.title_zh))
 
@@ -359,24 +438,44 @@ class AppearancePage(_BasePage):
         # 不透明度（加进左列）
         self._opacity_slider, self._opacity_label = self._slider_row(
             "不透明度", "menu_opacity", 30, 100, "%",
-            on_change=self._update_preview, divisor=100.0, container=lv)
-
-        # 手势轨迹线（从中心引出跟随光标）
-        self.chk_trail = QCheckBox(T("手势轨迹线"))
-        self.chk_trail.setToolTip(T("滑动时显示从中心引出的轨迹线"))
-        self.chk_trail.setChecked(
-            config.get("settings", {}).get("gesture_trail", True))
-        self.chk_trail.toggled.connect(lambda b: self._set("gesture_trail", b))
-        self.register_text(self.chk_trail, "手势轨迹线")
-        lv.addWidget(self.chk_trail)
+            on_change=self._update_preview, divisor=100.0, container=lv,
+            help="圆盘的透明程度。数值越低越透明，背后的图纸越清楚。")
 
         # 文字大小：圆盘 / 界面（百分比，100 = 默认）
         self._menu_font_slider, self._menu_font_label = self._slider_row(
             "圆盘文字大小", "menu_font_scale", 70, 160, "%",
-            on_change=self._update_preview, container=lv)
+            on_change=self._update_preview, container=lv,
+            help="圆盘扇区内命令文字的缩放比例，100% 为默认大小。")
         self._ui_font_slider, self._ui_font_label = self._slider_row(
             "界面文字大小", "ui_font_scale", 75, 160, "%",
-            on_change=self._on_ui_font_changed, container=lv)
+            on_change=self._on_ui_font_changed, container=lv,
+            help="设置窗口界面的文字缩放，调整后立即生效。")
+
+        # ===== 圆盘尺寸（原「圆盘尺寸」分类合并进来） =====
+        self._section("圆盘大小", lv)
+        self._size_sliders = {}
+        sl, lb = self._slider_row(
+            "整体圆盘大小", "menu_scale", 50, 150, "%",
+            on_change=self._on_size_changed, container=lv,
+            help="按百分比整体放大或缩小圆盘，所有圈层一起变化。")
+        self._size_sliders["menu_scale"] = sl
+        self._section("圈层半径", lv)
+        for key, text, lo, hi, unit, help_text in (
+                ("dead_zone_radius", "中心圆半径", 8, 60, "px",
+                 "圆心附近的空白区域。半径越大越容易从中心起手瞄准，但会压缩第一圈可用面积。"),
+                ("ring_radius", "第一圈半径", 40, 160, "px", None),
+                ("outer_ring_radius", "第二圈半径", 90, 260, "px", None),
+                ("ext_ring_radius", "最外圈半径", 140, 360, "px", None)):
+            sl, lb = self._slider_row(text, key, lo, hi, unit,
+                                      on_change=self._on_size_changed,
+                                      container=lv, help=help_text)
+            self._size_sliders[key] = sl
+        self._apply_radius_constraints()
+        self._section("显示", lv)
+        self.chk_clamp = self._check_row(
+            "显示限制在屏幕范围内", "menu_clamp_to_screen", True,
+            container=lv,
+            help="开启后圆盘整体保持完整可见；关闭后圆心始终对准按下位置，靠近屏幕边缘可能被裁剪。")
         lv.addStretch(1)
 
         hbox.addWidget(left, 1)
@@ -392,6 +491,43 @@ class AppearancePage(_BasePage):
         """界面字号滑杆拖动：实时重建界面 QSS（由主窗口注入回调）"""
         if self.on_ui_font_changed:
             self.on_ui_font_changed()
+
+    # ---- 圆盘尺寸 ----
+
+    def _on_size_changed(self):
+        self._apply_radius_constraints()
+        self.preview.update()
+
+    def _apply_radius_constraints(self):
+        """按顺序夹紧四个半径：中心圆半径 < 第一圈半径 < 第二圈半径 < 最外圈半径。
+        更新滑块范围并写回夹紧后的配置值，避免圈层重叠或倒序。"""
+        s = self.config.setdefault("settings", {})
+        d = self._RADIUS_DEFAULTS
+        keys = self._RADIUS_KEYS
+        vals = {k: int(s.get(k, d[k])) for k in keys}
+        bounds = {}
+        for i, k in enumerate(keys):
+            if i == 0:
+                v_min, v_max = 8, vals[keys[1]] - self._RADIUS_GAP
+            elif i == len(keys) - 1:
+                v_min, v_max = vals[keys[i - 1]] + self._RADIUS_GAP, 360
+            else:
+                v_min, v_max = (vals[keys[i - 1]] + self._RADIUS_GAP,
+                                vals[keys[i + 1]] - self._RADIUS_GAP)
+            v_max = max(v_min, v_max)
+            vals[k] = max(v_min, min(v_max, vals[k]))
+            bounds[k] = (v_min, v_max)
+        for k in keys:
+            s[k] = vals[k]
+            sl = self._size_sliders.get(k)
+            if sl is None:
+                continue
+            v_min, v_max = bounds[k]
+            sl.blockSignals(True)
+            sl.setRange(v_min, v_max)
+            sl.setValue(vals[k])
+            sl.blockSignals(False)
+            self._slider_labels[k][2].setText(f"{vals[k]}px")
 
     # ---- 界面模式 ----
 
@@ -499,19 +635,24 @@ class AppearancePage(_BasePage):
             self._sync_custom_colors()
         self._refresh_theme_thumbnails()
         self._refresh_sliders()
-        self.chk_trail.blockSignals(True)
-        self.chk_trail.setChecked(s.get("gesture_trail", True))
-        self.chk_trail.blockSignals(False)
         self.preview.set_data(config, profile)
+        self._apply_radius_constraints()
+        self.chk_clamp.blockSignals(True)
+        self.chk_clamp.setChecked(
+            config.get("settings", {}).get("menu_clamp_to_screen", True))
+        self.chk_clamp.blockSignals(False)
 
 
 class TriggerPage(_BasePage):
-    """触发手感：触发按键、长按延迟、触发距离"""
+    """触发与反馈：触发按键/长按延迟/触发距离/轨迹线 + 命令反馈提示"""
 
     def __init__(self, config, parent=None):
-        self.title_zh = "触发手感"
+        self.title_zh = "触发与反馈"
         super().__init__(config, parent)
         self.title.setText(T(self.title_zh))
+
+        # 触发方式
+        self._section("触发方式")
 
         # 触发按键（右键 / 中键 / 侧键）
         btn_row = QHBoxLayout()
@@ -519,6 +660,8 @@ class TriggerPage(_BasePage):
         self._lb_btn = QLabel(T("触发按键"))
         self.register_text(self._lb_btn, "触发按键")
         btn_row.addWidget(self._lb_btn)
+        btn_row.addWidget(self._help(
+            "按下哪个键呼出圆盘。侧键需要鼠标带前进/后退按键。"))
         self.btn_combo = QComboBox()
         self.btn_combo.addItem(T("右键"), "right")
         self.btn_combo.addItem(T("中键"), "middle")
@@ -533,13 +676,92 @@ class TriggerPage(_BasePage):
         self.body.addLayout(btn_row)
 
         self._hold_slider, self._hold_label = self._slider_row(
-            "长按延迟", "hold_threshold_ms", 0, 200, "ms")
+            "长按延迟", "hold_threshold_ms", 0, 200, "ms",
+            help="按下后不动时，经过该时长且有小幅位移即弹出圆盘；数值越小响应越快。")
         self._trig_slider, self._trig_label = self._slider_row(
-            "触发距离", "trigger_distance", 5, 40, "px")
+            "触发距离", "trigger_distance", 5, 40, "px",
+            help="按下后滑动多少像素立即弹出圆盘。越小越灵敏，也越容易误触。")
+
+        # 手势轨迹线（从中心引出跟随光标）
+        self.chk_trail = self._check_row(
+            "手势轨迹线", "gesture_trail", True,
+            help="拖动时从圆心画一条跟随光标的线，帮你判断当前滑向哪个扇区。")
+
+        # ===== 命令反馈（原「命令反馈」分类合并进来） =====
+        self._section("命令反馈")
+        self.chk_feedback = QCheckBox(T("显示命令反馈"))
+        self.chk_feedback.setToolTip(T("执行命令后在屏幕上短暂提示"))
+        self.chk_feedback.setChecked(
+            config.get("settings", {}).get("command_feedback", True))
+        self.chk_feedback.toggled.connect(
+            lambda b: self._set("command_feedback", b))
+        self.body.addWidget(self.chk_feedback)
+        self.register_text(self.chk_feedback, "显示命令反馈")
+
+        # 提示位置
+        pos_row = QHBoxLayout()
+        pos_row.setSpacing(10)
+        self._lb_pos = QLabel(T("提示位置"))
+        self.register_text(self._lb_pos, "提示位置")
+        pos_row.addWidget(self._lb_pos)
+        pos_row.addWidget(self._help("命令执行后，提示文字出现在屏幕的哪个位置。"))
+        self.pos_combo = QComboBox()
+        self.pos_combo.addItem(T("下部中间偏上"), "bottom_center")
+        self.pos_combo.addItem(T("屏幕中心"), "center")
+        self.pos_combo.addItem(T("顶部居中"), "top_center")
+        self.pos_combo.addItem(T("右下角"), "bottom_right")
+        self.pos_combo.addItem(T("左下角"), "bottom_left")
+        self.pos_combo.addItem(T("左上角"), "top_left")
+        self.pos_combo.addItem(T("右上角"), "top_right")
+        cur = config.get("settings", {}).get("feedback_position", "bottom_center")
+        idx = self.pos_combo.findData(cur)
+        self.pos_combo.setCurrentIndex(max(0, idx))
+        self.pos_combo.currentIndexChanged.connect(self._on_pos_changed)
+        pos_row.addWidget(self.pos_combo)
+        pos_row.addStretch(1)
+        self.body.addLayout(pos_row)
+
+        # 位置微调：在所选锚点基础上再平移（像素），默认 0 不动
+        s = config.setdefault("settings", {})
+        s.setdefault("feedback_offset_x", 0)
+        s.setdefault("feedback_offset_y", 0)
+        self._ox_slider, self._ox_label = self._slider_row(
+            "水平偏移", "feedback_offset_x", -300, 300, "px",
+            help="在所选位置基础上再平移的像素值，用于微调提示位置。")
+        self._oy_slider, self._oy_label = self._slider_row(
+            "垂直偏移", "feedback_offset_y", -300, 300, "px",
+            help="在所选位置基础上再平移的像素值，用于微调提示位置。")
+
+        # 提示内容：命令名称 / 快捷键
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+        self.chk_name = QCheckBox(T("显示命令名称"))
+        self.chk_name.setChecked(
+            config.get("settings", {}).get("feedback_show_name", True))
+        self.chk_name.toggled.connect(
+            lambda b: self._set("feedback_show_name", b))
+        content_row.addWidget(self.chk_name)
+        self.chk_key = QCheckBox(T("显示快捷键"))
+        self.chk_key.setChecked(
+            config.get("settings", {}).get("feedback_show_key", True))
+        self.chk_key.toggled.connect(
+            lambda b: self._set("feedback_show_key", b))
+        content_row.addWidget(self.chk_key)
+        content_row.addStretch(1)
+        self.body.addLayout(content_row)
+        self.register_text(self.chk_name, "显示命令名称")
+        self.register_text(self.chk_key, "显示快捷键")
+
+        # 停留时长
+        self._dur_slider, self._dur_label = self._slider_row(
+            "提示时长", "feedback_duration_ms", 500, 3000, "ms")
         self.body.addStretch(1)
 
     def _on_btn_changed(self, idx):
         self._set("trigger_button", self.btn_combo.itemData(idx))
+
+    def _on_pos_changed(self, idx):
+        self._set("feedback_position", self.pos_combo.itemData(idx))
 
     def refresh(self, config, profile=None):
         self.config = config
@@ -549,101 +771,26 @@ class TriggerPage(_BasePage):
         self.btn_combo.blockSignals(True)
         self.btn_combo.setCurrentIndex(max(0, idx))
         self.btn_combo.blockSignals(False)
-
-
-class SizePage(_BasePage):
-    """圆盘尺寸：整体大小 + 4 个半径滑杆（带顺序约束）+ 扇区数量 + 右侧实时预览"""
-
-    _RADIUS_KEYS = ("dead_zone_radius", "ring_radius",
-                    "outer_ring_radius", "ext_ring_radius")
-    _RADIUS_GAP = 10  # 相邻圈层最小间隔（px）
-    _RADIUS_DEFAULTS = {"dead_zone_radius": 24, "ring_radius": 70,
-                        "outer_ring_radius": 135, "ext_ring_radius": 185}
-
-    def __init__(self, config, parent=None):
-        self.title_zh = "圆盘尺寸"
-        super().__init__(config, parent)
-        self.title.setText(T(self.title_zh))
-        # 横向：左滑杆列 + 右预览
-        self._hbox = QHBoxLayout()
-        self._hbox.setSpacing(24)
-        left = QWidget()
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(12)
-        self._size_sliders = {}
-        for key, text, lo, hi, unit in (("menu_scale", "整体圆盘大小", 50, 150, "%"),
-                                        ("dead_zone_radius", "中心圆半径", 8, 60, "px"),
-                                        ("ring_radius", "第一圈半径", 40, 160, "px"),
-                                        ("outer_ring_radius", "第二圈半径", 90, 260, "px"),
-                                        ("ext_ring_radius", "最外圈半径", 140, 360, "px")):
-            sl, lb = self._slider_row(text, key, lo, hi, unit,
-                                      on_change=self._on_size_changed,
-                                      container=lv)
-            self._size_sliders[key] = sl
-        self._apply_radius_constraints()
-
-        # 屏幕内显示开关
-        self.chk_clamp = QCheckBox(T("显示限制在屏幕范围内"))
-        self.chk_clamp.setToolTip(
-            T("开启后圆盘始终完整显示在屏幕内；关闭后圆盘中心始终对准"
-              "鼠标按下位置（可能被边缘遮挡）"))
-        self.chk_clamp.setChecked(
-            config.get("settings", {}).get("menu_clamp_to_screen", True))
-        self.chk_clamp.toggled.connect(
-            lambda b: self._set("menu_clamp_to_screen", b))
-        self.register_text(self.chk_clamp, "显示限制在屏幕范围内")
-        lv.addWidget(self.chk_clamp)
-        lv.addStretch(1)
-        self._hbox.addWidget(left, 1)
-        self.preview = _MenuPreview(self.config)
-        self._hbox.addWidget(self.preview, 0, Qt.AlignHCenter)
-        self.body.addLayout(self._hbox)
-
-    def _on_size_changed(self):
-        self._apply_radius_constraints()
-        self.preview.update()
-
-    def _apply_radius_constraints(self):
-        """按顺序夹紧四个半径：中心圆半径 < 第一圈半径 < 第二圈半径 < 最外圈半径。
-        更新滑块范围并写回夹紧后的配置值，避免圈层重叠或倒序。"""
-        s = self.config.setdefault("settings", {})
-        d = self._RADIUS_DEFAULTS
-        keys = self._RADIUS_KEYS
-        vals = {k: int(s.get(k, d[k])) for k in keys}
-        bounds = {}
-        for i, k in enumerate(keys):
-            if i == 0:
-                v_min, v_max = 8, vals[keys[1]] - self._RADIUS_GAP
-            elif i == len(keys) - 1:
-                v_min, v_max = vals[keys[i - 1]] + self._RADIUS_GAP, 360
-            else:
-                v_min, v_max = (vals[keys[i - 1]] + self._RADIUS_GAP,
-                                vals[keys[i + 1]] - self._RADIUS_GAP)
-            v_max = max(v_min, v_max)
-            vals[k] = max(v_min, min(v_max, vals[k]))
-            bounds[k] = (v_min, v_max)
-        for k in keys:
-            s[k] = vals[k]
-            sl = self._size_sliders.get(k)
-            if sl is None:
-                continue
-            v_min, v_max = bounds[k]
-            sl.blockSignals(True)
-            sl.setRange(v_min, v_max)
-            sl.setValue(vals[k])
-            sl.blockSignals(False)
-            self._slider_labels[k][2].setText(f"{vals[k]}px")
-
-    def refresh(self, config, profile=None):
-        self.config = config
-        self.preview.set_data(config, profile)
-        self._apply_radius_constraints()
-        self._refresh_sliders()
-        self.chk_clamp.blockSignals(True)
-        self.chk_clamp.setChecked(
-            config.get("settings", {}).get("menu_clamp_to_screen", True))
-        self.chk_clamp.blockSignals(False)
+        self.chk_trail.blockSignals(True)
+        self.chk_trail.setChecked(
+            config.get("settings", {}).get("gesture_trail", True))
+        self.chk_trail.blockSignals(False)
+        # 命令反馈
+        s = config.get("settings", {})
+        self.chk_feedback.blockSignals(True)
+        self.chk_feedback.setChecked(s.get("command_feedback", True))
+        self.chk_feedback.blockSignals(False)
+        self.chk_name.blockSignals(True)
+        self.chk_name.setChecked(s.get("feedback_show_name", True))
+        self.chk_name.blockSignals(False)
+        self.chk_key.blockSignals(True)
+        self.chk_key.setChecked(s.get("feedback_show_key", True))
+        self.chk_key.blockSignals(False)
+        idx = self.pos_combo.findData(
+            s.get("feedback_position", "bottom_center"))
+        self.pos_combo.blockSignals(True)
+        self.pos_combo.setCurrentIndex(max(0, idx))
+        self.pos_combo.blockSignals(False)
 
 
 class GeneralPage(_BasePage):
@@ -655,6 +802,7 @@ class GeneralPage(_BasePage):
         self.title.setText(T(self.title_zh))
 
         # 语言
+        self._section("语言")
         lang_row = QHBoxLayout()
         lang_row.setSpacing(10)
         self._lb_lang = QLabel(T("语言"))
@@ -668,28 +816,28 @@ class GeneralPage(_BasePage):
         lang_row.addStretch(1)
         self.body.addLayout(lang_row)
 
-        self.chk_open = QCheckBox(T("启动时打开此界面"))
-        self.chk_open.toggled.connect(lambda b: self._set("open_config_on_start", b))
-        self.body.addWidget(self.chk_open)
-        self.chk_auto = QCheckBox(T("根据 CAD 窗口自动切换"))
-        self.chk_auto.toggled.connect(lambda b: self._set("auto_switch_profile", b))
-        self.body.addWidget(self.chk_auto)
-        self.chk_startup = QCheckBox(T("开机自启"))
-        self.chk_startup.toggled.connect(self._on_startup)
-        self.body.addWidget(self.chk_startup)
-        self.chk_update = QCheckBox(T("启动时检查更新"))
-        self.chk_update.toggled.connect(lambda b: self._set("check_update_on_start", b))
-        self.body.addWidget(self.chk_update)
+        # 启动
+        self._section("启动")
+        self.chk_open = self._check_row(
+            "启动时打开此界面", "open_config_on_start", False,
+            help="程序启动后自动打开设置窗口，适合第一次配置时使用。")
+        self.chk_auto = self._check_row(
+            "根据 CAD 窗口自动切换", "auto_switch_profile", True,
+            help="打开 AutoCAD 时自动使用 AutoCAD 方案，切换到中望CAD 时自动使用对应方案。")
+        self.chk_startup = self._check_row(
+            "开机自启", "auto_start", False, toggled=self._on_startup,
+            help="登录 Windows 后自动在后台启动本工具，无需手动打开。")
+
+        # 更新
+        self._section("更新")
+        self.chk_update = self._check_row(
+            "启动时检查更新", "check_update_on_start", True,
+            help="每次启动自动联网检查新版本，发现更新会提示你。")
         self.btn_check_update = QPushButton(T("检查更新"))
         self.btn_check_update.setToolTip(T("立即检查是否有新版本"))
         self.btn_check_update.clicked.connect(self._on_check_update_click)
         self.body.addWidget(self.btn_check_update)
         self.body.addStretch(1)
-
-        self.register_text(self.chk_open, "启动时打开此界面")
-        self.register_text(self.chk_auto, "根据 CAD 窗口自动切换")
-        self.register_text(self.chk_startup, "开机自启")
-        self.register_text(self.chk_update, "启动时检查更新")
         self.register_text(self.btn_check_update, "检查更新")
 
     def _on_lang_changed(self, idx):
@@ -741,12 +889,16 @@ class MaintenancePage(_BasePage):
         super().__init__(config, parent)
         self.title.setText(T(self.title_zh))
 
+        # 配置目录
+        self._section("配置目录")
         # 配置目录行：标题 + 当前路径 + 更改/重置（同一行）
         dir_head = QHBoxLayout()
         dir_head.setSpacing(8)
         self._lb_dir_title = QLabel(T("配置目录"))
         self.register_text(self._lb_dir_title, "配置目录")
         dir_head.addWidget(self._lb_dir_title)
+        dir_head.addWidget(self._help(
+            "配置和方案的保存位置。默认在 %APPDATA%\\CADGesture，可迁移到其他磁盘。"))
         self._config_dir_label = QLabel(get_config_path())
         self._config_dir_label.setWordWrap(True)
         dir_head.addWidget(self._config_dir_label, 1)
@@ -763,6 +915,7 @@ class MaintenancePage(_BasePage):
         self.body.addLayout(dir_head)
 
         # 方案操作
+        self._section("方案操作")
         row = QHBoxLayout()
         row.setSpacing(8)
         btn_import = QPushButton(T("导入方案"))
@@ -774,6 +927,11 @@ class MaintenancePage(_BasePage):
         btn_dir = QPushButton(T("打开配置目录"))
         btn_dir.clicked.connect(lambda: self.on_open_dir() if self.on_open_dir else None)
         self.register_text(btn_dir, "打开配置目录")
+        btn_test = QPushButton(T("打开手势测试"))
+        btn_test.setToolTip(T("打开手势测试页，移动鼠标查看各扇区将触发的命令"))
+        btn_test.clicked.connect(
+            lambda: self.on_open_test() if self.on_open_test else None)
+        self.register_text(btn_test, "打开手势测试")
         btn_reset = QPushButton(T("恢复默认"))
         btn_reset.setProperty("class", "danger")
         btn_reset.setToolTip(T("把当前方案的三圈命令恢复为默认内容"))
@@ -782,11 +940,13 @@ class MaintenancePage(_BasePage):
         row.addWidget(btn_import)
         row.addWidget(btn_export)
         row.addWidget(btn_dir)
+        row.addWidget(btn_test)
         row.addStretch(1)
         row.addWidget(btn_reset)
         self.body.addLayout(row)
 
         # 整包配置备份 / 恢复
+        self._section("备份与恢复")
         row2 = QHBoxLayout()
         row2.setSpacing(8)
         btn_backup = QPushButton(T("备份配置"))
@@ -845,101 +1005,6 @@ class MaintenancePage(_BasePage):
     def refresh(self, config, profile=None):
         self.config = config
         self._config_dir_label.setText(get_config_path())
-
-
-class FeedbackPage(_BasePage):
-    """命令反馈：执行命令后屏幕提示的位置 / 内容 / 时长"""
-
-    def __init__(self, config, parent=None):
-        self.title_zh = "命令反馈"
-        super().__init__(config, parent)
-        self.title.setText(T(self.title_zh))
-
-        self.chk_feedback = QCheckBox(T("显示命令反馈"))
-        self.chk_feedback.setToolTip(T("执行命令后在屏幕上短暂提示"))
-        self.chk_feedback.setChecked(
-            config.get("settings", {}).get("command_feedback", True))
-        self.chk_feedback.toggled.connect(
-            lambda b: self._set("command_feedback", b))
-        self.body.addWidget(self.chk_feedback)
-        self.register_text(self.chk_feedback, "显示命令反馈")
-
-        # 提示位置
-        pos_row = QHBoxLayout()
-        pos_row.setSpacing(10)
-        self._lb_pos = QLabel(T("提示位置"))
-        self.register_text(self._lb_pos, "提示位置")
-        pos_row.addWidget(self._lb_pos)
-        self.pos_combo = QComboBox()
-        self.pos_combo.addItem(T("下部中间偏上"), "bottom_center")
-        self.pos_combo.addItem(T("屏幕中心"), "center")
-        self.pos_combo.addItem(T("顶部居中"), "top_center")
-        self.pos_combo.addItem(T("右下角"), "bottom_right")
-        self.pos_combo.addItem(T("左下角"), "bottom_left")
-        self.pos_combo.addItem(T("左上角"), "top_left")
-        self.pos_combo.addItem(T("右上角"), "top_right")
-        cur = config.get("settings", {}).get("feedback_position", "bottom_center")
-        idx = self.pos_combo.findData(cur)
-        self.pos_combo.setCurrentIndex(max(0, idx))
-        self.pos_combo.currentIndexChanged.connect(self._on_pos_changed)
-        pos_row.addWidget(self.pos_combo)
-        pos_row.addStretch(1)
-        self.body.addLayout(pos_row)
-
-        # 位置微调：在所选锚点基础上再平移（像素），默认 0 不动
-        s = config.setdefault("settings", {})
-        s.setdefault("feedback_offset_x", 0)
-        s.setdefault("feedback_offset_y", 0)
-        self._ox_slider, self._ox_label = self._slider_row(
-            "水平偏移", "feedback_offset_x", -300, 300, "px")
-        self._oy_slider, self._oy_label = self._slider_row(
-            "垂直偏移", "feedback_offset_y", -300, 300, "px")
-        # 显示内容：命令名称 / 快捷键
-        content_row = QHBoxLayout()
-        content_row.setSpacing(16)
-        self.chk_name = QCheckBox(T("显示命令名称"))
-        self.chk_name.setChecked(
-            config.get("settings", {}).get("feedback_show_name", True))
-        self.chk_name.toggled.connect(
-            lambda b: self._set("feedback_show_name", b))
-        content_row.addWidget(self.chk_name)
-        self.chk_key = QCheckBox(T("显示快捷键"))
-        self.chk_key.setChecked(
-            config.get("settings", {}).get("feedback_show_key", True))
-        self.chk_key.toggled.connect(
-            lambda b: self._set("feedback_show_key", b))
-        content_row.addWidget(self.chk_key)
-        content_row.addStretch(1)
-        self.body.addLayout(content_row)
-        self.register_text(self.chk_name, "显示命令名称")
-        self.register_text(self.chk_key, "显示快捷键")
-
-        # 停留时长
-        self._dur_slider, self._dur_label = self._slider_row(
-            "提示时长", "feedback_duration_ms", 500, 3000, "ms")
-        self.body.addStretch(1)
-
-    def _on_pos_changed(self, idx):
-        self._set("feedback_position", self.pos_combo.itemData(idx))
-
-    def refresh(self, config, profile=None):
-        self.config = config
-        self._refresh_sliders()
-        s = config.get("settings", {})
-        self.chk_feedback.blockSignals(True)
-        self.chk_feedback.setChecked(s.get("command_feedback", True))
-        self.chk_feedback.blockSignals(False)
-        self.chk_name.blockSignals(True)
-        self.chk_name.setChecked(s.get("feedback_show_name", True))
-        self.chk_name.blockSignals(False)
-        self.chk_key.blockSignals(True)
-        self.chk_key.setChecked(s.get("feedback_show_key", True))
-        self.chk_key.blockSignals(False)
-        idx = self.pos_combo.findData(
-            s.get("feedback_position", "bottom_center"))
-        self.pos_combo.blockSignals(True)
-        self.pos_combo.setCurrentIndex(max(0, idx))
-        self.pos_combo.blockSignals(False)
 
 
 class TestPage(_BasePage):

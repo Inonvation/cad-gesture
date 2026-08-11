@@ -351,6 +351,12 @@ QFrame#sidebarSep {{ background: {t.border}; border: none;
 QLabel#pageTitle {{ font-size: 15px; font-weight: 600; }}
 QLabel#pageSub {{ color: {t.text_muted}; font-size: 11px;
                   font-weight: 600; padding-left: 8px; }}
+QLabel#sectionTitle {{ color: {t.text_secondary};
+                       font-size: {font_px(FONT_XS)}px; font-weight: 600; }}
+QLabel.helpIcon {{ color: {t.text_muted}; border: 1px solid {t.border_strong};
+                   border-radius: 8px; background: transparent;
+                   font-size: {font_px(FONT_XS)}px; }}
+QLabel.helpIcon:hover {{ color: {t.accent}; border-color: {t.accent}; }}
 QLabel#pill {{ background: {t.bg_card}; color: {t.text_secondary};
     border: 1px solid {t.border}; border-radius: 10px;
     padding: 3px 12px; font-size: 12px; }}
