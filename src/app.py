@@ -22,7 +22,6 @@ from src.config_manager import (
 from src.gesture_engine import GestureEngine
 from src.qt_radial_menu import QRadialMenu
 from src.qt_feedback import QFeedbackTip
-from src.qt_config_gui import open_config_gui
 from src.command_executor import execute_with_cancel, cancel_context_menu
 from src.single_instance import is_exit_requested
 from src.logger import get_logger
@@ -30,12 +29,20 @@ from src.i18n import T, set_language, add_listener, remove_listener
 from src.theme import (build_app_qss, set_ui_mode, current_ui_mode,
                        effective_ui_mode, set_title_bar_theme,
                        system_ui_mode, set_ui_font_scale)
-from src.updater import (check_for_update, download_update, run_installer,
-                         UpdateCancelled, UpdateError)
 from src.version import __version__
 
 _CHECK_INTERVAL_SEC = 24 * 3600  # 启动自动检查的最小间隔
 _UPDATE_NOTES_MAX = 800
+
+
+def _preload_pyautogui():
+    """后台预热 pyautogui（含 PIL）：首次手势松手发 ESC 时才 import 会
+    卡约 0.17s，启动后提前加载，消除第一个手势的瞬间卡顿"""
+    try:
+        from src.command_executor import _get_pyautogui
+        _get_pyautogui()
+    except Exception:
+        pass
 
 # 跨线程唤醒事件类型：钩子线程入队后 postEvent 到主线程，立即处理。
 # 必须包成 QEvent.Type：PySide6 的 QEvent(int) 不接受裸 int，否则抛 TypeError
@@ -105,10 +112,10 @@ class CADGestureApp:
             self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)
 
-        # 界面语言 / 模式初始化
+        # 界面语言（QSS / 圆盘 / 引擎等重初始化延后到事件循环启动后的
+        # _init_late，让托盘图标先出现，缩短启动“无反应”等待）
         s = self.config.get("settings", {})
         set_language(s.get("language", "zh"))
-        self._apply_ui_mode(s.get("ui_mode", "dark"))
         # 全局事件过滤器：新建的原生标题栏窗口（弹窗/进度框/取色器）自动跟随深色主题
         self._titlebar_filter = _TitleBarFilter()
         self.app.installEventFilter(self._titlebar_filter)
@@ -117,57 +124,103 @@ class CADGestureApp:
         self._lang_listener = self._rebuild_tray
         add_listener(self._lang_listener)
 
-        # 圆盘菜单（Qt 透明悬浮窗）
-        self.menu = QRadialMenu(self.config)
-        # 命令执行反馈提示（屏幕角落两行文字，短暂淡出）
-        self._feedback = QFeedbackTip()
-        self.profile = get_active_profile(self.config)
-
         # 事件队列：put 后立即唤醒主线程（postEvent 线程安全），
-        # 菜单呼出不再受定时器轮询间隔限制
+        # 菜单呼出不再受定时器轮询间隔限制；钩子安装前无事件源，空转安全
         self._wake_receiver = _WakeReceiver(self._process_queue)
         self.event_queue = _WakeQueue(self._wake)
-        self.gesture_engine = GestureEngine(
-            config=self.config,
-            on_gesture=self._queue_gesture,
-            on_gesture_feedback=self._queue_gesture_feedback,
-            on_menu_show=self._queue_show,
-            on_menu_hide=self._queue_hide,
-            on_extension_hint=self._queue_extension_hint
-        )
-        # 菜单被 Esc/左键取消时复位引擎手势状态，阻止松键补发命令
-        self.menu._on_cancel = self.gesture_engine.cancel_gesture
-
-        # 命令执行 worker：COM SendCommand 在 CAD 忙时可能阻塞数秒，
-        # 放后台线程串行执行，主线程只做入队——弹窗/菜单/下一次手势即时响应
-        self._cmd_queue = queue.Queue()
-        self._cmd_worker = threading.Thread(
-            target=self._cmd_worker_loop, daemon=True)
-        self._cmd_worker.start()
 
         self._exit_poll_count = 0
         self._quitting = False
+        self._init_late_done = False
 
         # 更新流程状态
         self._update_info = None
         self._update_cancel = False
         self._update_progress = None
 
-        self._setup_tray()
+    def _init_late(self):
+        """事件循环启动后的异步初始化：构建 QSS / 圆盘 / 引擎 / 钩子。
 
-        # 主循环定时器：菜单可见时 16ms 高频跟踪光标；隐藏时 250ms 低频空转
-        # （事件入队由 _wake 即时唤醒，定时器仅作日志落盘与退出轮询的兜底）
-        self._timer = QTimer()
-        self._timer.timeout.connect(self._process_queue)
-        self._timer.start(16)
+        由 run() 在 exec() 前用 singleShot(0) 排队；主 QTimer 与钩子都在这里
+        才启动，事件队列在钩子安装前没有事件源，不会访问未初始化对象。
+        """
+        try:
+            s = self.config.get("settings", {})
+            self._apply_ui_mode(s.get("ui_mode", "dark"))
 
-        # 跟随系统：轮询系统主题变化（仅 system 模式运行，5 秒一次注册表读，
-        # 非 system 模式不启动，避免后台空转）
-        self._theme_poll_timer = QTimer()
-        self._theme_poll_timer.timeout.connect(self._poll_system_theme)
-        self._theme_poll_timer.setInterval(5000)
-        if s.get("ui_mode", "dark") == "system":
-            self._theme_poll_timer.start()
+            # 圆盘菜单（Qt 透明悬浮窗）
+            self.menu = QRadialMenu(self.config)
+            # 命令执行反馈提示（屏幕角落两行文字，短暂淡出）
+            self._feedback = QFeedbackTip()
+            self.profile = get_active_profile(self.config)
+
+            self.gesture_engine = GestureEngine(
+                config=self.config,
+                on_gesture=self._queue_gesture,
+                on_gesture_feedback=self._queue_gesture_feedback,
+                on_menu_show=self._queue_show,
+                on_menu_hide=self._queue_hide,
+                on_extension_hint=self._queue_extension_hint
+            )
+            # 菜单被 Esc/左键取消时复位引擎手势状态，阻止松键补发命令
+            self.menu._on_cancel = self.gesture_engine.cancel_gesture
+
+            # 命令执行 worker：COM SendCommand 在 CAD 忙时可能阻塞数秒，
+            # 放后台线程串行执行，主线程只做入队——弹窗/菜单/下一次手势即时响应
+            self._cmd_queue = queue.Queue()
+            self._cmd_worker = threading.Thread(
+                target=self._cmd_worker_loop, daemon=True)
+            self._cmd_worker.start()
+
+            # 主循环定时器：菜单可见时 16ms 高频跟踪光标；隐藏时 250ms 低频空转
+            # （事件入队由 _wake 即时唤醒，定时器仅作日志落盘与退出轮询的兜底）
+            self._timer = QTimer()
+            self._timer.timeout.connect(self._process_queue)
+            self._timer.start(16)
+
+            # 跟随系统：轮询系统主题变化（仅 system 模式运行，5 秒一次注册表读，
+            # 非 system 模式不启动，避免后台空转）
+            self._theme_poll_timer = QTimer()
+            self._theme_poll_timer.timeout.connect(self._poll_system_theme)
+            self._theme_poll_timer.setInterval(5000)
+            if s.get("ui_mode", "dark") == "system":
+                self._theme_poll_timer.start()
+
+            self._init_late_done = True
+
+            # 预热 pyautogui：第一个手势的 ESC 取消/命令回退不卡顿
+            try:
+                threading.Thread(target=_preload_pyautogui,
+                                 daemon=True).start()
+            except Exception:
+                pass
+
+            # 钩子安装（失败仅提示，不阻塞托盘）
+            if not self.gesture_engine.start():
+                self.log.error("鼠标钩子安装失败，手势将不可用")
+                try:
+                    self.tray.showMessage(
+                        "CAD鼠标手势",
+                        T("鼠标钩子安装失败，手势将不可用"),
+                        QSystemTrayIcon.Warning, 3000)
+                except Exception:
+                    pass
+            # 首次运行或配置了"启动时打开此界面"则自动打开配置
+            if self._is_first_run or self.config.get("settings", {}).get(
+                    "open_config_on_start", False):
+                QTimer.singleShot(500, self._open_config)
+        except Exception as e:
+            self.log.error("异步初始化失败: %s", e, exc_info=True)
+            # 标记初始化流程已尝试完成：让更新检查等事件仍可处理，
+            # 并托盘提示，避免部分功能不可用时无声无息
+            self._init_late_done = True
+            try:
+                self.tray.showMessage(
+                    "CAD鼠标手势",
+                    T("初始化失败，部分功能不可用"),
+                    QSystemTrayIcon.Warning, 4000)
+            except Exception:
+                pass
 
     # ========== 事件入队 ==========
 
@@ -228,6 +281,9 @@ class CADGestureApp:
 
     def _process_queue(self):
         """处理事件队列（QTimer 驱动）"""
+        # 异步初始化完成前不处理（主 QTimer 尚未启动，正常不会触发；防御性保护）
+        if not getattr(self, "_init_late_done", False):
+            return
         try:
             try:
                 while True:
@@ -235,23 +291,30 @@ class CADGestureApp:
                     try:
                         if event_type == "show":
                             # 新一次手势开始：清掉上一条残留弹窗，避免提示串台
-                            self._feedback.hide_tip()
+                            menu = getattr(self, "menu", None)
+                            feedback = getattr(self, "_feedback", None)
+                            engine = getattr(self, "gesture_engine", None)
+                            if menu is None or feedback is None or engine is None:
+                                continue  # 初始化失败时无圆盘/反馈对象，跳过该事件
+                            feedback.hide_tip()
                             x, y, window_type = data
                             self.profile = get_profile_for_window(self.config, window_type)
                             if self.profile is None:
                                 self.profile = get_active_profile(self.config)
-                            self.menu.show(x, y, self.profile)
+                            menu.show(x, y, self.profile)
                             # 圆盘显示中心（屏幕边缘自适应后可能偏移）同步为
                             # 手势判定原点：高亮与松手结算都以圆盘中心为准
                             try:
-                                pcx, pcy = self.menu.display_center_physical()
-                                self.gesture_engine.set_gesture_center(
+                                pcx, pcy = menu.display_center_physical()
+                                engine.set_gesture_center(
                                     pcx, pcy)
                             except Exception as e:
                                 self.log.error("同步手势中心失败: %s", e,
                                                exc_info=True)
                         elif event_type == "feedback":
                             try:
+                                if getattr(self, "_feedback", None) is None:
+                                    continue
                                 sector, ring_type, window_type = data
                                 profile = get_profile_for_window(self.config, window_type)
                                 if profile is None:
@@ -270,7 +333,9 @@ class CADGestureApp:
                             except Exception as e:
                                 self.log.error("命令反馈错误: %s", e, exc_info=True)
                         elif event_type == "hide":
-                            self.menu.hide()
+                            menu = getattr(self, "menu", None)
+                            if menu is not None:
+                                menu.hide()
                             # 钩子不拦截右键：松手时 CAD 会弹右键菜单，
                             # 无论是否触发命令都发 ESC 取消（触发路径不再重复发）
                             try:
@@ -278,7 +343,9 @@ class CADGestureApp:
                             except Exception as e:
                                 self.log.error("取消右键菜单失败: %s", e, exc_info=True)
                         elif event_type == "extension_hint":
-                            self.menu.set_extension_hint(data)
+                            menu = getattr(self, "menu", None)
+                            if menu is not None:
+                                menu.set_extension_hint(data)
                         elif event_type == "gesture":
                             try:
                                 sector, ring_type, window_type = data
@@ -296,7 +363,9 @@ class CADGestureApp:
                                         ring_type, sector,
                                         sector_cfg.get("label", "") or desc, key.upper())
                                     # 后台执行，主线程不被 COM SendCommand 阻塞
-                                    self._cmd_queue.put((key, desc, target))
+                                    cmd_queue = getattr(self, "_cmd_queue", None)
+                                    if cmd_queue is not None:
+                                        cmd_queue.put((key, desc, target))
                             except Exception as e:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)
                         elif event_type == "update_check_result":
@@ -520,8 +589,9 @@ class CADGestureApp:
             self.log.error("切换方案失败: %s", e, exc_info=True)
 
     def _open_config(self):
-        """打开配置界面（Qt 版，独立窗口）"""
+        """打开配置界面（Qt 版，独立窗口；延迟 import 避免启动加载整个界面链）"""
         try:
+            from src.qt_config_gui import open_config_gui
             self._config_win = open_config_gui(
                 on_save=self._reload_config,
                 on_check_update=lambda: self._check_update(manual=True))
@@ -538,8 +608,12 @@ class CADGestureApp:
         try:
             self.config = cfg if cfg is not None else load_config()
             self.profile = get_active_profile(self.config)
-            self.gesture_engine.update_config(self.config)
-            self.menu.update_config(self.config)
+            engine = getattr(self, "gesture_engine", None)
+            if engine is not None:
+                engine.update_config(self.config)
+            menu = getattr(self, "menu", None)
+            if menu is not None:
+                menu.update_config(self.config)
             s = self.config.get("settings", {})
             mode = s.get("ui_mode", "dark")
             font = s.get("ui_font_scale", 100)
@@ -563,6 +637,7 @@ class CADGestureApp:
                          daemon=True).start()
 
     def _check_worker(self, url: str, manual: bool):
+        from src.updater import check_for_update, UpdateError
         try:
             info = check_for_update(__version__, url)
             result = {"ok": True, "info": info, "error": None, "manual": manual}
@@ -672,6 +747,7 @@ class CADGestureApp:
                          daemon=True).start()
 
     def _download_worker(self, info: dict, dest: str):
+        from src.updater import download_update
         ok = download_update(info.get("download_url", ""), dest,
                              info.get("size") or 0,
                              progress_cb=self._download_progress)
@@ -680,6 +756,7 @@ class CADGestureApp:
     def _download_progress(self, downloaded: int, total: int):
         """下载线程回调：检查取消 + 进度入队"""
         if self._update_cancel:
+            from src.updater import UpdateCancelled
             raise UpdateCancelled("下载被取消")
         self.event_queue.put(("update_progress", (downloaded, total)))
 
@@ -723,6 +800,7 @@ class CADGestureApp:
         if box.clickedButton() is not btn_now:
             self._tray_message("CAD鼠标手势", T("已取消更新"))
             return
+        from src.updater import run_installer
         if not run_installer(dest):
             self._tray_message("CAD鼠标手势",
                                T("启动安装程序失败，请手动运行更新包"),
@@ -739,32 +817,29 @@ class CADGestureApp:
         self._quitting = True
         remove_listener(self._lang_listener)
         try:
-            self.gesture_engine.stop()
+            engine = getattr(self, "gesture_engine", None)
+            if engine is not None:
+                engine.stop()
         except Exception as e:
             self.log.error("停止手势引擎失败: %s", e, exc_info=True)
         try:
-            self.menu.destroy()
+            menu = getattr(self, "menu", None)
+            if menu is not None:
+                menu.destroy()
         except Exception as e:
             self.log.error("销毁菜单窗口失败: %s", e, exc_info=True)
         try:
-            self.tray.hide()
+            tray = getattr(self, "tray", None)
+            if tray is not None:
+                tray.hide()
         except Exception as e:
             self.log.error("隐藏托盘失败: %s", e, exc_info=True)
         self.app.quit()
 
     def run(self):
-        """运行应用"""
-        if not self.gesture_engine.start():
-            self.log.error("鼠标钩子安装失败，手势将不可用")
-            try:
-                self.tray.showMessage("CAD鼠标手势",
-                                      T("鼠标钩子安装失败，手势将不可用"),
-                                      QSystemTrayIcon.Warning, 3000)
-            except Exception:
-                pass
-        # 首次运行或配置了"启动时打开此界面"则自动打开配置
-        if self._is_first_run or self.config.get("settings", {}).get("open_config_on_start", False):
-            QTimer.singleShot(500, self._open_config)
+        """运行应用：先出托盘图标，重初始化与钩子在事件循环内异步完成"""
+        self._setup_tray()
+        QTimer.singleShot(0, self._init_late)
         # 启动后延迟自动检查更新（后台线程，不阻塞启动；24h 内不重复）
         QTimer.singleShot(8000, lambda: self._check_update(manual=False))
         sys.exit(self.app.exec())

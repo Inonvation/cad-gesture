@@ -29,10 +29,10 @@
 | 形态 | 文件 | 说明 |
 |------|------|------|
 | 安装版（推荐） | `Setup-CADGesture-vX.Y.Z.exe` | 标准安装向导，开始菜单 / 卸载入口，支持程序内一键更新 |
-| 绿色版 | `CADGesture-x64.exe` | 免安装，双击即用 |
+| 绿色版 | `CADGesture-vX.Y.Z.zip` | 免安装，解压后运行 `CADGesture-x64.exe` |
 
 1. 下载最新 [Release](https://github.com/Inonvation/cad-gesture/releases) 中的安装包或绿色版
-2. 双击运行，右下角出现托盘图标
+2. 安装版直接双击运行；绿色版先解压 zip，再运行其中的 `CADGesture-x64.exe`，右下角出现托盘图标即开始使用
 3. 打开 CAD，**长按鼠标右键拖动**即可使用
 
 ### 方式二：源码运行
@@ -94,7 +94,7 @@ python main.py
 python -m PyInstaller cad_gesture.spec --clean --noconfirm
 
 # 产物：
-#   dist/CADGesture-x64.exe                绿色版（单文件）
+#   dist/CADGesture-vX.Y.Z.zip            绿色版（onedir 目录压缩）
 #   dist/Setup-CADGesture-vX.Y.Z.exe       安装版（Inno Setup，需先安装 Inno Setup 6.3+）
 #   dist/config/config.json                配置文件
 ```

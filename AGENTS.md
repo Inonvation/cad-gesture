@@ -18,7 +18,7 @@ main.py                 # 入口（含单实例检查）
 config/config.json      # 旧版配置位置（0.0.2-：仅迁移用，现配置在 %APPDATA%\CADGesture）
 cad_gesture.iss         # Inno Setup 安装包脚本（产出 Setup-CADGesture-vX.Y.Z.exe）
 src/
-├── app.py              # 主类（Qt）：事件队列、托盘(QSystemTrayIcon)、Profile切换、配置入口、更新流程
+├── app.py              # 主类（Qt）：事件队列、异步启动初始化(_init_late)、托盘(QSystemTrayIcon)、Profile切换、配置入口、更新流程
 ├── gesture_engine.py   # [核心] WH_MOUSE_LL 钩子 → 方向/圈层判定
 ├── qt_radial_menu.py   # [核心] Qt 透明悬浮圆盘菜单（三层绘制 + 淡入/高亮动画）
 ├── menu_geometry.py    # 圆盘半径/缩放唯一来源（运行时菜单、手势引擎、两处预览共用）
@@ -38,13 +38,14 @@ src/
 事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 200ms）。
 每个事件包裹 `try-except`，防止单次错误崩溃整个队列循环。
 更新流程同模式：后台线程检查/下载 → 结果经 event_queue（`update_check_result` / `update_progress` / `update_download_done`）→ 主线程弹窗。
+启动流程：`run()` 先出托盘图标，QSS/圆盘/引擎/钩子在事件循环内由 `_init_late` 异步完成（`singleShot(0)` 排队）；配置界面、updater、pyautogui 均为延迟加载，启动只加载运行时必需模块。
 
 **触发与圈层判定**：触发 = 右键按下后滑动超过 `trigger_distance` 立即弹出（对齐 Quicker，
 不等长按时间），或按住超过 `hold_threshold_ms` 且有轻微位移时弹出。判定在独立轮询线程
 （每 15ms），不受鼠标事件频率影响，鼠标停住也能按时触发。
 圈层判定（半径统一取自 `menu_geometry.py` 的 `DEFAULT_RADII`，gesture_engine 触发、
 qt_radial_menu hover、配置两处预览共用）：
-距离 ≤ `ring_radius`(70) = 内层；≤ `outer_ring_radius`(135) = 外层；> `ext_ring_radius`(185) = 扩展圈
+距离 ≤ `ring_radius`(70) = 内层；≤ `outer_ring_radius`(135) = 外层；> `outer_ring_radius`(135) = 扩展圈（扩展圈绘制至 `ext_ring_radius`(185)）
 （命令在 `extension_sectors`）。整体缩放由 `menu_scale`（50~150%）控制。
 
 ## 环境关键坑（务必先读）
@@ -94,10 +95,10 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 **打包必须用 Python312**（`<USER>\AppData\Local\Programs\Python\Python312\python.exe`），其他 Python 环境可能缺 PyInstaller。
 
 **统一入口：双击 `scripts\build.bat`**，一次产出双形态：
-- 绿色版：`dist/CADGesture-x64.exe`
+- 绿色版：`dist/CADGesture-vX.Y.Z.zip`（onedir 目录压缩，解压后运行 `CADGesture-x64.exe`）
 - 安装版：`dist/Setup-CADGesture-vX.Y.Z.exe`（需先安装 Inno Setup 6.3+，`C:\Program Files (x86)\Inno Setup 6\ISCC.exe`）
 
-build.bat 流程：清理 → PyInstaller（Python312）→ 复制配置 → `scripts\read_version.py` 提取版本号 → `ISCC /DMyAppVersion=...` 编译安装包。
+build.bat 流程：清理 → PyInstaller（Python312，onedir）→ 复制配置 → `scripts\read_version.py` 提取版本号 → 绿色版压缩为 zip → `ISCC /DMyAppVersion=...` 编译安装包。
 
 手动打包（等价）：
 ```powershell
@@ -105,8 +106,9 @@ cd F:\cad-gesture
 Get-Process CADGesture-x64 -ErrorAction SilentlyContinue | Stop-Process -Force
 & "<USER>\AppData\Local\Programs\Python\Python312\python.exe" -m PyInstaller cad_gesture.spec --clean --noconfirm
 Copy-Item config\config.example.json dist\config\config.example.json -Force  # 发版用模板；本地自测可复制 config.json
+Compress-Archive -Path dist\CADGesture-x64 -DestinationPath dist\CADGesture-vX.Y.Z.zip -Force  # 绿色版 zip
 & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.0.2 cad_gesture.iss
-dist\CADGesture-x64.exe
+dist\CADGesture-x64\CADGesture-x64.exe
 ```
 
 ### 打包前检查清单
@@ -131,12 +133,12 @@ dist\CADGesture-x64.exe
 
 1. 更新 `version.txt` 版本号（4 处：`filevers`/`prodvers`/`FileVersion`/`ProductVersion`）+ `src/version.py` 的 `__version__`（共 5 处）
 2. 打包双产物：双击 `scripts\build.bat`（PyInstaller + ISCC，UPX 已在用户 PATH）
-   - 产物：`dist/CADGesture-x64.exe` + `dist/Setup-CADGesture-vX.Y.Z.exe`
+   - 产物：`dist/CADGesture-vX.Y.Z.zip`（绿色版）+ `dist/Setup-CADGesture-vX.Y.Z.exe`（安装版）
 3. 提交 version.txt + 本次改动，打 annotated tag：`git tag -a vX.Y.Z -m "vX.Y.Z"`
 4. `git push origin master --tags`
 5. **创建 Release 前，必须先向用户展示待发布内容（版本号、两个 exe 路径/体积、Release notes、附件清单）并等待用户确认**，确认后再执行下一步
-6. `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..." dist/CADGesture-x64.exe dist/Setup-CADGesture-vX.Y.Z.exe config/config.example.json`
-   - 附件 3 个：绿色版 + 安装版 + `config.example.json`（模板），**绝不打包用户私有 `config/config.json`**
+6. `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..." dist/CADGesture-vX.Y.Z.zip dist/Setup-CADGesture-vX.Y.Z.exe config/config.example.json`
+   - 附件 3 个：绿色版 zip + 安装版 + `config.example.json`（模板），**绝不打包用户私有 `config/config.json`**
 7. 发布后实测更新链路：托盘"检查更新" → 检测到新版 → 下载 → 静默安装 → 新版自动启动
 
 ## 关键技术细节
@@ -153,7 +155,7 @@ dist\CADGesture-x64.exe
 - **配置自动迁移**：`config_manager._migrate_config` 自动补旧配置字段；空的 `extension_sectors` 会从默认配置按 target+name 自动补全。
 - **自动更新**：检查/下载放后台线程，结果经 event_queue 回主线程（`update_check_result`/`update_progress`/`update_download_done`），Qt 控件只在主线程操作。下载到 `%TEMP%\CADGesture-Setup.exe` 后经 `run_installer` 静默安装（`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`），主进程随即退出，Inno 的 `CloseApplications` 兜底关进程。静默安装后新版自动启动已验证（[Run] 用 `nowait` 不带 `skipifsilent`）。
 - **安装包卸载杀进程**：`cad_gesture.iss` 的 `[Code]` 节在卸载时 `taskkill /F` 终止主程序，否则运行中的 exe 被锁删不掉（卸载残留）。改 .iss 时别删这段。
-- **onefile 下不能读 exe 同级文件**：`sys.executable` 在 PyInstaller onefile 运行时指向临时解压目录（`%TEMP%\_MEIxxxx`），当前版本号必须用 `src/version.py` 的内置常量，不要运行时读文件。
+- **onedir 打包（启动免解压）**：不再经过 onefile 的 `%TEMP%\_MEIxxxx` 解压，`sys.executable` 指向真实 exe 路径；版本号仍统一用 `src/version.py` 内置常量。绿色版是 `dist/CADGesture-x64/` 整个目录压缩的 zip，运行 `CADGesture-x64.exe`（依赖同目录 `_internal/`，不能单独拷走 exe）。
 
 ## 命令执行优先级
 

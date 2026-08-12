@@ -29,10 +29,10 @@ Two forms are available (config is stored in `%APPDATA%`, so both forms are inte
 | Form | File | Notes |
 |------|------|-------|
 | Installer (recommended) | `Setup-CADGesture-vX.Y.Z.exe` | Standard install wizard, Start Menu / uninstall entry, supports in-app one-click update |
-| Portable | `CADGesture-x64.exe` | No install needed, double-click to run |
+| Portable | `CADGesture-vX.Y.Z.zip` | No install needed; unzip and run `CADGesture-x64.exe` |
 
 1. Download either form from the latest [Release](https://github.com/Inonvation/cad-gesture/releases)
-2. Double-click to run; the app is ready once the tray icon appears
+2. Installer: double-click to run. Portable: unzip the archive first, then run `CADGesture-x64.exe`; the app is ready once the tray icon appears
 3. Open CAD, **press and hold the right mouse button and drag** to use
 
 > **SmartScreen warning?** The binaries are unsigned, so Windows may show "Unknown publisher". Click "More info" → "Run anyway" — the app is open source and safe.

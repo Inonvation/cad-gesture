@@ -62,6 +62,13 @@ if errorlevel 1 (
     exit /b 1
 )
 echo       版本号: %VERSION%
+echo [4/5] 正在打包绿色版 zip...
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\CADGesture-x64' -DestinationPath 'dist\CADGesture-v%VERSION%.zip' -Force"
+if errorlevel 1 (
+    echo [WARNING] 绿色版 zip 打包失败，请手动压缩 dist\CADGesture-x64
+) else (
+    echo       绿色版 zip: dist\CADGesture-v%VERSION%.zip
+)
 if exist "%ISCC%" (
     "%ISCC%" /DMyAppVersion=%VERSION% cad_gesture.iss
     if errorlevel 1 (
@@ -80,13 +87,13 @@ echo [5/5] 打包完成！
 echo.
 echo ========================================
 echo   输出目录: dist\
-echo   绿色版:   dist\CADGesture-x64.exe
+echo   绿色版:   dist\CADGesture-v%VERSION%.zip
 echo   安装版:   dist\Setup-CADGesture-v%VERSION%.exe
 echo   配置文件: dist\config\config.json
 echo ========================================
 echo.
 echo   使用方法: 将 dist 文件夹整个复制到任意位置
-echo             双击 CADGesture-x64.exe 即可运行
+echo             解压绿色版 zip 后运行 CADGesture-x64.exe
 echo ========================================
 echo.
 

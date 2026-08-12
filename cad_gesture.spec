@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-CAD鼠标手势工具 - PyInstaller 打包配置 (onefile 单文件版)
+CAD鼠标手势工具 - PyInstaller 打包配置 (onedir 目录版)
 打包命令：pyinstaller cad_gesture.spec
 """
 
@@ -52,7 +52,7 @@ if pywin32_dll_dir is None:
             pywin32_dll_dir = p
             break
 
-# 打包 assets 目录（勾选框对勾 / 下拉箭头 / 图标）：onefile 运行时经 _MEIPASS 读取
+# 打包 assets 目录（勾选框对勾 / 下拉箭头 / 图标）：onedir 运行时经 _MEIPASS(_internal) 读取
 datas = [('assets', 'assets')]
 binaries = []
 if pywin32_dll_dir:
@@ -96,7 +96,6 @@ a = Analysis(
         'PySide6.QtPdf', 'PySide6.QtPdfWidgets',
         'PySide6.QtVirtualKeyboard',
         'PySide6.QtNetwork', 'PySide6.QtNetworkAuth', 'PySide6.QtWebSockets',
-        'PySide6.QtSvg', 'PySide6.QtSvgWidgets',
         'PySide6.QtMultimedia', 'PySide6.QtMultimediaWidgets',
         'PySide6.QtCharts', 'PySide6.QtDataVisualization', 'PySide6.QtGraphs',
         'PySide6.QtSql', 'PySide6.QtBluetooth', 'PySide6.QtNfc',
@@ -128,7 +127,6 @@ _EXCLUDE_QT_DLLS = {
     "Qt6Pdf.dll", "Qt6PdfWidgets.dll",
     "Qt6Network.dll", "Qt6NetworkAuth.dll", "Qt6WebSockets.dll",
     "Qt6VirtualKeyboard.dll",
-    "Qt6Svg.dll", "Qt6SvgWidgets.dll",
     "Qt6Multimedia.dll", "Qt6MultimediaWidgets.dll",
     "Qt6Charts.dll", "Qt6DataVisualization.dll", "Qt6Graphs.dll",
     "Qt6Sql.dll", "Qt6Test.dll", "Qt6Designer.dll",
@@ -145,7 +143,7 @@ a.binaries = [b for b in a.binaries
 # 同步排除对应的 PySide6 二进制绑定（.pyd），避免残留无用模块
 a.binaries = [b for b in a.binaries
               if not (_os.path.basename(b[0]).startswith(("QtQml", "QtQuick",
-                          "QtPdf", "QtNetwork", "QtVirtualKeyboard", "QtSvg",
+                          "QtPdf", "QtNetwork", "QtVirtualKeyboard",
                           "QtMultimedia", "QtCharts", "QtSql", "QtTest",
                           "QtDesigner", "QtHelp", "QtWebEngine"))
                       and _os.path.basename(b[0]).endswith(".pyd"))]
@@ -165,20 +163,20 @@ a.datas = [d for d in a.datas if not d[0].endswith(".qm")]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# ========== onefile 单文件打包 ==========
+# ========== onedir 目录打包（启动免解压，速度优先） ==========
+# 绿色版 = dist/CADGesture-x64/ 整个目录（压缩为 zip），安装版由 Inno 递归装入。
+# onedir 下 UPX 只压缩独立 DLL/模块，不再影响启动解压。
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,      # 所有二进制文件打包进 exe
-    a.zipfiles,      # 所有 zip 文件打包进 exe
-    a.datas,         # 所有数据文件打包进 exe
+    [],
+    exclude_binaries=True,
     name='CADGesture-x64',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     target_arch=None,
@@ -186,4 +184,15 @@ exe = EXE(
     entitlements_file=None,
     icon='assets/icon.ico',
     version=version_info,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='CADGesture-x64',
 )

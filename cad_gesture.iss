@@ -44,7 +44,8 @@ Name: "startmenu"; Description: "创建开始菜单快捷方式"; GroupDescripti
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式:"
 
 [Files]
-Source: "dist\CADGesture-x64.exe"; DestDir: "{app}"; Flags: ignoreversion
+; onedir 打包：整个 dist\CADGesture-x64 目录（exe + _internal）递归装入 {app}
+Source: "dist\CADGesture-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "config\config.example.json"; DestDir: "{app}\config"; Flags: ignoreversion
 
 [Icons]

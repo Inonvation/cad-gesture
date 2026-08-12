@@ -6,10 +6,25 @@ import time
 import threading
 import pythoncom
 import win32com.client
-import pyautogui
 
-pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0  # 移除全局暂停，手动控制
+# pyautogui 延迟加载：仅在首次需要按键模拟（ESC 取消 /
+# COM 回退）时才 import，避免启动时加载 pyautogui+PIL。
+# 首次调用后缓存，全局只设置一次。
+_pyautogui_mod = None
+_pyautogui_lock = threading.Lock()
+
+
+def _get_pyautogui():
+    """首次调用时加载 pyautogui 并设置全局参数（线程安全）"""
+    global _pyautogui_mod
+    if _pyautogui_mod is None:
+        with _pyautogui_lock:
+            if _pyautogui_mod is None:
+                import pyautogui
+                pyautogui.FAILSAFE = False
+                pyautogui.PAUSE = 0  # 移除全局暂停，手动控制
+                _pyautogui_mod = pyautogui
+    return _pyautogui_mod
 
 # COM 命令映射表
 COMBO_TO_COMMAND = {
@@ -200,9 +215,9 @@ def cancel_context_menu():
     与命令回退的按键模拟共用 _input_lock，防止并发 SendInput 交错。
     """
     with _input_lock:
-        pyautogui.press('esc', _pause=False)
+        _get_pyautogui().press('esc', _pause=False)
         time.sleep(0.02)
-        pyautogui.press('esc', _pause=False)
+        _get_pyautogui().press('esc', _pause=False)
         time.sleep(0.02)
 
 
@@ -233,22 +248,23 @@ def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -
         # SendInput 按键不能交错，整个按键序列都在锁内
         with _input_lock:
             parts = [k.strip().lower() for k in key.split("+")]
+            pa = _get_pyautogui()
             if len(parts) == 1:
                 single = parts[0]
-                if len(single) > 1 and single in pyautogui.KEYBOARD_KEYS:
-                    pyautogui.press(single, _pause=False)
+                if len(single) > 1 and single in pa.KEYBOARD_KEYS:
+                    pa.press(single, _pause=False)
                 else:
                     for ch in single:
-                        pyautogui.press(ch, _pause=False)
+                        pa.press(ch, _pause=False)
                     time.sleep(0.01)
-                    pyautogui.press('enter', _pause=False)
+                    pa.press('enter', _pause=False)
             elif len(parts) >= 2 and parts[0] in ("ctrl", "alt", "shift", "win"):
-                pyautogui.hotkey(*parts, _pause=False)
+                pa.hotkey(*parts, _pause=False)
             else:
                 for k in parts:
-                    pyautogui.press(k, _pause=False)
+                    pa.press(k, _pause=False)
                 time.sleep(0.01)
-                pyautogui.press('enter', _pause=False)
+                pa.press('enter', _pause=False)
         return "fallback"
     except Exception:
         return "failed"

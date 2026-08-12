@@ -21,7 +21,7 @@ python scripts\verify.py                # 一键：语法检查 → pytest → �
 ```
 
 - 开发用 Python：`%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`（`python` 可能命中多个环境，hermes venv 的 python 是 uv launcher，启动 main.py 后看到"一对 python 进程"属正常）。
-- **打包必须用独立的 Python312**（`<USER>\AppData\Local\Programs\Python\Python312\python.exe`），其他环境缺 PyInstaller。统一入口 `scripts\build.bat`，产出绿色版 + 安装版两个 exe。
+- **打包必须用独立的 Python312**（`<USER>\AppData\Local\Programs\Python\Python312\python.exe`），其他环境缺 PyInstaller。统一入口 `scripts\build.bat`，产出绿色版 zip（onedir 目录压缩）+ 安装版 exe。
 - **无 lint / typecheck / CI**。验证方式就是 `py_compile` + `pytest` + 手动运行。
 
 ## 架构（big picture）
@@ -38,7 +38,7 @@ python scripts\verify.py                # 一键：语法检查 → pytest → �
 `gesture_engine`（松手结算）与 `qt_radial_menu`（悬停高亮）**都从 `menu_geometry.py` 取半径**（`DEFAULT_RADII` + `menu_scale` 缩放），配置编辑/尺寸预览也共用，改尺寸只动一处：
 
 - `trigger_distance`(15) 拖出此距离才呼出菜单；`hold_threshold_ms`(80) 长按时长
-- 距离 ≤ `ring_radius`(70) = 内层；≤ `outer_ring_radius`(135) = 外层；`ext_ring_radius`(185) 外 = 扩展圈
+- 距离 ≤ `ring_radius`(70) = 内层；≤ `outer_ring_radius`(135) = 外层；> `outer_ring_radius`(135) = 扩展圈（绘制至 `ext_ring_radius`(185)）
 - `dead_zone_radius`(24)：菜单已弹出时松手落在中心死区内 → 取消不触发
 
 AGENTS.md 为完整规范（含打包/发版/提交流程），本文件只讲上手必需的架构与坑，冲突时以 AGENTS.md 为准。
@@ -67,7 +67,7 @@ AGENTS.md 为完整规范（含打包/发版/提交流程），本文件只讲�
 4. **Qt 坐标是逻辑像素，钩子给物理像素**：`QRadialMenu.show(x, y)` 内部按屏幕 DPI 换算（`_to_logical`）。别直接拿钩子的 `pt.x/pt.y` 去 `move()`，DPI 缩放≠100% 时圆盘会偏移。
 5. **低级钩子回调极快**：钩子线程内不做磁盘 I/O（日志先进内存队列，主线程 `flush_logs()` 落盘）；回调必须返回 `c_ssize_t` 且设 `CallNextHookEx` 的 argtypes，否则 64 位崩溃。
 6. **单实例机制**：`main.py` 开头 `ensure_single_instance()` 用命名互斥体，新实例置位命名事件请求旧实例退出（覆盖更新）。`app.py` 主循环每 32 帧轮询 `is_exit_requested()`。启动逻辑别改坏这两处。
-7. **PyInstaller onefile 不能读 exe 同级文件**：运行时版本号必须用 `src/version.py` 内置常量，不要读文件（`sys.executable` 指向临时解压目录）。
+7. **onedir 打包（启动免解压）**：绿色版是 `dist/CADGesture-x64/` 目录压缩的 zip，运行 `CADGesture-x64.exe`（依赖同目录 `_internal/`）；版本号仍用 `src/version.py` 内置常量。
 
 ## 改动联动清单（一处改动，多处必须同步）
 
