@@ -18,6 +18,7 @@ def test_feedback_tip_show_and_hide():
     tip = QFeedbackTip()
     tip.show_feedback("直线", "L", {"feedback_duration_ms": 500,
                                     "feedback_position": "bottom_center"})
+    QApplication.processEvents()  # 延迟一帧显示，处理后再验证可见
     assert tip.isVisible()
     tip._hide_timer.stop()
     tip.hide()
@@ -71,6 +72,7 @@ def test_feedback_hide_tip():
     tip = QFeedbackTip()
     tip.show_feedback("直线", "L", {"feedback_duration_ms": 5000,
                                     "feedback_position": "bottom_center"})
+    QApplication.processEvents()  # 延迟一帧显示，处理后再验证可见
     assert tip.isVisible()
     tip.hide_tip()
     assert not tip.isVisible()

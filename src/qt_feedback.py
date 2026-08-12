@@ -1,8 +1,8 @@
 """命令执行反馈提示 — 屏幕角落短暂显示"命令名 / 快捷键"两行"""
 
 from PySide6.QtCore import (QEasingCurve, QPropertyAnimation, QRect, Qt, QTimer)
-from PySide6.QtGui import (QColor, QFont, QPainter, QPen, QCursor,
-                           QGuiApplication)
+from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPen,
+                           QCursor, QGuiApplication)
 from PySide6.QtWidgets import QWidget
 
 from src.theme import get_ui, font_px
@@ -24,19 +24,29 @@ class QFeedbackTip(QWidget):
         self._line1 = ""
         self._line2 = ""
         self._duration_ms = 1500
+        self._line1_font_size = 16  # 超长命令名自动缩小的字号
         self.setFixedSize(260, 64)
         self._fade = QPropertyAnimation(self, b"windowOpacity", self)
         self._fade.setDuration(300)
         self._fade.setEasingCurve(QEasingCurve.InOutQuad)
+        # 淡出完成后隐藏（只连接一次，避免反复 disconnect 触发警告）
+        self._fade.finished.connect(self.hide)
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._fade_out)
 
     def show_feedback(self, text1: str, text2: str, settings: dict) -> None:
         """显示提示：text1 命令名 / text2 快捷键，按 settings 定位与计时"""
+        # 先停止淡出并隐藏旧弹窗：避免上一个命令的旧画面在重绘前被看到。
+        # 不在本函数内立即 show：show() 到 repaint() 之间 Windows
+        # 会先显示隐藏前的旧表面（高刷新率显示器上可见），
+        # 延迟一帧再显示，确保窗口展示时带的是新内容。
+        self._fade.stop()
+        self._hide_timer.stop()
+        self.hide()
         self._line1, self._line2 = text1, text2
         self._duration_ms = int(settings.get("feedback_duration_ms", 1500))
-        self._fade.stop()
+        self._resize_to_fit()
         self.setWindowOpacity(1.0)
         self._position_for(
             settings.get("feedback_position", "bottom_center"),
@@ -44,16 +54,44 @@ class QFeedbackTip(QWidget):
             int(settings.get("feedback_offset_y", 0)),
         )
         self.update()
+        QTimer.singleShot(0, self._show_now)
+        self._hide_timer.start(self._duration_ms)
+
+    def _show_now(self):
+        """事件循环下一轮显示：hide 已完全生效后，新表面不会带上一命令旧画面"""
+        # 若延迟期间被 hide_tip 清空（新手势已开始），则不再显示
+        if not (self._line1 or self._line2):
+            return
         self.show()
         self.raise_()
-        self.repaint()   # 同步重绘，确保新内容立即替换旧弹窗
-        self._hide_timer.start(self._duration_ms)
+        self.repaint()
 
     def hide_tip(self) -> None:
         """立即隐藏当前提示：新一次手势开始时清除上一条残留弹窗"""
         self._fade.stop()
         self._hide_timer.stop()
+        self._line1 = ""
+        self._line2 = ""
         self.hide()
+
+    def _resize_to_fit(self):
+        """弹窗宽度随最长文本自适应，超长命令名缩字号不溢出"""
+        f1 = QFont("Microsoft YaHei")
+        f1.setPixelSize(font_px(16))
+        f1.setBold(True)
+        f2 = QFont("Microsoft YaHei")
+        f2.setPixelSize(font_px(12))
+        w1 = QFontMetrics(f1).horizontalAdvance(self._line1)
+        w2 = QFontMetrics(f2).horizontalAdvance(self._line2)
+        w = max(180, min(420, max(w1, w2) + 56))
+        self.setFixedSize(w, 64)
+        # 极长文本：主行字号从 16 往下缩，保证不超出弹窗宽度
+        size = 16
+        while size > 10 and QFontMetrics(f1).horizontalAdvance(
+                self._line1) > w - 40:
+            size -= 1
+            f1.setPixelSize(size)
+        self._line1_font_size = size
 
     def _position_for(self, pos: str, offset_x: int = 0, offset_y: int = 0) -> None:
         """按预设锚点定位，再叠加像素偏移，最后夹紧在屏幕可用区内"""
@@ -90,11 +128,6 @@ class QFeedbackTip(QWidget):
         self._fade.stop()
         self._fade.setStartValue(self.windowOpacity())
         self._fade.setEndValue(0.0)
-        try:
-            self._fade.finished.disconnect(self.hide)
-        except (TypeError, RuntimeError):
-            pass
-        self._fade.finished.connect(self.hide)
         self._fade.start()
     def paintEvent(self, e):
         p = QPainter(self)
@@ -107,14 +140,23 @@ class QFeedbackTip(QWidget):
         p.setPen(QPen(QColor(ui.border_strong), 1))
         p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 10, 10)
         f = QFont("Microsoft YaHei")
-        f.setPixelSize(font_px(16))
+        f.setPixelSize(self._line1_font_size)
         f.setBold(True)
         p.setFont(f)
-        p.setPen(QColor(ui.text))
+        # 命令名用主题强调色，突出“刚执行了什么”
+        p.setPen(QColor(ui.accent))
         p.drawText(QRect(0, 8, self.width(), 24), Qt.AlignCenter, self._line1)
-        f.setPixelSize(font_px(12))
-        f.setBold(False)
-        p.setFont(f)
-        p.setPen(QColor(ui.text_secondary))
-        p.drawText(QRect(0, 34, self.width(), 18), Qt.AlignCenter, self._line2)
+        if self._line2:
+            f2 = QFont("Microsoft YaHei")
+            f2.setPixelSize(font_px(12))
+            p.setFont(f2)
+            fm = QFontMetrics(f2)
+            pw = fm.horizontalAdvance(self._line2) + 18
+            pr = QRect((self.width() - pw) // 2, 33, pw, 20)
+            # 快捷键底色 pill：低调强调，深/浅主题均清晰
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(ui.bg_selected))
+            p.drawRoundedRect(pr, 10, 10)
+            p.setPen(QColor(ui.text_secondary))
+            p.drawText(pr, Qt.AlignCenter, self._line2)
         p.end()
