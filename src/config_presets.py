@@ -3,6 +3,69 @@
 import copy
 from typing import Dict, Any
 
+COMMAND_ICON_MAP = {
+    "LINE": "line",
+    "PLINE": "polyline",
+    "CIRCLE": "circle",
+    "ARC": "arc",
+    "RECTANG": "rect",
+    "ELLIPSE": "ellipse",
+    "SPLINE": "spline",
+    "BHATCH": "hatch",
+    "XLINE": "xline",
+    "POLYGON": "polygon",
+    "ERASE": "erase",
+    "COPY": "copy",
+    "MOVE": "move",
+    "OFFSET": "offset",
+    "TRIM": "trim",
+    "EXTEND": "extend",
+    "MIRROR": "mirror",
+    "ROTATE": "rotate",
+    "SCALE": "scale",
+    "FILLET": "fillet",
+    "EXPLODE": "explode",
+    "BLOCK": "block",
+    "INSERT": "insert",
+    "DIMLINEAR": "dim",
+    "DIMALIGNED": "dim",
+    "DIMRADIUS": "dim",
+    "DIMDIAMETER": "dim",
+    "DIMANGULAR": "dim",
+    "DIMCONTINUE": "dim",
+    "DIMBASELINE": "dim",
+    "DIMCENTER": "dim",
+    "DIMORDINATE": "dim",
+    "TEXTEDIT": "text",
+    "ZWMDIMTEXT": "text",
+    "OSNAP": "osnap",
+    "ORTHO": "ortho",
+    "POLAR": "polar",
+    "GRID": "grid",
+    "LAYER": "layer",
+}
+
+def _inject_preset_icons(cmds):
+    """给命令库条目按 CAD 命令名补 icon 字段（原地修改）"""
+    for category in cmds.values():
+        for entry in category.values():
+            iid = COMMAND_ICON_MAP.get(
+                (entry.get("description") or "").upper())
+            if iid:
+                entry["icon"] = "preset:" + iid
+
+
+def _inject_default_icons(config):
+    """给默认方案的扇区按 CAD 命令名补 icon 字段（原地修改）"""
+    for prof in config.get("profiles", {}).values():
+        for key in ("sectors", "outer_sectors", "extension_sectors"):
+            for cfg in prof.get(key, {}).values():
+                iid = COMMAND_ICON_MAP.get(
+                    (cfg.get("description") or "").upper())
+                if iid:
+                    cfg["icon"] = "preset:" + iid
+
+
 def get_preset_commands(target: str = "autocad") -> Dict[str, Dict[str, str]]:
     """获取预设命令库，根据 target 返回对应命令集
     
@@ -122,8 +185,26 @@ def get_preset_commands(target: str = "autocad") -> Dict[str, Dict[str, str]]:
         },
     }
 
-    # AutoCAD 直接返回基础命令
+
+    # ========== 通用预设（自定义应用：仅按键模拟，无 COM 命令） ==========
+    generic_commands = {
+        "常用快捷键": {
+            "复制": {"key": "ctrl+c", "description": "复制", "label": "复制"},
+            "粘贴": {"key": "ctrl+v", "description": "粘贴", "label": "粘贴"},
+            "剪切": {"key": "ctrl+x", "description": "剪切", "label": "剪切"},
+            "撤销": {"key": "ctrl+z", "description": "撤销", "label": "撤销"},
+            "重做": {"key": "ctrl+y", "description": "重做", "label": "重做"},
+            "全选": {"key": "ctrl+a", "description": "全选", "label": "全选"},
+            "保存": {"key": "ctrl+s", "description": "保存", "label": "保存"},
+            "删除": {"key": "delete", "description": "删除", "label": "删除"},
+        },
+    }
+    if target not in ("autocad", "zwcad"):
+        _inject_preset_icons(generic_commands)
+        return generic_commands
+
     if target == "autocad":
+        _inject_preset_icons(base_commands)
         return base_commands
 
     # ========== 中望CAD 机械版专属命令（按《中望CAD快捷键指南》完整分类） ==========
@@ -326,12 +407,13 @@ def get_preset_commands(target: str = "autocad") -> Dict[str, Dict[str, str]]:
     for category, cmds in zw_mech_commands.items():
         zwcad_commands[category] = cmds
 
+    _inject_preset_icons(zwcad_commands)
     return zwcad_commands
 
 
 def _default_config() -> Dict[str, Any]:
     """默认配置 — AutoCAD 和中望CAD 分开，含双层圆盘"""
-    return {
+    config = {
         "settings": {
             "version": 1,
             "hold_threshold_ms": 80,
@@ -349,17 +431,21 @@ def _default_config() -> Dict[str, Any]:
             "auto_start": False,
             "auto_switch_profile": True,
             "open_config_on_start": False,
-            "menu_theme": "azure",
-            "check_update_on_start": True,
+            "menu_theme": "graphite",
+            "check_update_on_start": False,
             "update_source_url": "https://github.com/Inonvation/cad-gesture/releases/latest",
             "last_update_check": "",
+            "app_order": ["autocad", "zwcad"],
+            "custom_targets": [],
             "language": "zh",
-            "ui_mode": "dark",
+            "ui_mode": "light",
             "trigger_button": "right",
             "gesture_trail": True,
             "menu_clamp_to_screen": True,
             "menu_font_scale": 100,
             "ui_font_scale": 100,
+            "menu_icon_scale": 100,
+            "menu_icon_hide_label": False,
             "custom_text": "#e9edf2",
             "custom_highlight": "#6fa3d8",
             "custom_bg": "#1a202b",
@@ -640,3 +726,6 @@ def _default_config() -> Dict[str, Any]:
             }
         }
     }
+
+    _inject_default_icons(config)
+    return config

@@ -50,7 +50,7 @@ def test_geometry_consistent_across_modules():
     engine = GestureEngine(config=cfg, on_gesture=lambda *a: None,
                            on_gesture_feedback=lambda *a: None,
                            on_menu_show=lambda *a: None,
-                           on_menu_hide=lambda: None,
+                           on_menu_hide=lambda *a: None,
                            on_extension_hint=lambda *a: None)
     s = cfg["settings"]
     assert menu.ring_radius == scaled_radius(s, "ring_radius") == engine.ring_radius

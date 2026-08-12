@@ -4,90 +4,21 @@
 （不再用 Qt.Popup，规避其关闭-重开竞态导致的黑边问题）；输入即时
 写回配置（发信号，由主窗口负责落盘）。只负责展示与交互，不持有配置数据。
 
-样式由全局 QSS 提供（build_app_qss 的 QFrame#popupCard 等规则），
-随界面模式（浅/深）自动切换；语言切换通过 retranslate 刷新文本。
+布局：顶部图标区（大图标按钮 + 从文件选择/清除）→ 显示名称/快捷键/CAD 命令
+→ 保存/清空。内容卡片背景由全局 QSS 的 QFrame#popupCard 提供（不透明）。
+样式随界面模式（浅/深）自动切换；语言切换通过 retranslate 刷新文本。
 """
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import (QFormLayout, QFrame, QHBoxLayout,
-                               QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (QFileDialog, QFormLayout, QFrame, QHBoxLayout,
+                               QLabel, QLineEdit, QMessageBox, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from src.i18n import T
-from src.menu_geometry import scaled_radii
-from src.qt_renderer import (draw_center, draw_ring, draw_shadow, EXTENSION, INNER, OUTER)
+from src.icon_library import import_custom_icon, resolve_icon
+from src.icon_picker import IconPickerDialog
 from src.theme import FONT_SM, font_px, theme_from_settings
-
-
-class _CommandPreview(QWidget):
-    """命令编辑时的迷你圆盘预览，随输入框内容实时刷新。"""
-
-    _LAYER_KEY = {"inner": "sectors", "outer": "outer_sectors",
-                  "extension": "extension_sectors"}
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("commandPreview")
-        self.setMinimumHeight(152)
-        self._settings = {}
-        self._layer = "inner"
-        self._idx = 0
-        self._count = 8
-        self._cfg = {}
-
-    def set_data(self, layer, idx, cfg, n, settings=None):
-        self._layer = layer
-        self._idx = idx
-        self._cfg = dict(cfg or {})
-        self._count = max(1, int(n or 8))
-        if settings is not None:
-            self._settings = settings
-        self.update()
-
-    def set_settings(self, settings):
-        self._settings = settings or {}
-        self.update()
-
-    def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        settings = self._settings or {}
-        theme = theme_from_settings(settings)
-        radii = scaled_radii(settings)
-        ext = max(1.0, float(radii.get("ext_ring_radius", 185)))
-        fit = max(0.01, (min(self.width(), self.height()) / 2 - 12) / ext)
-        cx = self.width() / 2
-        cy = self.height() / 2
-        dead = radii["dead_zone_radius"] * fit
-        inner = radii["ring_radius"] * fit
-        outer = radii["outer_ring_radius"] * fit
-        ext_r = radii["ext_ring_radius"] * fit
-        key = self._LAYER_KEY.get(self._layer, "sectors")
-        sectors = {key: {str(self._idx): self._cfg}}
-        font_scale = float(settings.get("menu_font_scale", 100)) / 100.0
-        light = getattr(theme, "light", False)
-
-        draw_shadow(p, cx, cy, ext_r, light=light)
-        draw_ring(p, cx, cy, outer, ext_r, self._count,
-                  sectors.get("extension_sectors", {}), theme.extension,
-                  layer=EXTENSION, sel=(self._layer, self._idx),
-                  placeholder=True, light=light, font_scale=font_scale)
-        draw_ring(p, cx, cy, inner, outer, self._count,
-                  sectors.get("outer_sectors", {}), theme.outer,
-                  layer=OUTER, sel=(self._layer, self._idx),
-                  placeholder=True, light=light, font_scale=font_scale)
-        draw_ring(p, cx, cy, dead, inner, self._count,
-                  sectors.get("sectors", {}), theme.inner,
-                  layer=INNER, sel=(self._layer, self._idx),
-                  placeholder=True, light=light, font_scale=font_scale)
-
-        label = self._cfg.get("label", "").strip() or T("未设置")
-        shortcut = self._cfg.get("key", "").strip().upper()
-        command = self._cfg.get("description", "").strip().upper()
-        sub = " · ".join(x for x in (shortcut, command) if x)
-        draw_center(p, cx, cy, dead, theme, min(self.width(), self.height()),
-                    label, sub, font_scale=font_scale)
-        p.end()
 
 
 class SectorEditorPopup(QFrame):
@@ -104,18 +35,20 @@ class SectorEditorPopup(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        # 浮层窗口自身保持透明（防止应用级 QSS 的背景规则污染）；
-        # 内容卡片背景由全局 QSS 的 QFrame#popupCard 提供（特异性更高）
-        self.setStyleSheet("QFrame { background: transparent; }")
+        # 仅窗口自身透明（圆角透出桌面），内容卡片由全局 QSS 提供不透明背景
+        self.setObjectName("sectorEditorWin")
+        self.setStyleSheet("QFrame#sectorEditorWin { background: transparent; }")
         self._loading = False
         self._layer = "inner"
         self._idx = 0
-        self._count = 8
         self._dirty = False            # 有未保存的输入修改
         self._dragging = False
         self._drag_offset = None
         self.user_moved = False   # 用户拖动过浮层：此后不再自动定位到圆盘下方
         self._settings = {}
+        self.icon_ref = ""
+        self._modal_open = False     # 正在打开模态对话框（图标/文件选择），期间不因外部点击关闭
+        self.setMinimumWidth(340)    # 稳定排版宽度，避免随内容跳动
 
         root = QFrame(self)
         root.setObjectName("popupCard")
@@ -124,7 +57,7 @@ class SectorEditorPopup(QFrame):
         outer.addWidget(root)
         lay = QVBoxLayout(root)
         lay.setContentsMargins(16, 10, 16, 10)
-        lay.setSpacing(5)
+        lay.setSpacing(6)
 
         # 头部：所在层 · 扇区 N（整行是拖动把手，按住可移动浮层）
         head = QHBoxLayout()
@@ -144,10 +77,41 @@ class SectorEditorPopup(QFrame):
         head.addStretch(1)
         lay.addLayout(head)
 
-        # 三个输入
+        # 表单：第一行是图标（点击图标按钮打开图标库），随后三个输入
         form = QFormLayout()
-        form.setSpacing(5)
+        form.setSpacing(6)
         form.setLabelAlignment(Qt.AlignLeft)
+        self.icon_btn = QPushButton("＋")
+        self.icon_btn.setObjectName("iconPickBtn")
+        self.icon_btn.setFixedSize(56, 56)
+        self.icon_btn.setCursor(Qt.PointingHandCursor)
+        self.icon_btn.setFocusPolicy(Qt.NoFocus)
+        self.icon_btn.setToolTip(T("点击选择图标：内置矢量或已上传的图片"))
+        self.icon_btn.clicked.connect(self._on_pick_icon)
+        self.btn_pick_file = QPushButton(T("从文件选择"))
+        self.btn_pick_file.setMinimumWidth(96)
+        self.btn_pick_file.setFocusPolicy(Qt.NoFocus)
+        self.btn_pick_file.setToolTip(
+            T("选择本地图片（png/svg/ico），自动复制到应用数据目录"))
+        self.btn_pick_file.clicked.connect(self._on_pick_file)
+        self.btn_clear_icon = QPushButton(T("清除图标"))
+        self.btn_clear_icon.setMinimumWidth(96)
+        self.btn_clear_icon.setFocusPolicy(Qt.NoFocus)
+        self.btn_clear_icon.setToolTip(T("移除当前扇区图标"))
+        self.btn_clear_icon.clicked.connect(self._on_clear_icon)
+        # 图标按钮在左，[从文件选择]/[清除图标] 竖排两行在右，同一行
+        icon_row = QWidget()
+        irow = QHBoxLayout(icon_row)
+        irow.setContentsMargins(0, 0, 0, 0)
+        irow.setSpacing(8)
+        irow.addWidget(self.icon_btn)
+        btns_col = QVBoxLayout()
+        btns_col.setSpacing(4)
+        btns_col.addWidget(self.btn_pick_file)
+        btns_col.addWidget(self.btn_clear_icon)
+        irow.addLayout(btns_col)
+        irow.addStretch(1)
+        form.addRow(self._field(T("图标")), icon_row)
         self.label_entry = QLineEdit()
         self.label_entry.setPlaceholderText(T("圆盘上显示的名称"))
         self.key_entry = QLineEdit()
@@ -159,25 +123,22 @@ class SectorEditorPopup(QFrame):
         form.addRow(self._field(T("CAD 命令")), self.desc_entry)
         lay.addLayout(form)
 
-        self.preview_title = QLabel(T("实时预览"))
-        self.preview_title.setObjectName("previewCaption")
-        lay.addWidget(self.preview_title)
-        self.command_preview = _CommandPreview(self)
-        lay.addWidget(self.command_preview)
-
         for w in (self.label_entry, self.key_entry, self.desc_entry):
             w.textChanged.connect(self._on_edited)
+            w.returnPressed.connect(self.save_requested.emit)   # Enter 直接保存
 
         # 按钮行：保存 / 清空
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         self.btn_save = QPushButton(T("保存"))
         self.btn_save.setProperty("class", "primary")
+        self.btn_save.setFocusPolicy(Qt.NoFocus)
         self.btn_save.setToolTip(T("保存该扇区的命令修改"))
         self.btn_save.clicked.connect(self.save_requested.emit)
         btn_row.addWidget(self.btn_save)
         self.btn_clear = QPushButton(T("清空"))
         self.btn_clear.setObjectName("clearBtn")
+        self.btn_clear.setFocusPolicy(Qt.NoFocus)
         self.btn_clear.setToolTip(T("删除该扇区命令"))
         self.btn_clear.clicked.connect(self._on_clear)
         btn_row.addWidget(self.btn_clear)
@@ -199,20 +160,94 @@ class SectorEditorPopup(QFrame):
         self.label_entry.setPlaceholderText(T("圆盘上显示的名称"))
         self.key_entry.setPlaceholderText(T("回退快捷键，如 L / CO"))
         self.desc_entry.setPlaceholderText(T("发送到 CAD 的命令名，如 LINE"))
-        self.preview_title.setText(T("实时预览"))
+        self.icon_btn.setToolTip(T("点击选择图标：内置矢量或已上传的图片"))
+        self.btn_pick_file.setText(T("从文件选择"))
+        self.btn_pick_file.setToolTip(
+            T("选择本地图片（png/svg/ico），自动复制到应用数据目录"))
+        self.btn_clear_icon.setText(T("清除图标"))
+        self.btn_clear_icon.setToolTip(T("移除当前扇区图标"))
         self.btn_save.setText(T("保存"))
         self.btn_save.setToolTip(T("保存该扇区的命令修改"))
         self.btn_clear.setText(T("清空"))
         self.btn_clear.setToolTip(T("删除该扇区命令"))
         self._update_title()
+        if not self.icon_ref:
+            self._refresh_icon_btn()
+
+    # ========== 图标 ==========
+
+    def _thumb_color(self) -> str:
+        """图标染色色（跟随当前圆盘主题文字色）"""
+        try:
+            return theme_from_settings(self._settings).inner.text
+        except Exception:
+            return "#9aa3af"
+
+    def _refresh_icon_btn(self):
+        """图标按钮：有图标显示图标（实线框），无图标显示 ＋（虚线框）"""
+        pm = resolve_icon(self.icon_ref, self._thumb_color(), 40)
+        has = pm is not None
+        if has:
+            self.icon_btn.setIcon(pm)
+            self.icon_btn.setIconSize(pm.size())
+            self.icon_btn.setText("")
+            self.icon_btn.setToolTip(self.icon_ref)
+        else:
+            self.icon_btn.setIcon(QIcon())
+            self.icon_btn.setText("＋")
+            self.icon_btn.setToolTip(T("点击选择图标：内置矢量或已上传的图片"))
+        self.icon_btn.setProperty("iconSet", "true" if has else "false")
+        self.icon_btn.style().unpolish(self.icon_btn)
+        self.icon_btn.style().polish(self.icon_btn)
+        self.btn_clear_icon.setEnabled(has)   # 无图标时不可"清除"
+
+    def _set_icon(self, ref: str):
+        self.icon_ref = ref or ""
+        self._refresh_icon_btn()
+        self._on_edited("")
+
+    def _on_pick_icon(self):
+        self._modal_open = True
+        try:
+            dlg = IconPickerDialog(self.icon_ref, self.window())
+            if dlg.exec() and dlg.selected_ref:
+                self._set_icon(dlg.selected_ref)
+        finally:
+            self._modal_open = False
+
+    def _on_pick_file(self):
+        self._modal_open = True
+        try:
+            dlg = QFileDialog(self.window(), T("选择图片文件"), "",
+                              T("图片文件 (*.png *.jpg *.jpeg *.bmp *.ico *.svg)"))
+            dlg.setFileMode(QFileDialog.ExistingFile)
+            # Qt 自绘对话框：受主题 QSS 控制且可置顶，避免被浮层盖住导致"卡死"
+            dlg.setOption(QFileDialog.DontUseNativeDialog, True)
+            dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowStaysOnTopHint)
+            path = ""
+            if dlg.exec() == QFileDialog.Accepted and dlg.selectedFiles():
+                path = dlg.selectedFiles()[0]
+        finally:
+            self._modal_open = False
+        if not path:
+            return
+        try:
+            ref = import_custom_icon(path)
+        except Exception as e:
+            QMessageBox.warning(self, T("错误"),
+                                T("无法使用该图片: {msg}").format(msg=e))
+            return
+        self._set_icon(ref)
+
+    def _on_clear_icon(self):
+        self._set_icon("")
 
     # ========== 外部接口 ==========
 
     def show_sector(self, layer: str, idx: int, cfg: dict, n: int, settings=None) -> None:
-        """打开浮层显示某扇区配置，并同步迷你圆盘预览。"""
+        """打开浮层显示某扇区配置。"""
         self._layer = layer
         self._idx = idx
-        self._count = max(1, int(n or 8))
         if settings is not None:
             self._settings = settings
         self._loading = True
@@ -222,20 +257,26 @@ class SectorEditorPopup(QFrame):
         self.label_entry.setText(cfg.get("label", ""))
         self.key_entry.setText(cfg.get("key", ""))
         self.desc_entry.setText(cfg.get("description", ""))
+        self.icon_ref = cfg.get("icon", "") or ""
+        self._refresh_icon_btn()
         self._loading = False
-        self.command_preview.set_data(
-            layer, idx, self._current_cfg(), n, self._settings)
 
     def set_settings(self, settings):
         self._settings = settings or {}
-        self.command_preview.set_settings(self._settings)
+        if self.icon_ref:
+            self._refresh_icon_btn()
 
     def _current_cfg(self):
         return {
-            "label": self.label_entry.text(),
-            "key": self.key_entry.text(),
-            "description": self.desc_entry.text(),
+            "label": self.label_entry.text().strip(),
+            "key": self.key_entry.text().strip(),
+            "description": self.desc_entry.text().strip(),
+            "icon": self.icon_ref,
         }
+
+    def current_cfg(self):
+        """当前表单内容（供主窗口写回配置）"""
+        return self._current_cfg()
 
     def _update_title(self):
         layer_names = {"inner": T("内层"), "outer": T("外层"), "extension": T("扩展圈")}
@@ -249,9 +290,6 @@ class SectorEditorPopup(QFrame):
         if not self._loading:
             self._dirty = True
             self.meta.setText(T("未保存"))
-            self.command_preview.set_data(
-                self._layer, self._idx, self._current_cfg(),
-                self._count, self._settings)
             self.edited.emit()
 
     def mark_saved(self):
@@ -292,7 +330,7 @@ class SectorEditorPopup(QFrame):
 
     def mousePressEvent(self, event):
         """按住头部拖动浮层；点击空白处（非输入控件/按钮）关闭并把点击转发给
-        预览，让圆盘下的扇区能收到这次点击（解决浮层遮挡扇区导致无法再弹出的问题）"""
+        圆盘预览，让圆盘下的扇区能收到这次点击（解决浮层遮挡扇区导致无法再弹出的问题）"""
         if event.button() == Qt.LeftButton:
             from PySide6.QtWidgets import QLineEdit, QPushButton
             child = self.childAt(event.position().toPoint())

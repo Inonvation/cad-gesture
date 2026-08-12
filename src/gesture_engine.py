@@ -100,7 +100,7 @@ class GestureEngine:
         on_gesture: Callable[[int, str, str], None],
         on_gesture_feedback: Callable[[int, str, str], None],
         on_menu_show: Callable[[int, int, str], None],
-        on_menu_hide: Callable[[], None],
+        on_menu_hide: Callable[[bool], None],
         on_extension_hint: Callable[[bool], None]
     ):
         self.config = config
@@ -109,6 +109,10 @@ class GestureEngine:
         self.on_menu_show = on_menu_show   # (x, y, window_type)
         self.on_menu_hide = on_menu_hide
         self.on_extension_hint = on_extension_hint  # (is_in_extension_zone)
+
+        # 用户自定义应用（其他软件）匹配规则，update_config 时刷新
+        self._custom_targets: list = []
+        self._load_custom_targets()
 
         self._press_pos: Tuple[int, int] = (0, 0)
         self._press_time: float = 0.0
@@ -252,7 +256,21 @@ class GestureEngine:
             for msg in logs:
                 logger.info(msg)
 
-    def _detect_cad_window(self) -> str:
+    def _load_custom_targets(self):
+        """从配置刷新自定义应用匹配规则（settings.custom_targets）"""
+        s = self.config.get("settings", {})
+        apps = s.get("custom_targets")
+        self._custom_targets = [
+            a for a in apps if isinstance(a, dict) and a.get("id")
+        ] if isinstance(apps, list) else []
+
+    def _detect_window_type(self) -> str:
+        """识别前台窗口属于哪个 target：内置 CAD 优先，再匹配自定义应用。
+
+        内置规则（进程名最可靠）：exe 含 zwcad/标题或类名含 zwcad、中望 → zwcad；
+        exe 含 acad/标题含 autocad/类名 AFX → autocad。
+        自定义应用按 settings.custom_targets 匹配（exe 优先，标题/类名兜底）。
+        """
         now = time.monotonic()
         if now - self._window_cache[1] < 0.5:
             return self._window_cache[0]
@@ -270,6 +288,13 @@ class GestureEngine:
                 if "acad" in exe:
                     self._window_cache = ("autocad", now)
                     return "autocad"
+                # 自定义应用：exe 名子串匹配
+                for app in self._custom_targets:
+                    m = (app.get("match_exe") or "").strip().lower()
+                    if m and m in exe:
+                        t = app.get("id")
+                        self._window_cache = (t, now)
+                        return t
             class_name = ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, class_name, 256)
             title = ctypes.create_unicode_buffer(256)
@@ -284,6 +309,14 @@ class GestureEngine:
             if "autocad" in ts:
                 self._window_cache = ("autocad", now)
                 return "autocad"
+
+            # 自定义应用：窗口标题 / 类名子串匹配
+            for app in self._custom_targets:
+                m = (app.get("match_title") or "").strip().lower()
+                if m and (m in ts or m in cs):
+                    t = app.get("id")
+                    self._window_cache = (t, now)
+                    return t
 
             if "afx" in cs and "zwcad" not in cs:
                 self._window_cache = ("autocad", now)
@@ -436,7 +469,7 @@ class GestureEngine:
         btn_up = self._trigger_up(wParam, msll.mouseData)
 
         if btn_down:
-            win_type = self._detect_cad_window()
+            win_type = self._detect_window_type()
             if win_type:
                 # 锁外取按下点所在屏 DPI（Win32 调用）：触发判定、扩展区判定与松手
                 # 结算统一用它换算距离，跨屏混合 DPI 不偏差
@@ -470,6 +503,7 @@ class GestureEngine:
         elif btn_up:
             ext_hint_cb = None
             ext_hint_args = None
+            cancel_ctx_menu = False
             with self._lock:
                 if self._is_pressed:
                     self._is_pressed = False
@@ -478,12 +512,16 @@ class GestureEngine:
                     dist = physical_to_logical(
                         math.sqrt(dx * dx + dy * dy), self._press_dpr)
                     held_ms = (time.monotonic() - self._press_time) * 1000
+                    menu_shown = self._menu_shown
                     if should_trigger_on_release(
-                            self._menu_shown, dist, self.dead_zone,
+                            menu_shown, dist, self.dead_zone,
                             self.trigger_distance, held_ms,
                             self.hold_threshold_ms):
                         callback = self.on_gesture
                         callback_args = self._resolve_gesture(dx, dy, dist)
+                    # 仅在实际手势交互（圆盘已弹出或有手势触发）时才取消 CAD
+                    # 的右键菜单；无滑动的普通右键不拦截，保留 CAD 原生菜单
+                    cancel_ctx_menu = menu_shown or (callback is not None)
                     should_hide = True
                     if self._in_extension_zone:
                         ext_hint_cb = self.on_extension_hint
@@ -495,7 +533,7 @@ class GestureEngine:
             # 弹窗提示最先入队：松手那一刻就弹，不等菜单隐藏 / ESC 取消 / 命令执行
             self.on_gesture_feedback(*callback_args)
         if should_hide:
-            self.on_menu_hide()
+            self.on_menu_hide(cancel_ctx_menu)
         if callback and callback_args:
             callback(*callback_args)
         if ext_hint_cb and ext_hint_args:
@@ -601,3 +639,4 @@ class GestureEngine:
 
     def update_config(self, config: dict):
         self.config = config
+        self._load_custom_targets()

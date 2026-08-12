@@ -12,12 +12,13 @@ from PySide6.QtCore import (Qt, QPointF, QTimer, QEvent, QObject,
                            QCoreApplication)
 from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QMenu, QMessageBox, QWidget,
-                               QProgressDialog, QSystemTrayIcon)
+                               QSystemTrayIcon)
 
 from src.config_manager import (
     load_config, save_config, get_active_profile,
     get_profile_for_window, get_profile_names, set_active_profile,
-    set_profile_for_target, get_config_path, get_sector_command
+    set_profile_for_target, get_target_order, get_target_label,
+    get_config_path, get_sector_command
 )
 from src.gesture_engine import GestureEngine
 from src.qt_radial_menu import QRadialMenu
@@ -132,11 +133,14 @@ class CADGestureApp:
         self._exit_poll_count = 0
         self._quitting = False
         self._init_late_done = False
+        # 界面字号生效值：_apply_ui_mode 中记录，__init__ 先置 None，
+        # 避免配置窗口在 _init_late 完成前触发保存时 _reload_config 报
+        # AttributeError（日志出现过）
+        self._applied_font_scale = None
 
         # 更新流程状态
-        self._update_info = None
         self._update_cancel = False
-        self._update_progress = None
+        self._update_dialog = None
 
     def _init_late(self):
         """事件循环启动后的异步初始化：构建 QSS / 圆盘 / 引擎 / 钩子。
@@ -146,7 +150,7 @@ class CADGestureApp:
         """
         try:
             s = self.config.get("settings", {})
-            self._apply_ui_mode(s.get("ui_mode", "dark"))
+            self._apply_ui_mode(s.get("ui_mode", "light"))
 
             # 圆盘菜单（Qt 透明悬浮窗）
             self.menu = QRadialMenu(self.config)
@@ -183,7 +187,7 @@ class CADGestureApp:
             self._theme_poll_timer = QTimer()
             self._theme_poll_timer.timeout.connect(self._poll_system_theme)
             self._theme_poll_timer.setInterval(5000)
-            if s.get("ui_mode", "dark") == "system":
+            if s.get("ui_mode", "light") == "system":
                 self._theme_poll_timer.start()
 
             self._init_late_done = True
@@ -248,8 +252,9 @@ class CADGestureApp:
     def _queue_show(self, x: int, y: int, window_type: str):
         self.event_queue.put(("show", (x, y, window_type)))
 
-    def _queue_hide(self):
-        self.event_queue.put(("hide", None))
+    def _queue_hide(self, cancel_ctx_menu: bool = False):
+        """圆盘隐藏事件：cancel_ctx_menu 表示是否需取消 CAD 右键上下文菜单"""
+        self.event_queue.put(("hide", cancel_ctx_menu))
 
     def _queue_extension_hint(self, is_in_zone: bool):
         self.event_queue.put(("extension_hint", is_in_zone))
@@ -350,12 +355,14 @@ class CADGestureApp:
                             menu = getattr(self, "menu", None)
                             if menu is not None:
                                 menu.hide()
-                            # 钩子不拦截右键：松手时 CAD 会弹右键菜单，
-                            # 无论是否触发命令都发 ESC 取消（触发路径不再重复发）
-                            try:
-                                cancel_context_menu()
-                            except Exception as e:
-                                self.log.error("取消右键菜单失败: %s", e, exc_info=True)
+                            # 钩子不拦截右键：松手时 CAD 会弹右键菜单。仅在
+                            # 实际手势交互（圆盘弹出或有手势触发）时发 ESC 取消，
+                            # 无滑动的普通右键不拦截，保留 CAD 原生右键菜单。
+                            if data:
+                                try:
+                                    cancel_context_menu()
+                                except Exception as e:
+                                    self.log.error("取消右键菜单失败: %s", e, exc_info=True)
                         elif event_type == "extension_hint":
                             menu = getattr(self, "menu", None)
                             if menu is not None:
@@ -396,10 +403,11 @@ class CADGestureApp:
                 self.log.error("事件队列异常: %s", e, exc_info=True)
 
             # 仅在菜单可见时更新鼠标位置（QCursor 比 pyautogui 更轻量）
-            if self.menu.is_visible():
+            _menu = getattr(self, "menu", None)
+            if _menu is not None and _menu.is_visible():
                 try:
                     pos = QCursor.pos()
-                    self.menu.update_highlight(pos.x(), pos.y())
+                    _menu.update_highlight(pos.x(), pos.y())
                 except Exception as e:
                     self.log.error("鼠标位置更新失败: %s", e, exc_info=True)
 
@@ -423,7 +431,8 @@ class CADGestureApp:
             self.log.error("主循环异常: %s", e, exc_info=True)
         finally:
             if not self._quitting:
-                delay = 16 if self.menu.is_visible() else 250
+                menu = getattr(self, "menu", None)
+                delay = 16 if (menu is not None and menu.is_visible()) else 250
                 self._timer.setInterval(delay)
 
     # ========== 界面模式 ==========
@@ -462,7 +471,7 @@ class CADGestureApp:
 
     def _poll_system_theme(self):
         """system 模式下系统主题变化时自动刷新界面 + 顶栏（5 秒轮询）"""
-        if self.config.get("settings", {}).get("ui_mode", "dark") != "system":
+        if self.config.get("settings", {}).get("ui_mode", "light") != "system":
             return
         # 必须主动读注册表：current_ui_mode() 是缓存值，只在 set_ui_mode 时
         # 更新，无法反映用户改系统主题后的变化
@@ -513,38 +522,63 @@ class CADGestureApp:
         """设置系统托盘"""
         self._tray_menu = self._build_tray_menu()  # 保持引用防 GC
         if hasattr(self, "tray"):
-            self.tray.setContextMenu(self._tray_menu)
             self.tray.setToolTip(T("CAD鼠标手势"))
             return
         self.tray = QSystemTrayIcon(self._create_tray_icon())
         self.tray.setToolTip(T("CAD鼠标手势"))
-        self.tray.setContextMenu(self._tray_menu)
+        # 不设置 contextMenu：Qt 在 Windows 上对设置了 contextMenu 的托盘，
+        # 单击也会自动弹出菜单，还会干扰双击信号的送达（第一次单击弹菜单
+        # 抢焦点，第二次单击不再触发 DoubleClick）。改为右键手动弹菜单。
+        self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
+
+
+    def _on_tray_activated(self, reason):
+        """托盘图标激活：左键单击/双击都打开配置，右键弹菜单。
+
+        Windows 下双击信号并不总是可靠送达（第一次单击常被系统当作
+        Trigger 处理），所以单击也直接打开配置；右键走 Context 手动弹菜单。
+        """
+        try:
+            if reason == QSystemTrayIcon.Context:
+                self._show_tray_menu()
+            elif reason in (QSystemTrayIcon.Trigger,
+                            QSystemTrayIcon.DoubleClick):
+                self._open_config()
+        except Exception as e:
+            self.log.error("托盘事件处理失败: %s", e, exc_info=True)
+
+    def _show_tray_menu(self):
+        """右键托盘：手动弹出托盘菜单（不依赖 Qt 自动 contextMenu）"""
+        try:
+            menu = getattr(self, "_tray_menu", None)
+            if menu is None:
+                menu = self._build_tray_menu()
+                self._tray_menu = menu
+            menu.popup(QCursor.pos())
+        except Exception as e:
+            self.log.error("弹出托盘菜单失败: %s", e, exc_info=True)
 
     def _rebuild_tray(self):
         """语言切换后重建托盘菜单文本（保留图标与显示状态）"""
         try:
             self._tray_menu = self._build_tray_menu()
             if hasattr(self, "tray"):
-                self.tray.setContextMenu(self._tray_menu)
+                self.tray.setToolTip(T("CAD鼠标手势"))
         except Exception as e:
             self.log.error("重建托盘菜单失败: %s", e, exc_info=True)
 
     def _build_tray_menu(self) -> QMenu:
         """构建托盘菜单（当前语言）"""
         profile_names = get_profile_names(self.config)
-        autocad_profiles = [n for n in profile_names
-                            if self.config["profiles"][n].get("target") == "autocad"]
-        zwcad_profiles = [n for n in profile_names
-                          if self.config["profiles"][n].get("target") == "zwcad"]
-        other_profiles = [n for n in profile_names
-                          if self.config["profiles"][n].get("target") not in ("autocad", "zwcad")]
+        profiles = self.config.get("profiles", {})
 
         menu = QMenu()
 
-        # 当前各 CAD 生效方案（勾选标记用），与运行时规则一致
+        # 当前各 target 生效方案（勾选标记用），与运行时规则一致
+        targets = get_target_order(self.config)
         active_by_target = {}
-        for tgt in ("autocad", "zwcad"):
+        for tgt in targets:
             p = get_profile_for_window(self.config, tgt)
             if p is not None:
                 active_by_target[tgt] = p.get("name", "")
@@ -552,20 +586,28 @@ class CADGestureApp:
         def add_profile_actions(names, parent_menu=None, target=None):
             tgt_menu = parent_menu or menu
             for name in names:
-                act = QAction(self.config["profiles"][name].get("name", name), tgt_menu)
+                act = QAction(profiles[name].get("name", name), tgt_menu)
                 act.setCheckable(True)
                 act.setChecked(
                     target is not None
-                    and active_by_target.get(target) == self.config["profiles"][name].get("name", name))
+                    and active_by_target.get(target) == profiles[name].get("name", name))
                 act.triggered.connect(lambda _=False, n=name: self._switch_profile(n))
                 tgt_menu.addAction(act)
 
-        if autocad_profiles:
-            sub = menu.addMenu("AutoCAD")
-            add_profile_actions(autocad_profiles, sub, "autocad")
-        if zwcad_profiles:
-            sub = menu.addMenu(T("中望CAD"))
-            add_profile_actions(zwcad_profiles, sub, "zwcad")
+        # 按卡片顺序分组：AutoCAD / 中望CAD / 自定义应用
+        for tgt in targets:
+            names = [n for n in profile_names if profiles[n].get("target") == tgt]
+            if not names:
+                continue
+            label = get_target_label(self.config, tgt)
+            if tgt in ("autocad", "zwcad"):
+                label = T(label)
+            sub = menu.addMenu(label)
+            add_profile_actions(names, sub, tgt)
+
+        # 未归入任何 target 的方案直接列在根菜单
+        other_profiles = [n for n in profile_names
+                          if profiles[n].get("target") not in targets]
         add_profile_actions(other_profiles)
 
         menu.addSeparator()
@@ -587,7 +629,7 @@ class CADGestureApp:
             # 托盘点选即表示"该方案用于对应 CAD"：同步显式绑定
             prof = self.config["profiles"].get(profile_name, {})
             target = prof.get("target", "")
-            if target in ("autocad", "zwcad"):
+            if target:
                 set_profile_for_target(self.config, target, profile_name)
             self.profile = get_active_profile(self.config)
             self.gesture_engine.update_config(self.config)
@@ -603,14 +645,100 @@ class CADGestureApp:
             self.log.error("切换方案失败: %s", e, exc_info=True)
 
     def _open_config(self):
-        """打开配置界面（Qt 版，独立窗口；延迟 import 避免启动加载整个界面链）"""
+        """打开配置界面（Qt 版，独立窗口；延迟 import 避免启动加载整个界面链）
+
+        已有窗口且真正可见时复用并强制恢复到前台（含最小化恢复）；
+        窗口已关闭/隐藏/几何无效时强制新建，避免复用一个看不见的残留窗口
+        导致点击无反应。
+        """
         try:
+            win = getattr(self, "_config_win", None)
+            if win is not None and self._config_win_usable(win):
+                self._restore_config_win(win)
+                return
+            # 窗口不可用（已关闭/隐藏/残留）：关闭并新建
+            if win is not None:
+                try:
+                    win.close()
+                    win.deleteLater()
+                except Exception:
+                    pass
             from src.qt_config_gui import open_config_gui
             self._config_win = open_config_gui(
                 on_save=self._reload_config,
                 on_check_update=lambda: self._check_update(manual=True))
+            try:
+                w = getattr(self, "_config_win", None)
+                if w is not None:
+                    self.log.info("_open_config: 新建窗口 visible=%s geo=%s", w.isVisible(), w.frameGeometry().getRect())
+            except Exception:
+                pass
         except Exception as e:
             self.log.error("打开配置界面失败: %s", e, exc_info=True)
+
+    @staticmethod
+    def _config_win_usable(win) -> bool:
+        """配置窗口是否真正可用：Qt 可见 + Win32 已映射 + 几何在屏幕内。
+
+        Qt 的 isVisible() 在窗口未真正映射时仍可能返回 True（如隐藏/残留的
+        窗口对象），单看 isVisible 会把"看不见的残留窗口"当成可用，导致点击
+        无反应。这里额外校验 Win32 WS_VISIBLE 与几何有效性。
+        """
+        try:
+            if not win.isVisible():
+                return False
+            # Win32 层必须真的映射（WS_VISIBLE）：Qt 状态可能滞后于实际显示
+            try:
+                import ctypes
+                hwnd = int(win.winId())
+                if hwnd and not ctypes.windll.user32.IsWindowVisible(hwnd):
+                    return False
+            except Exception:
+                pass
+            g = win.frameGeometry()
+            if g.width() <= 0 or g.height() <= 0:
+                return False
+            from PySide6.QtWidgets import QApplication
+            for scr in QApplication.screens():
+                if g.intersects(scr.availableGeometry()):
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def _restore_config_win(self, win):
+        """把已打开的配置窗口恢复到前台：最小化恢复 + 显示 + 置顶激活。
+
+        Windows 下 Qt 的 activateWindow() 在应用处于后台时可能被系统阻止，
+        这里再用 Win32 ShowWindow/SetForegroundWindow 兜底，确保从托盘
+        点击后窗口真正回到前台（含最小化后恢复）。
+        """
+        try:
+            if win.isMinimized():
+                win.setWindowState(win.windowState() & ~Qt.WindowMinimized)
+                win.showNormal()
+            win.show()
+            win.raise_()
+            win.activateWindow()
+            try:
+                import ctypes
+                hwnd = int(win.winId())
+                if hwnd:
+                    user32 = ctypes.windll.user32
+                    user32.ShowWindow(hwnd, 9)      # SW_RESTORE
+                    user32.SetForegroundWindow(hwnd)
+                    # 短暂置顶再取消，确保窗口浮到最上层后恢复普通层级
+                    user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0,
+                                        0x0001 | 0x0002 | 0x0010)
+                    user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0,
+                                        0x0001 | 0x0002)
+            except Exception:
+                pass
+            self.log.info("_open_config: 复用窗口 visible=%s minimized=%s",
+                          win.isVisible(), win.isMinimized())
+        except Exception as e:
+            self.log.error("恢复配置窗口失败: %s", e, exc_info=True)
+
 
     def _reload_config(self, cfg=None):
         """配置保存后重载（主线程，Qt 信号槽安全）
@@ -629,7 +757,7 @@ class CADGestureApp:
             if menu is not None:
                 menu.update_config(self.config)
             s = self.config.get("settings", {})
-            mode = s.get("ui_mode", "dark")
+            mode = s.get("ui_mode", "light")
             font = s.get("ui_font_scale", 100)
             # 界面模式（含 system 解析后）或字号变化才重建 QSS，其余设置跳过
             if (effective_ui_mode(mode) != current_ui_mode()
@@ -646,7 +774,7 @@ class CADGestureApp:
             return
         url = self.config.get("settings", {}).get(
             "update_source_url",
-            "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest")
+            "https://github.com/Inonvation/cad-gesture/releases/latest")
         threading.Thread(target=self._check_worker, args=(url, manual),
                          daemon=True).start()
 
@@ -665,7 +793,7 @@ class CADGestureApp:
     def _should_auto_check(self) -> bool:
         """启动自动检查：开关开启 + 距上次检查超过 24h"""
         s = self.config.get("settings", {})
-        if not s.get("check_update_on_start", True):
+        if not s.get("check_update_on_start", False):
             return False
         last = s.get("last_update_check", "")
         if not last:
@@ -712,6 +840,12 @@ class CADGestureApp:
             s = self.config.setdefault("settings", {})
             s["last_update_check"] = datetime.now().isoformat(timespec="seconds")
             save_config(self.config)
+            win = getattr(self, "_config_win", None)
+            if win is not None:
+                try:
+                    win.refresh_about_page(self.config)
+                except Exception:
+                    pass
         except Exception as e:
             self.log.error("记录检查时间失败: %s", e, exc_info=True)
 
@@ -722,41 +856,33 @@ class CADGestureApp:
             pass
 
     def _show_update_dialog(self, info: dict):
-        """有新版本：弹出更新说明对话框"""
-        self._update_info = info
-        box = QMessageBox()
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle(T("发现新版本"))
-        box.setText(T("CAD鼠标手势 v{new} 已发布（当前 v{cur}）")
-                    .format(new=info.get("version", ""), cur=__version__))
-        notes = (info.get("notes") or "").strip() or T("（无更新说明）")
-        if len(notes) > _UPDATE_NOTES_MAX:
-            notes = notes[:_UPDATE_NOTES_MAX] + "..."
-        box.setInformativeText(notes)
-        btn_now = box.addButton(T("立即更新"), QMessageBox.AcceptRole)
-        box.addButton(T("稍后再说"), QMessageBox.RejectRole)
-        box.exec()
-        if box.clickedButton() is btn_now:
-            self._start_update_download(info)
+        """有新版本：自定义更新弹窗（说明 + 立即更新/稍后，非模态）"""
+        from src.qt_update_dialog import UpdateDialog
+        dialog = UpdateDialog()
+        self._update_dialog = dialog
+        dialog.show_update_info(
+            info.get("version", ""), __version__,
+            (info.get("notes") or "").strip(),
+            on_update=lambda: self._start_update_download(info, dialog),
+            on_later=dialog.close)
+        dialog.show()
 
-    def _start_update_download(self, info: dict):
-        """开始后台下载安装包，主线程显示进度条"""
+    def _start_update_download(self, info: dict, dialog=None):
+        """开始后台下载，弹窗切换到下载进度模式"""
         self._update_cancel = False
         dest = os.path.join(tempfile.gettempdir(), "CADGesture-Setup.exe")
         try:
             os.remove(dest)
         except OSError:
             pass
-        total = info.get("size") or 0
-        self._update_progress = QProgressDialog(
-            T("正在下载 v{ver} 更新包...").format(ver=info.get("version", "")),
-            T("取消"), 0, 100 if total > 0 else 0)
-        self._update_progress.setWindowTitle(T("CAD鼠标手势 - 更新"))
-        self._update_progress.setWindowModality(Qt.WindowModal)
-        self._update_progress.setMinimumDuration(0)
-        self._update_progress.canceled.connect(
-            lambda: setattr(self, "_update_cancel", True))
-        self._update_progress.show()
+        if dialog is None:
+            from src.qt_update_dialog import UpdateDialog
+            dialog = UpdateDialog()
+        self._update_dialog = dialog
+        dialog.show_download(
+            info.get("version", ""),
+            on_cancel=lambda: setattr(self, "_update_cancel", True))
+        dialog.show()
         threading.Thread(target=self._download_worker, args=(info, dest),
                          daemon=True).start()
 
@@ -777,25 +903,23 @@ class CADGestureApp:
     def _on_update_progress(self, data: tuple):
         try:
             downloaded, total = data
-            if self._update_progress is None:
+            dialog = getattr(self, "_update_dialog", None)
+            if dialog is None:
                 return
-            if total > 0:
-                pct = int(downloaded * 100 / total)
-                self._update_progress.setValue(min(pct, 100))
-                self._update_progress.setLabelText(
-                    T("正在下载更新包... {got} KB / {total} KB")
-                    .format(got=downloaded // 1024, total=total // 1024))
-            else:
-                self._update_progress.setValue(0)
+            dialog.set_progress(downloaded, total)
         except Exception as e:
             self.log.error("更新进度更新失败: %s", e, exc_info=True)
 
     def _on_update_download_done(self, data: tuple):
         """下载完成：直接静默安装并退出（用户已在“发现新版本”确认过，不再二次确认）"""
         ok, dest = data
-        if self._update_progress is not None:
-            self._update_progress.close()
-            self._update_progress = None
+        dialog = getattr(self, "_update_dialog", None)
+        if dialog is not None:
+            try:
+                dialog.close()
+            except Exception:
+                pass
+            self._update_dialog = None
         if self._update_cancel:
             self._tray_message("CAD鼠标手势", T("更新已取消"))
             return

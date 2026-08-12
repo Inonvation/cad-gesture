@@ -108,3 +108,28 @@ if __name__ == "__main__":
     test_theme_creation()
     test_draw_ring_offscreen()
     print("\nAll tests passed!")
+
+
+def test_draw_ring_with_icon():
+    """扇区带 icon 渲染不崩溃；隐藏文字开关生效；非法 icon 回退文字"""
+    from PySide6.QtGui import QPixmap, QPainter
+    from src.config_presets import _default_config
+    from src.icon_library import clear_cache
+    t = get_menu_theme("azure")
+    dc = _default_config()
+    prof = next(p for p in dc["profiles"].values()
+                if p.get("target") == "autocad")
+    pm = QPixmap(400, 400)
+    p = QPainter(pm)
+    draw_ring(p, 200, 200, 24, 70, 8, prof.get("sectors", {}), t.inner,
+              layer=INNER, font_scale=1.0)
+    draw_ring(p, 200, 200, 24, 70, 8, prof.get("sectors", {}), t.inner,
+              layer=INNER, font_scale=1.0, hide_label_with_icon=True)
+    # 图标缩放参数：大图标 + 隐藏文字组合不崩溃
+    draw_ring(p, 200, 200, 24, 70, 8, prof.get("sectors", {}), t.inner,
+              layer=INNER, font_scale=1.2, icon_scale=1.5)
+    # 非法 icon 引用回退文字，不崩溃
+    bad = {"0": {"label": "x", "icon": "preset:nope"}}
+    draw_ring(p, 200, 200, 24, 70, 8, bad, t.inner, layer=INNER, font_scale=1.0)
+    p.end()
+    clear_cache()

@@ -35,6 +35,48 @@ _EN: Dict[str, str] = {
     "AutoCAD": "AutoCAD",
     "中望CAD": "ZWCAD",
     "其他": "Others",
+    "添加应用": "Add App",
+    "添加其他应用": "Add Other App",
+    "添加其他应用并为其设置手势方案": "Add another app and configure its gestures",
+    "应用名称": "App Name",
+    "可执行文件名": "Executable Name",
+    "窗口标题（可选）": "Window Title (optional)",
+    "从当前前台窗口获取": "Get from Foreground Window",
+    "提示：其他应用的手势命令使用按键模拟，不支持 CAD 专用命令":
+        "Tip: gestures in other apps use key simulation; CAD-only commands are not supported",
+    "即将在 5 秒后自动读取前台窗口，请立即切换到目标应用":
+        "The foreground window will be captured in 5 seconds. Switch to the target app now.",
+    "删除此应用": "Remove This App",
+    "删除此应用后，其全部方案将一并删除。确定吗？":
+        "Removing this app will also delete all its profiles. Continue?",
+    "拖动卡片排序": "Drag cards to reorder",
+    "已添加应用 {name}": "App {name} added",
+    "设为 {app} 应用方案": "Set as {app} App Profile",
+    "已设为 {app} 的应用方案": "Set as {app} app profile",
+    "当前：{name}": "Current: {name}",
+    "如 SolidWorks、天正、浩辰CAD": "e.g. SolidWorks, GstarCAD, ...",
+    "如 sldworks.exe，支持部分匹配": "e.g. sldworks.exe (partial match)",
+    "如 SolidWorks，留空则只按 exe 匹配":
+        "e.g. SolidWorks; leave blank to match by exe only",
+    "选择目标软件": "Select Target App",
+    "适用的软件:": "Applies to:",
+    "方案类型与目标应用不匹配": "Profile type does not match the target app",
+    "浏览…": "Browse...",
+    "不再提示": "Don't show again",
+    "将进入全屏窗口捕捉：5 秒倒计时内把鼠标移到目标应用窗口，倒计时结束自动确认。":
+        "A full-screen capture will start: move the mouse over the target window within 5 seconds; it auto-confirms when the countdown ends.",
+    "将鼠标移到目标应用窗口，倒计时结束自动确认（点击不受影响）":
+        "Hover over the target window; it auto-confirms when the countdown ends (clicks are not blocked)",
+
+
+    "选择可执行文件": "Select Executable",
+    "程序 (*.exe)": "Programs (*.exe)",
+
+    "应用名称不能为空": "App name cannot be empty",
+    "请填写可执行文件名或窗口标题（至少一项）":
+        "Please provide an executable name or window title (at least one)",
+
+
     "就绪": "Ready",
     "全局设置：修改即时保存": "Settings: changes save instantly",
     "圆盘编辑": "Disc Editor",
@@ -110,6 +152,15 @@ _EN: Dict[str, str] = {
         "Image Files (*.png *.jpg *.jpeg *.bmp *.ico *.svg)",
     "无法使用该图片: {msg}": "Cannot use this image: {msg}",
     "有图标时隐藏文字标签": "Hide text label when icon is set",
+    "图标大小": "Icon Size",
+    "圆盘扇区内图标的缩放比例，100% 为默认大小；图标过大时会自动限制并下移文字避免重叠。":
+        "Icon scale on the disc, 100% is default; oversized icons are capped and the label moves down to avoid overlap.",
+    "点击选择图标：内置矢量或已上传的图片":
+        "Click to choose an icon: built-in vector or uploaded image",
+    "移除当前扇区图标": "Remove this sector icon",
+    "内置图标": "Built-in Icons",
+    "已上传图片": "Uploaded Images",
+    "从文件选择…": "From File...",
     "扇区设置了图标时只显示图标不显示文字；关闭则图标和文字同时显示。":
         "Show only the icon (hide text) when a sector has an icon; off shows both icon and text.",
     "编辑 {layer}扇区 {idx}：点击外部关闭":
@@ -119,6 +170,7 @@ _EN: Dict[str, str] = {
         "Sector editing has unsaved changes. Save them?",
     "放弃": "Discard",
     "取消": "Cancel",
+    "确定": "OK",
     "修改未保存，已丢弃": "Changes discarded",
     "已取消选择": "Selection cancelled",
     "● 保存中…": "● Saving...",
@@ -202,6 +254,8 @@ _EN: Dict[str, str] = {
     "启动时检查更新": "Check for updates on startup",
     "检查更新": "Check for Updates",
     "立即检查是否有新版本": "Check for new version now",
+    "上次检查更新": "Last Checked",
+    "从未检查过": "Never checked",
     "配置目录": "Config Directory",
     "更改": "Change",
     "重置": "Reset",
@@ -249,6 +303,12 @@ _EN: Dict[str, str] = {
     "更新失败": "Update Failed",
     "正在安装更新，完成后自动启动": "Installing update, will restart automatically",
     "已更新到 v{ver}": "Updated to v{ver}",
+    "软件更新": "Software Update",
+    "发现新版本 v{ver}": "New version v{ver} available",
+    "当前版本 v{cur} → 新版本 v{new}": "Current v{cur} \u2192 New v{new}",
+    "正在下载 v{ver} 更新包": "Downloading v{ver} update",
+    "{pct}%  ({got} MB / {all} MB)": "{pct}%  ({got} MB / {all} MB)",
+    "已下载 {got} MB": "Downloaded {got} MB",
     "下载失败，请检查网络后重试": "Download failed, check network and retry",
     "更新就绪": "Update Ready",
     "更新包已下载完成。": "Update package downloaded.",

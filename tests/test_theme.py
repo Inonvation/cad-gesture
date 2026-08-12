@@ -29,6 +29,7 @@ def _contrast(a, b):
 
 def test_theme_count():
     assert len(MENU_THEMES) == 5  # 预设精简为 5 套，其余走自定义
+    assert list(MENU_THEMES.keys())[0] == "graphite"  # 外观设置主题网格：石墨排最前
 
 
 def test_every_theme_complete():
@@ -70,7 +71,7 @@ def test_theme_from_settings_custom():
 
 
 def test_custom_theme_trail_outline_explicit():
-    """?????????????/????????????????"""
+    """自定义主题轨迹线与分隔线：显式指定"""
     t = make_custom_theme("#e9edf2", "#6fa3d8", "#1a202b", "#2a3a4d",
                           "#ff0000", "#00ff00")
     assert t.trail == "#ff0000"
@@ -79,7 +80,7 @@ def test_custom_theme_trail_outline_explicit():
 
 
 def test_custom_theme_trail_outline_defaults():
-    """????????????????????????????????"""
+    """自定义主题轨迹线与分隔线：缺省自动推导"""
     t = make_custom_theme("#e9edf2", "#6fa3d8", "#1a202b", "#2a3a4d")
     assert t.trail == "#6fa3d8"
     for ring in (t.inner, t.outer, t.extension):
@@ -87,7 +88,7 @@ def test_custom_theme_trail_outline_defaults():
 
 
 def test_theme_from_settings_custom_new_keys():
-    """theme_from_settings ????? custom_trail / custom_outline"""
+    """theme_from_settings 应读取 custom_trail / custom_outline"""
     t = theme_from_settings({"menu_theme": "custom",
                              "custom_text": "#e9edf2",
                              "custom_highlight": "#6fa3d8",
@@ -101,7 +102,7 @@ def test_theme_from_settings_custom_new_keys():
 
 
 def test_theme_from_settings_custom_new_keys_defaults():
-    """?????? _CUSTOM_DEFAULTS ???"""
+    """缺省值应取自 _CUSTOM_DEFAULTS"""
     from src.theme import _CUSTOM_DEFAULTS
     t = theme_from_settings({"menu_theme": "custom", "ui_mode": "dark"})
     assert t.trail == _CUSTOM_DEFAULTS["custom_trail"]

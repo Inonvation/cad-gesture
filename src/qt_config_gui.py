@@ -13,22 +13,26 @@ import os
 from datetime import datetime
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
-                            QPoint, QPointF, QSettings, QSize, Qt, QTimer,
+                            QPoint, QPointF, QRect, QSettings, QSize, Qt, QTimer,
                             QVariantAnimation)
-from PySide6.QtGui import (QColor, QIcon, QPainter, QPen, QPixmap,
-                           QKeySequence, QMouseEvent, QShortcut)
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame,
-                               QFileDialog, QHBoxLayout, QHeaderView,
+from PySide6.QtGui import (QColor, QCursor, QDrag, QFont, QIcon, QPainter, QPen,
+                           QPixmap, QKeySequence, QMouseEvent, QShortcut)
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QDialog,
+                               QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+                               QHBoxLayout, QHeaderView,
                                QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu,
                                QMessageBox, QPushButton, QStyle,
                                QStackedWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
-
 from src.config_manager import (load_config, save_config,
                                 get_config_path, get_profile_for_window,
                                 set_profile_for_target, _default_config,
-                                export_full_config, import_full_config)
+                                export_full_config, import_full_config,
+                                get_custom_targets, get_target_order,
+                                set_target_order, get_target_label,
+                                add_custom_target, remove_custom_target,
+                                BUILTIN_TARGETS)
 from src.config_presets import get_preset_commands
 from src.i18n import T, add_listener, remove_listener
 from src.theme import (get_ui, set_ui_mode, build_app_qss,
@@ -52,6 +56,601 @@ _SETTINGS_PAGES = (("appearance", "外观与尺寸"), ("trigger", "触发与反�
 # 侧边栏锚点分类：与 _SETTINGS_PAGES 一致，但跳过「测试」（由维护页按钮进入）
 _ANCHOR_PAGES = tuple((k, zh) for k, zh in _SETTINGS_PAGES if k != "test")
 
+
+
+
+def _foreground_window_info() -> tuple:
+    """读取当前前台窗口的可执行文件名与标题（用于「从当前前台窗口获取」）。
+    返回 (exe_name, title)，失败返回 ("", "")。
+    """
+    try:
+        import ctypes
+        import ctypes.wintypes as wintypes
+        user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return "", ""
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+        exe = ""
+        if h:
+            try:
+                buf = ctypes.create_unicode_buffer(1024)
+                size = wintypes.DWORD(1024)
+                if kernel32.QueryFullProcessImageNameW(
+                        h, 0, buf, ctypes.byref(size)):
+                    exe = os.path.basename(buf.value)
+            finally:
+                kernel32.CloseHandle(h)
+        title_buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title_buf, 256)
+        return exe, title_buf.value
+    except Exception:
+        return "", ""
+
+
+
+def _window_info_at(logical_pos) -> tuple:
+    """返回鼠标逻辑坐标下的顶层窗口信息 (exe, title, hwnd)。
+    失败返回 ("", "", 0)。WindowFromPoint 用物理像素，按所在屏 DPR 换算。"""
+    try:
+        import ctypes
+        import ctypes.wintypes as wintypes
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.screenAt(logical_pos)
+        dpr = screen.devicePixelRatio() if screen is not None else 1.0
+        user32 = ctypes.windll.user32
+        user32.WindowFromPoint.restype = wintypes.HWND
+        pt = wintypes.POINT()
+        pt.x = int(round(logical_pos.x() * dpr))
+        pt.y = int(round(logical_pos.y() * dpr))
+        hwnd = user32.WindowFromPoint(pt)
+        if not hwnd:
+            return "", "", 0
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        h = kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+        exe = ""
+        if h:
+            try:
+                buf = ctypes.create_unicode_buffer(1024)
+                size = wintypes.DWORD(1024)
+                if kernel32.QueryFullProcessImageNameW(
+                        h, 0, buf, ctypes.byref(size)):
+                    exe = os.path.basename(buf.value)
+            finally:
+                kernel32.CloseHandle(h)
+        title_buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(hwnd, title_buf, 256)
+        return exe, title_buf.value, hwnd
+    except Exception:
+        return "", "", 0
+
+
+def _window_rect_logical(hwnd):
+    """窗口在虚拟桌面上的逻辑坐标矩形（供覆盖层描边）；失败返回 None。"""
+    try:
+        from PySide6.QtGui import QGuiApplication, QWindow
+        qw = QWindow.fromWinId(hwnd)
+        if qw is not None:
+            return qw.geometry()
+    except Exception:
+        pass
+    return None
+
+
+class _WindowPickOverlay(QWidget):
+    """全屏窗口捕捉覆盖层：倒计时 + 鼠标悬停窗口红框高亮。
+
+    鼠标点击穿透（WS_EX_TRANSPARENT）：不拦截点击，用户可正常操作/切换窗口；
+    悬停检测用定时轮询鼠标位置；倒计时结束自动用悬停窗口确认。"""
+
+    PICK_SECONDS = 5
+
+    def __init__(self):
+        super().__init__(None, Qt.FramelessWindowHint
+                         | Qt.WindowStaysOnTopHint
+                         | Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._on_picked = None
+        self._seconds = self.PICK_SECONDS
+        self._exe = ""
+        self._title = ""
+        self._rect = None
+        self._done = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+        # 悬停检测：点击已穿透，改用定时轮询鼠标位置
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setInterval(100)
+        self._hover_timer.timeout.connect(self._update_hover)
+
+    def _enable_click_through(self):
+        """Windows 扩展样式 WS_EX_TRANSPARENT：鼠标点击穿透到下方窗口"""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            GWL_EXSTYLE = -20
+            WS_EX_TRANSPARENT = 0x00000020
+            WS_EX_LAYERED = 0x00080000
+            hwnd = int(self.winId())
+            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE,
+                                  style | WS_EX_TRANSPARENT | WS_EX_LAYERED)
+        except Exception:
+            pass
+
+    def show_pick(self, on_picked):
+        from PySide6.QtGui import QGuiApplication
+        self._on_picked = on_picked
+        geo = QGuiApplication.primaryScreen().virtualGeometry()
+        self.setGeometry(geo)
+        self.show()
+        self.raise_()
+        self._enable_click_through()
+        self._seconds = self.PICK_SECONDS
+        self._timer.start()
+        self._hover_timer.start()
+        self._update_hover()
+        self.update()
+
+    def _tick(self):
+        self._seconds -= 1
+        if self._seconds <= 0:
+            self._confirm()
+        else:
+            self.update()
+
+    def _confirm(self):
+        if self._done:
+            return
+        self._done = True
+        self._timer.stop()
+        self._hover_timer.stop()
+        self.hide()
+        cb = self._on_picked
+        if cb is not None:
+            cb(self._exe, self._title)
+
+    def _update_hover(self):
+        pos = QCursor.pos()
+        self._exe, self._title, hwnd = _window_info_at(pos)
+        self._rect = _window_rect_logical(hwnd) if hwnd else None
+        self.update()
+
+    def paintEvent(self, e):
+        painter = QPainter(self)
+        # 淡色遮罩：让目标窗口可辨认但明显可区分
+        painter.fillRect(self.rect(), QColor(8, 12, 18, 80))
+        # 悬停窗口红色描边 + 标题标签
+        if self._rect is not None:
+            tl = self._rect.topLeft() - self.geometry().topLeft()
+            r = QRect(tl, self._rect.size())
+            pen = QPen(QColor(255, 70, 70), 3)
+            painter.setPen(pen)
+            painter.drawRect(r)
+            label = self._title or self._exe
+            if label:
+                f = QFont()
+                f.setPointSize(11)
+                f.setBold(True)
+                painter.setFont(f)
+                painter.setPen(QColor(255, 70, 70))
+                tag_rect = QRect(r.left(), r.top() - 24,
+                                 min(r.width(), 320), 22)
+                painter.fillRect(tag_rect, QColor(255, 70, 70))
+                painter.setPen(QColor(255, 255, 255))
+                painter.drawText(tag_rect, Qt.AlignCenter,
+                                 label[:40])
+        # 中央倒计时数字
+        f = QFont()
+        f.setPointSize(64)
+        f.setBold(True)
+        painter.setFont(f)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(self.rect(), Qt.AlignCenter,
+                         str(max(self._seconds, 0)))
+        # 提示文字
+        f2 = QFont()
+        f2.setPointSize(13)
+        painter.setFont(f2)
+        painter.setPen(QColor(225, 230, 238))
+        painter.drawText(self.rect().adjusted(0, 110, 0, 0),
+                         Qt.AlignHCenter | Qt.AlignTop,
+                         T("将鼠标移到目标应用窗口，倒计时结束自动确认（点击不受影响）"))
+        painter.end()
+
+
+_CARD_MIME = "application/x-cadgesture-card"
+
+
+class _CardHeader(QWidget):
+    """卡片头部：点击折叠/展开，按住拖动排序（整个头部都是拖拽区）。
+    按下后移动超过阈值视为拖动，原地松开视为点击。
+    子控件（箭头/标题/当前方案/手柄）全部鼠标穿透，统一由头部处理。"""
+
+    def __init__(self, on_toggle):
+        super().__init__()
+        self.setObjectName("cardHeader")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAttribute(Qt.WA_Hover, True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self._on_toggle = on_toggle
+        self._container = None
+        self._card = None
+        self._pressed = False
+        self._press_pos = QPoint()
+        self._dragged = False
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 6, 6, 6)
+        lay.setSpacing(6)
+        self.arrow = QLabel("▸")
+        self.arrow.setObjectName("cardArrow")
+        self.arrow.setFixedWidth(16)
+        self.arrow.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.arrow)
+        self.title = QLabel("")
+        self.title.setObjectName("cardTitle")
+        lay.addWidget(self.title, 1)
+        self.current = QLabel("")
+        self.current.setObjectName("cardCurrent")
+        lay.addWidget(self.current)
+        self.handle = QLabel("⠿")
+        self.handle.setObjectName("cardHandle")
+        self.handle.setToolTip(T("拖动卡片排序"))
+        self.handle.setFixedWidth(22)
+        self.handle.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.handle)
+        # 子控件鼠标穿透：整个头部统一处理点击/拖动
+        for w in (self.arrow, self.title, self.current, self.handle):
+            w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setFixedHeight(30)
+
+    def attach(self, container, card):
+        self._container = container
+        self._card = card
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._pressed = True
+            self._dragged = False
+            self._press_pos = e.position().toPoint()
+            e.accept()
+        else:
+            super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if (self._pressed and not self._dragged and (
+                e.position().toPoint() - self._press_pos).manhattanLength() > 6):
+            self._dragged = True
+            if self._container is not None and self._card is not None:
+                self._container.start_drag(self._card)
+            e.accept()
+
+    def mouseReleaseEvent(self, e):
+        was_pressed = self._pressed
+        self._pressed = False
+        if (was_pressed and not self._dragged
+                and e.button() == Qt.LeftButton):
+            self._on_toggle()
+            e.accept()
+
+    def set_collapsed(self, collapsed: bool):
+        self.arrow.setText("▸" if collapsed else "▾")
+
+
+class _CardListWidget(QWidget):
+    """卡片容器（QVBoxLayout）：支持卡片拖动排序。
+    拖动只是把卡片在布局里 insertWidget 重排，无 widget 重建，流畅不卡顿。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(6)
+        self._cards = []
+        self._drop_index = -1
+        self.on_order_changed = None
+        self.setAcceptDrops(True)
+        self._lay.addStretch(1)  # 卡片保持自身高度，多余空间留在底部
+
+    def add_card(self, card):
+        self._lay.insertWidget(self._lay.count() - 1, card)
+        self._cards.append(card)
+        card.header.attach(self, card)
+
+    def clear(self):
+        for c in self._cards:
+            self._lay.removeWidget(c)
+            c.deleteLater()
+        self._cards.clear()
+        self._drop_index = -1
+        self.update()
+
+    def order(self) -> list:
+        return [c.target for c in self._cards]
+
+    def start_drag(self, card):
+        mime = QMimeData()
+        mime.setData(_CARD_MIME, card.target.encode("utf-8"))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        pm = card.grab()
+        if not pm.isNull():
+            drag.setPixmap(pm)
+            drag.setHotSpot(QPoint(pm.width() // 2, 14))
+        drag.exec(Qt.MoveAction)
+
+    def _drop_index_at(self, y: int) -> int:
+        for i, c in enumerate(self._cards):
+            if y < c.geometry().center().y():
+                return i
+        return len(self._cards)
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasFormat(_CARD_MIME):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if e.mimeData().hasFormat(_CARD_MIME):
+            self._drop_index = self._drop_index_at(int(e.position().y()))
+            self.update()
+            e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e):
+        self._drop_index = -1
+        self.update()
+
+    def dropEvent(self, e):
+        if not e.mimeData().hasFormat(_CARD_MIME):
+            return
+        target = bytes(e.mimeData().data(_CARD_MIME)).decode(
+            "utf-8", "ignore")
+        src = next((c for c in self._cards if c.target == target), None)
+        if src is None:
+            return
+        idx = self._drop_index_at(int(e.position().y()))
+        self._lay.removeWidget(src)
+        self._cards.remove(src)
+        idx = min(idx, len(self._cards))
+        self._lay.insertWidget(idx, src)
+        self._cards.insert(idx, src)
+        self._drop_index = -1
+        self.update()
+        e.acceptProposedAction()
+        if self.on_order_changed is not None:
+            self.on_order_changed([c.target for c in self._cards])
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self._drop_index < 0:
+            return
+        painter = QPainter(self)
+        pen = QPen(QColor(get_ui().accent), 2)
+        painter.setPen(pen)
+        if self._drop_index == 0:
+            y = 3
+        elif self._drop_index >= len(self._cards):
+            y = self.height() - 3
+        else:
+            c = self._cards[self._drop_index]
+            y = max(0, c.geometry().top() - 3)
+        painter.drawLine(8, y, self.width() - 8, y)
+        painter.end()
+
+
+class _ProfileCard(QFrame):
+    """方案卡片：可折叠（头部点击），可拖动（手柄）。
+    展开/折叠带高度过渡动画（QVariantAnimation 控制 body 高度）。"""
+
+    _ANIM_MS = 180
+
+    def __init__(self, target, label, on_toggle, allow_drag=True):
+        super().__init__()
+        self.setObjectName("profileCard")
+        self.target = target
+        self.allow_drag = allow_drag
+        self._collapsed = True
+        self._expanded = False
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(0)
+        self.header = _CardHeader(on_toggle)
+        self._lay.addWidget(self.header)
+        if not allow_drag:
+            self.header.handle.setVisible(False)
+        self.body = QWidget()
+        self._body_lay = QVBoxLayout(self.body)
+        self._body_lay.setContentsMargins(38, 2, 8, 6)
+        self._body_lay.setSpacing(2)
+        self._lay.addWidget(self.body)
+        self.header.title.setText(label)
+        self._row_btns = []
+        self.body.setVisible(False)
+        # 展开/折叠高度动画
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(self._ANIM_MS)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_value)
+        self._anim.finished.connect(self._on_anim_finished)
+
+    def set_collapsed(self, collapsed: bool, animate: bool = True):
+        """设置折叠状态；animate=True 时播放高度过渡动画。
+        重复调用同一状态时只同步箭头，不重启动画。"""
+        target_expanded = not collapsed
+        self.header.set_collapsed(collapsed)
+        if target_expanded == self._expanded and not self._anim.state() == QAbstractAnimation.Running:
+            self._collapsed = collapsed
+            return
+        self._collapsed = collapsed
+        self._expanded = target_expanded
+        if not animate:
+            self._anim.stop()
+            self.body.setVisible(target_expanded)
+            self.body.setMaximumHeight(16777215)
+            return
+        self._anim.stop()
+        if target_expanded:
+            # 展开：先显示 body，再从 0 拉到自然高度
+            self.body.setVisible(True)
+            start = 0
+            end = self.body.sizeHint().height()
+        else:
+            # 折叠：从当前高度收到 0，结束后隐藏
+            start = max(self.body.height(), 0)
+            end = 0
+        self._anim.setStartValue(start)
+        self._anim.setEndValue(end)
+        self._anim.start()
+
+    def _on_anim_value(self, v):
+        self.body.setMaximumHeight(int(v))
+        self.updateGeometry()
+        self.update()
+
+    def _on_anim_finished(self):
+        if not self._expanded:
+            self.body.setVisible(False)
+        self.body.setMaximumHeight(16777215)
+
+    def set_current(self, text: str):
+        self.header.current.setText(text)
+
+    def add_row(self, text, name, on_click, on_menu):
+        btn = QPushButton(text)
+        btn.setObjectName("profileRow")
+        btn.setFlat(True)
+        btn.setCheckable(True)
+        btn.clicked.connect(
+            lambda _=False, n=name: on_click(n))
+        btn.setContextMenuPolicy(Qt.CustomContextMenu)
+        btn.customContextMenuRequested.connect(
+            lambda pos, n=name: on_menu(n, pos))
+        self._body_lay.addWidget(btn)
+        self._row_btns.append(btn)
+        return btn
+
+    def set_row_current(self, current_name: str):
+        for btn in self._row_btns:
+            checked = btn.text() == current_name
+            btn.setProperty("current", checked)
+            btn.setChecked(checked)
+
+    def rows(self) -> list:
+        return self._row_btns
+
+
+class AddAppDialog(QDialog):
+    """添加其他应用：应用名称 + 匹配规则（可执行文件名 / 窗口标题）。
+
+    匹配规则至少填一项：exe 名命中优先，标题/类名仅作兜底。
+    其他应用不支持 CAD 的 COM 命令，手势命令一律按键模拟。
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(T("添加其他应用"))
+        self.setMinimumWidth(420)
+        form = QFormLayout(self)
+
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText(T("如 SolidWorks、天正、浩辰CAD"))
+        form.addRow(T("应用名称") + ":", self.name_edit)
+
+        self.exe_edit = QLineEdit()
+        self.exe_edit.setPlaceholderText(T("如 sldworks.exe，支持部分匹配"))
+        exe_row = QHBoxLayout()
+        exe_row.setSpacing(6)
+        exe_row.addWidget(self.exe_edit, 1)
+        self.btn_browse = QPushButton(T("浏览…"))
+        self.btn_browse.clicked.connect(self._browse_exe)
+        exe_row.addWidget(self.btn_browse)
+        form.addRow(T("可执行文件名") + ":", exe_row)
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText(T("如 SolidWorks，留空则只按 exe 匹配"))
+        form.addRow(T("窗口标题（可选）") + ":", self.title_edit)
+
+        self.btn_pick = QPushButton(T("从当前前台窗口获取"))
+        self.btn_pick.clicked.connect(self._pick_foreground)
+        form.addRow("", self.btn_pick)
+
+        tip = QLabel(T("提示：其他应用的手势命令使用按键模拟，不支持 CAD 专用命令"))
+        tip.setObjectName("muted")
+        tip.setWordWrap(True)
+        form.addRow("", tip)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText(T("确定"))
+        btns.button(QDialogButtonBox.Cancel).setText(T("取消"))
+        btns.accepted.connect(self._on_ok)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def _browse_exe(self):
+        """从本地文件选择可执行文件（回填文件名）"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, T("选择可执行文件"), "", T("程序 (*.exe)"))
+        if path:
+            self.exe_edit.setText(os.path.basename(path))
+
+    def _pick_foreground(self):
+        """从当前前台窗口获取：先弹说明提示（可勾选「不再提示」），
+        确定后启动全屏捕捉（倒计时 + 悬停窗口红框），倒计时结束自动确认。
+        倒计时内鼠标点击不提前结束选择。"""
+        skip = QSettings("CADGesture", "CADGesture").value(
+            "pick_foreground_skip_hint", False, type=bool)
+        if not skip:
+            box = QMessageBox(self)
+            box.setWindowTitle(T("从当前前台窗口获取"))
+            box.setText(T("将进入全屏窗口捕捉：5 秒倒计时内把鼠标移到目标应用窗口，倒计时结束自动确认。"))
+            box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            box.setDefaultButton(QMessageBox.Ok)
+            cb = QCheckBox(T("不再提示"), box)
+            box.setCheckBox(cb)
+            if box.exec() != QMessageBox.Ok:
+                return
+            if cb.isChecked():
+                QSettings("CADGesture", "CADGesture").setValue(
+                    "pick_foreground_skip_hint", True)
+        self.hide()
+        self._overlay = _WindowPickOverlay()
+        self._overlay.show_pick(on_picked=self._on_pick_done)
+
+    def _on_pick_done(self, exe: str, title: str):
+        self.show()
+        self.raise_()
+        if exe:
+            self.exe_edit.setText(exe)
+        if title:
+            self.title_edit.setText(title)
+
+    def _on_ok(self):
+        if not self.name_edit.text().strip():
+            QMessageBox.warning(self, T("错误"), T("应用名称不能为空"))
+            return
+        if not self.exe_edit.text().strip() and not self.title_edit.text().strip():
+            QMessageBox.warning(
+                self, T("错误"),
+                T("请填写可执行文件名或窗口标题（至少一项）"))
+            return
+        self.accept()
+
+    def values(self) -> tuple:
+        return (self.name_edit.text().strip(),
+                self.exe_edit.text().strip(),
+                self.title_edit.text().strip())
 
 class QConfigGUI(QMainWindow):
     """Qt 配置界面主窗口（导航式布局）"""
@@ -89,7 +688,7 @@ class QConfigGUI(QMainWindow):
         self._btn_redo = None
         self._selected_sector = None
         self._last_status = ""
-        self._ui_mode = "dark"
+        self._ui_mode = "light"
 
         self.preview = QRadialPreview()
         self.preview.on_select = self._on_sector_selected
@@ -153,7 +752,7 @@ class QConfigGUI(QMainWindow):
         self.setCentralWidget(central)
         self.setMinimumSize(1060, 720)
 
-        self._apply_ui_mode(self.config.get("settings", {}).get("ui_mode", "dark"))
+        self._apply_ui_mode(self.config.get("settings", {}).get("ui_mode", "light"))
         self.statusBar().showMessage(T("就绪"))
         self._refresh_profiles()
         self._load_profile(self.current_profile)
@@ -206,6 +805,7 @@ class QConfigGUI(QMainWindow):
         for b, zh in self._nav_texts:
             b.setText(T(zh))
         self.btn_add.setToolTip(T("新增方案"))
+        self.btn_add_app.setToolTip(T("添加其他应用并为其设置手势方案"))
         self.btn_more.setToolTip(T("复制 / 重命名 / 删除 / 导入 / 导出"))
         # 设置分类锚点文本
         for i in range(self.anchor_list.count()):
@@ -356,7 +956,7 @@ class QConfigGUI(QMainWindow):
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
-        # 标题行：小标题 + 右侧新增按钮
+        # 标题行：小标题 + 右侧按钮（新增方案 / 添加应用）
         head = QHBoxLayout()
         head.setSpacing(4)
         self._lb_profiles = QLabel(T("配置方案"))
@@ -364,6 +964,11 @@ class QConfigGUI(QMainWindow):
         self._lb_profiles.setFixedHeight(28)
         head.addWidget(self._lb_profiles)
         head.addStretch(1)
+        self.btn_add_app = QPushButton(T("添加应用"))
+        self.btn_add_app.setProperty("class", "iconBtn")
+        self.btn_add_app.setToolTip(T("添加其他应用并为其设置手势方案"))
+        self.btn_add_app.clicked.connect(self._add_app)
+        head.addWidget(self.btn_add_app)
         self.btn_add = QPushButton("＋")
         self.btn_add.setProperty("class", "iconBtn")
         self.btn_add.setToolTip(T("新增方案"))
@@ -371,13 +976,12 @@ class QConfigGUI(QMainWindow):
         head.addWidget(self.btn_add)
         v.addLayout(head)
 
-        self.profile_list = QListWidget()
-        self.profile_list.setObjectName("ctxList")
-        self.profile_list.setFocusPolicy(Qt.NoFocus)
-        self.profile_list.itemClicked.connect(self._on_profile_clicked)
-        self.profile_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.profile_list.customContextMenuRequested.connect(
-            self._profile_list_menu)
+        # 卡片容器（纯布局 + 自定义 QDrag，拖放不重建 widget，不卡顿）
+        self.profile_list = _CardListWidget()
+        self.profile_list.on_order_changed = self._on_card_order_changed
+        # 折叠状态（target -> 是否折叠；默认全部折叠）与卡片索引
+        self._collapsed = {}
+        self._cards = {}            # target -> _ProfileCard
         v.addWidget(self.profile_list, 1)
         return w
 
@@ -410,48 +1014,71 @@ class QConfigGUI(QMainWindow):
         self._show_setting(key)
 
     def _show_profile_menu(self):
-        menu = self._build_profile_menu()
+        target = self.config.get("profiles", {}).get(
+            self.current_profile, {}).get("target", "")
+        menu = self._build_profile_menu(target)
         btn = self.sender()
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
-    def _profile_list_menu(self, pos):
-        menu = self._build_profile_menu()
-        menu.exec(self.profile_list.viewport().mapToGlobal(pos))
+    def _show_card_menu(self, target: str, pos):
+        """卡片头部右键：应用级菜单"""
+        menu = self._build_app_menu(target)
+        hdr = self._cards.get(target)
+        if hdr is not None:
+            menu.exec(hdr.header.mapToGlobal(pos))
 
-    def _build_profile_menu(self) -> QMenu:
+    def _build_app_menu(self, target: str) -> QMenu:
+        """应用卡片菜单：新增方案 / 删除此应用（仅自定义应用）"""
+        menu = QMenu(self)
+        menu.addAction(T("新增方案"),
+                       lambda: self._add_profile(target=target))
+        if target not in BUILTIN_TARGETS:
+            menu.addSeparator()
+            menu.addAction(T("删除此应用"),
+                           lambda: self._remove_app(target))
+        return menu
+
+    def _build_profile_menu(self, target: str = "") -> QMenu:
+        """方案菜单：作用于当前方案；target 用于「设为应用方案」项"""
         menu = QMenu(self)
         menu.addAction(T("复制方案"), self._copy_profile)
         menu.addAction(T("重命名"), self._rename_profile)
         menu.addAction(T("删除方案"), self._delete_profile)
-        # 绑定：只显示与当前方案 target 匹配的那一项
-        # （CAD 方案只能设为 AutoCAD 应用方案，中望方案只能设为中望CAD 应用方案）
-        target = self.config.get("profiles", {}).get(
-            self.current_profile, {}).get("target")
-        if target == "autocad":
+        if target:
             menu.addSeparator()
-            menu.addAction(T("设为 AutoCAD 应用方案"),
-                           lambda: self._set_profile_binding("autocad"))
-        elif target == "zwcad":
-            menu.addSeparator()
-            menu.addAction(T("设为中望CAD 应用方案"),
-                           lambda: self._set_profile_binding("zwcad"))
+            label = get_target_label(self.config, target)
+            if target in ("autocad", "zwcad"):
+                label = T(label)
+            menu.addAction(
+                T("设为 {app} 应用方案").format(app=label),
+                lambda: self._set_profile_binding(target))
         menu.addSeparator()
         menu.addAction(T("导入方案"), self._import_profile)
         menu.addAction(T("导出方案"), self._export_profile)
         return menu
 
+    def _show_profile_row_menu(self, name: str, pos):
+        """方案行右键：先切到该方案再显示方案菜单"""
+        self.current_profile = name
+        target = self.config.get("profiles", {}).get(
+            name, {}).get("target", "")
+        menu = self._build_profile_menu(target)
+        btn = self.sender()
+        menu.exec(btn.mapToGlobal(pos))
+
     def _set_profile_binding(self, target: str):
-        """把当前方案设为 AutoCAD / 中望CAD 的应用方案"""
+        """把当前方案设为某应用的应用方案（内置 CAD 或自定义应用）"""
         if set_profile_for_target(self.config, target, self.current_profile):
             self._push_undo()
             self._refresh_profiles()
             self._autosave_timer.start()
-            cad_name = {"autocad": "AutoCAD", "zwcad": T("中望CAD")}.get(
-                target, target)
-            self._set_status(T("已设为 {cad} 的应用方案").format(cad=cad_name))
+            label = get_target_label(self.config, target)
+            if target in ("autocad", "zwcad"):
+                label = T(label)
+            self._set_status(T("已设为 {app} 的应用方案").format(app=label))
         else:
             QMessageBox.warning(self, T("错误"),
-                                T("方案类型与目标 CAD 不匹配"))
+                                T("方案类型与目标应用不匹配"))
 
     # ========== 主区页面 ==========
 
@@ -730,6 +1357,15 @@ class QConfigGUI(QMainWindow):
         if self.on_save:
             self.on_save(self.config)
 
+    def refresh_about_page(self, config=None):
+        """后台动作（如检查更新完成）写入配置后，刷新关于页显示"""
+        if config is not None:
+            self.config = config
+        page = self._setting_pages.get("about")
+        if page is not None:
+            profile = self.config.get("profiles", {}).get(self.current_profile)
+            page.refresh(self.config, profile)
+
     def _set_status(self, msg: str):
         """记录最近状态消息（语言切换后按需重译显示）"""
         self._last_status = msg
@@ -798,73 +1434,102 @@ class QConfigGUI(QMainWindow):
     # ========== 方案列表 ==========
 
     def _on_profile_clicked(self, item):
-        name = item.data(Qt.UserRole)
-        if name:
-            self._load_profile(name)
+        """卡片点击不直接加载方案（方案行由卡片内按钮处理）"""
+        pass
 
     def _refresh_profiles(self):
+        """按卡片顺序重建方案卡片列表（折叠状态保留）"""
         self.profile_list.clear()
+        self._cards.clear()
         profiles = self.config.get("profiles", {})
-        settings = self.config.get("settings", {})
-        groups = {
-            T("AutoCAD"): [n for n, p in profiles.items() if p.get("target") == "autocad"],
-            T("中望CAD"): [n for n, p in profiles.items() if p.get("target") == "zwcad"],
-            T("其他"): [n for n, p in profiles.items()
-                        if p.get("target") not in ("autocad", "zwcad")],
-        }
-        # 各 CAD 当前应用方案（绑定或首个匹配），与运行时规则一致
-        bound = {}
-        for tgt, label in (("autocad", "AutoCAD"), ("zwcad", T("中望CAD"))):
+        order = get_target_order(self.config)
+        # 折叠状态：新 target 默认折叠
+        for tgt in order:
+            if tgt not in self._collapsed:
+                self._collapsed[tgt] = True
+        for tgt in order:
+            names = [n for n, p in profiles.items()
+                     if p.get("target") == tgt]
+            label = get_target_label(self.config, tgt)
+            if tgt in ("autocad", "zwcad"):
+                label = T(label)
             prof = get_profile_for_window(self.config, tgt)
-            if prof is not None:
-                bound[label] = prof.get("name", "")
-        for gname, names in groups.items():
-            if not names:
-                continue
-            current_name = bound.get(gname)
-            head_text = gname
-            if current_name and names and current_name in names:
-                head_text = T("{cad}（当前：{name}）").format(
-                    cad=gname, name=current_name)
-            head = QListWidgetItem(head_text)
-            head.setFlags(Qt.NoItemFlags)
-            head.setForeground(QColor(get_ui().accent))
-            f = head.font()
-            f.setBold(True)
-            f.setPixelSize(font_px(11))
-            head.setFont(f)
-            self.profile_list.addItem(head)
-            for name in names:
-                text = profiles[name].get("name", name)
-                item = QListWidgetItem(text)
-                item.setData(Qt.UserRole, name)
-                self.profile_list.addItem(item)
-                # 当前应用方案：方案名左对齐，「● 当前」标记右对齐
-                if current_name == profiles[name].get("name", name):
-                    item.setText("")
-                    w = QWidget()
-                    lay = QHBoxLayout(w)
-                    lay.setContentsMargins(8, 0, 8, 0)
-                    lay.setSpacing(0)
-                    lb_name = QLabel(text)
-                    f2 = item.font()
-                    f2.setBold(True)
-                    lb_name.setFont(f2)
-                    lb_name.setStyleSheet("background: transparent;")
-                    lb_tag = QLabel(T("● 当前"))
-                    lb_tag.setStyleSheet(
-                        "background: transparent; color: %s;" % get_ui().accent)
-                    lay.addWidget(lb_name)
-                    lay.addStretch(1)
-                    lay.addWidget(lb_tag)
-                    self.profile_list.setItemWidget(item, w)
+            current_name = prof.get("name", "") if prof else ""
+            card = self._build_profile_card(
+                tgt, label, names, current_name)
+            self.profile_list.add_card(card)
+            self._cards[tgt] = card
+        # 未归入任何 target 的方案（手动编辑配置文件添加的未知 target）
+        # 收进「其他」卡片，不参与拖动排序
+        known = set(order)
+        others = [n for n, p in profiles.items()
+                  if p.get("target") not in known]
+        if others:
+            card = self._build_profile_card(
+                "_other", T("其他"), others, "", allow_drag=False)
+            self.profile_list.add_card(card)
+            self._cards["_other"] = card
         self._highlight_profile()
 
+    def _build_profile_card(self, target, label, names, current_name,
+                            allow_drag=True) -> "_ProfileCard":
+        """构造一张卡片：header（箭头 + 应用名 + 当前方案 + 手柄）
+        + 方案列表（折叠时隐藏）。"""
+        card = _ProfileCard(
+            target, label,
+            on_toggle=lambda t=target: self._toggle_card(t),
+            allow_drag=allow_drag)
+        # 卡片右键：应用级菜单（自定义应用含删除）
+        card.header.setContextMenuPolicy(Qt.CustomContextMenu)
+        card.header.customContextMenuRequested.connect(
+            lambda pos, t=target: self._show_card_menu(t, pos))
+        card.set_collapsed(self._collapsed.get(target, True), animate=False)
+        profiles = self.config.get("profiles", {})
+        for name in names:
+            display = profiles.get(name, {}).get("name", name)
+            card.add_row(display, name,
+                         self._load_profile, self._show_profile_row_menu)
+        card.set_row_current(current_name)
+        self._update_card_current(target)
+        return card
+
+    def _toggle_card(self, target):
+        """折叠 / 展开卡片"""
+        self._collapsed[target] = not self._collapsed.get(target, True)
+        card = self._cards.get(target)
+        if card is not None:
+            card.set_collapsed(self._collapsed[target])
+
+    def _update_card_current(self, target):
+        """更新卡片右侧的当前方案次标题"""
+        card = self._cards.get(target)
+        if card is None:
+            return
+        prof = get_profile_for_window(self.config, target)
+        current = prof.get("name", "") if prof else ""
+        card.set_current(
+            T("当前：{name}").format(name=current) if current else "")
+
+    def _on_card_order_changed(self, order):
+        """卡片拖动排序后：持久化顺序 + 撤销 + 自动保存"""
+        self._push_undo()
+        set_target_order(self.config, order)
+        self._autosave_timer.start()
+
     def _highlight_profile(self):
-        for i in range(self.profile_list.count()):
-            it = self.profile_list.item(i)
-            if it.data(Qt.UserRole) == self.current_profile:
-                self.profile_list.setCurrentItem(it)
+        """切换方案后轻量更新各卡片的当前方案高亮与次标题"""
+        for tgt in list(self._cards):
+            self._update_card_current(tgt)
+            self._refresh_card_rows(tgt)
+
+    def _refresh_card_rows(self, target):
+        """按当前方案刷新卡片内方案行的高亮状态"""
+        card = self._cards.get(target)
+        if card is None:
+            return
+        prof = get_profile_for_window(self.config, target)
+        current = prof.get("name", "") if prof else ""
+        card.set_row_current(current)
 
     def _load_profile(self, name):
         self.current_profile = name
@@ -877,10 +1542,10 @@ class QConfigGUI(QMainWindow):
         self.preview.set_data(self.config, profile)
 
         display = profile.get("name", name)
-        cad_name = {"autocad": "AutoCAD", "zwcad": T("中望CAD")}.get(
-            profile.get("target", "autocad"),
-            (profile.get("target", "autocad") or "autocad").upper())
-        # 主次顺序：CAD 名（主标题）在前，配置方案名（pill）在后
+        tgt = profile.get("target", "autocad") or "autocad"
+        cad_name = get_target_label(self.config, tgt)
+        if tgt in ("autocad", "zwcad"):
+            cad_name = T(cad_name)
         self.page_title.setText(cad_name)
         self.pill_profile.setText(display)
 
@@ -916,6 +1581,8 @@ class QConfigGUI(QMainWindow):
         if not self._popup._dirty:
             return "discard"
         box = QMessageBox(self)
+        # 浮层总在最前，确认框也必须置顶才不会藏在浮层下面
+        box.setWindowFlags(box.windowFlags() | Qt.WindowStaysOnTopHint)
         box.setWindowTitle(T("未保存的修改"))
         box.setText(T("扇区编辑有未保存的修改，要保存吗？"))
         btn_save = box.addButton(T("保存"), QMessageBox.ButtonRole.AcceptRole)
@@ -945,8 +1612,11 @@ class QConfigGUI(QMainWindow):
         popup = getattr(self, "_popup", None)
         if popup is not None and popup.isVisible():
             if event.type() == QEvent.MouseButtonPress:
-                # 有活动弹出层（如 QComboBox 下拉）时把事件交给它，避免误关浮层
-                if QApplication.activePopupWidget() is not None:
+                # 有活动弹出层（如 QComboBox 下拉）或模态对话框（图标选择/文件选择）
+                # 时把事件交给它，避免把对话框内的点击误判为"浮层外"而关闭浮层
+                if (QApplication.activePopupWidget() is not None
+                        or QApplication.activeModalWidget() is not None
+                        or getattr(popup, "_modal_open", False)):
                     return super().eventFilter(obj, event)
                 pos = event.globalPosition()
                 if pos is not None and not self._popup.geometry().contains(pos.toPoint()):
@@ -955,6 +1625,10 @@ class QConfigGUI(QMainWindow):
                         return True
                     self._popup.close()
             elif event.type() == QEvent.ApplicationDeactivate:
+                # 模态对话框（如原生文件对话框）打开时可能触发应用失活，不关浮层
+                if (QApplication.activeModalWidget() is not None
+                        or getattr(popup, "_modal_open", False)):
+                    return super().eventFilter(obj, event)
                 self._popup.close()
         return super().eventFilter(obj, event)
 
@@ -1010,11 +1684,7 @@ class QConfigGUI(QMainWindow):
         layer, idx = self._selected_sector
         profile = self.config.get("profiles", {}).get(self.current_profile, {})
         sectors = profile.setdefault(_layer_key(layer), {})
-        sectors[str(idx)] = {
-            "label": self._popup.label_entry.text().strip(),
-            "key": self._popup.key_entry.text().strip(),
-            "description": self._popup.desc_entry.text().strip(),
-        }
+        sectors[str(idx)] = self._popup.current_cfg()
         self._popup.mark_saved()
         self.preview.update()
         self._set_status(T("● 保存中…"))
@@ -1269,29 +1939,89 @@ class QConfigGUI(QMainWindow):
 
     # ========== 方案操作 ==========
 
-    def _add_profile(self):
-        name, ok = QInputDialog.getText(self, T("新增配置方案"), T("请输入方案名称:"))
+    def _add_profile(self, target=None):
+        """新增方案；target 为空时弹出目标应用选择（内置 + 自定义）"""
+        name, ok = QInputDialog.getText(
+            self, T("新增配置方案"), T("请输入方案名称:"))
         if not ok or not name.strip():
             return
         name = name.strip()
         if name in self.config.get("profiles", {}):
-            QMessageBox.warning(self, T("错误"), T("方案「{name}」已存在").format(name=name))
+            QMessageBox.warning(self, T("错误"),
+                                T("方案「{name}」已存在").format(name=name))
             return
-        target, ok = QInputDialog.getItem(self, T("选择目标软件"),
-                                          T("适用的 CAD 软件:"),
-                                          ["AutoCAD", T("中望CAD")], 0, False)
-        if not ok:
-            return
-        tgt = "autocad" if target == "AutoCAD" else "zwcad"
+        if target is None:
+            choices = []
+            for t in get_target_order(self.config):
+                label = get_target_label(self.config, t)
+                if t in ("autocad", "zwcad"):
+                    label = T(label)
+                choices.append((label, t))
+            labels = [c[0] for c in choices]
+            sel, ok = QInputDialog.getItem(
+                self, T("选择目标软件"), T("适用的软件:"),
+                labels, 0, False)
+            if not ok:
+                return
+            target = choices[labels.index(sel)][1]
         self._push_undo()
         ok, err = add_profile(
-            self.config, name, tgt,
+            self.config, name, target,
             self.config.get("settings", {}).get("sector_count", 8), tr=T)
         if not ok:
             QMessageBox.warning(self, T("错误"), err)
             return
         self._refresh_profiles()
         self._load_profile(name)
+        self._autosave_timer.start()
+
+    def _add_app(self):
+        """添加其他应用：非模态对话框（窗口捕捉覆盖层需要非模态环境）"""
+        dlg = AddAppDialog(self)
+        dlg.finished.connect(
+            lambda _=0, d=dlg: self._on_add_app_done(d))
+        dlg.show()
+
+    def _on_add_app_done(self, dlg):
+        """添加应用对话框关闭后处理（Accepted 才真正添加）"""
+        if dlg.result() != QDialog.Accepted:
+            return
+        name, exe, title = dlg.values()
+        self._push_undo()
+        ok, err = add_custom_target(self.config, name, exe, title)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), T(err))
+            return
+        apps = get_custom_targets(self.config)
+        tid = apps[-1].get("id", "") if apps else ""
+        if tid:
+            self._collapsed[tid] = False  # 新卡片默认展开，方便直接配置
+        self._refresh_profiles()
+        bound = self.config.get("settings", {}).get(
+            f"{tid}_profile", "") if tid else ""
+        if bound and bound in self.config.get("profiles", {}):
+            self._load_profile(bound)
+        self._autosave_timer.start()
+        self._set_status(T("已添加应用 {name}").format(name=name))
+
+    def _remove_app(self, target: str):
+        """删除自定义应用及其全部方案"""
+        label = get_target_label(self.config, target)
+        if QMessageBox.question(
+                self, T("确认"),
+                T("删除此应用后，其全部方案将一并删除。确定吗？")) \
+                != QMessageBox.Yes:
+            return
+        self._push_undo()
+        ok, err = remove_custom_target(self.config, target)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), T(err))
+            return
+        self._collapsed.pop(target, None)
+        remaining = list(self.config.get("profiles", {}).keys())
+        self._refresh_profiles()
+        if self.current_profile not in self.config.get("profiles", {}):
+            self._load_profile(remaining[0] if remaining else "")
         self._autosave_timer.start()
 
     def _copy_profile(self):
@@ -1479,23 +2209,14 @@ class QConfigGUI(QMainWindow):
 
     def closeEvent(self, e):
         # 只在窗口位于屏幕内时记忆位置；屏幕外（拔掉副屏/分辨率变化遗留）
-
         # 不保存，避免下次启动恢复不可见位置
-
         try:
-
             if self._frame_intersects_any_screen():
-
                 QSettings("CADGesture", "CADGesture").setValue(
-
                     "config_win_geometry", self.saveGeometry())
-
             else:
-
                 QSettings("CADGesture", "CADGesture").remove("config_win_geometry")
-
         except Exception:
-
             pass
 
         remove_listener(self._lang_listener)
@@ -1511,7 +2232,6 @@ class QConfigGUI(QMainWindow):
         if self.on_save:
             self.on_save(self.config)
         super().closeEvent(e)
-
 
 def open_config_gui(on_save=None, on_check_update=None, master=None):
     """打开配置界面（返回窗口实例以便保持引用）"""

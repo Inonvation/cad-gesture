@@ -83,7 +83,7 @@ def test_trigger_button_mapping():
                             on_gesture=lambda *a: None,
                             on_gesture_feedback=lambda *a: None,
                             on_menu_show=lambda *a: None,
-                            on_menu_hide=lambda: None,
+                            on_menu_hide=lambda *a: None,
                             on_extension_hint=lambda *a: None)
         return eng
 
@@ -130,7 +130,7 @@ def test_ring_resolution_matches_visual_at_dpi():
     eng = GestureEngine(config=cfg, on_gesture=lambda *a: None,
                         on_gesture_feedback=lambda *a: None,
                         on_menu_show=lambda *a: None,
-                        on_menu_hide=lambda: None,
+                        on_menu_hide=lambda *a: None,
                         on_extension_hint=lambda *a: None)
 
     def visual_ring(phys: float) -> str:
@@ -151,3 +151,102 @@ def test_ring_resolution_matches_visual_at_dpi():
             continue  # 死区内不触发命令，不校验圈层
         ring = eng._resolve_gesture(100, 0, logical)[1]
         assert ring == visual_ring(phys), f"phys={phys}px"
+
+
+
+def _simulate_hook(engine, wparam, x, y):
+    """构造低级鼠标钩子事件并调用 _hook_proc_impl（不启动真实钩子）"""
+    import ctypes
+    from src.gesture_engine import HC_ACTION, MSLLHOOKEX
+    msll = MSLLHOOKEX()
+    msll.pt.x, msll.pt.y = x, y
+    lp = ctypes.cast(ctypes.pointer(msll), ctypes.c_void_p).value
+    return engine._hook_proc_impl(HC_ACTION, wparam, lp)
+
+
+def _make_recording_engine():
+    """返回 (engine, calls)：calls 记录 hide 标记与 gesture 回调"""
+    from src.gesture_engine import GestureEngine
+    calls = {"hide": [], "gesture": []}
+    eng = GestureEngine(
+        config={"settings": {"trigger_distance": 15, "hold_threshold_ms": 80,
+                             "dead_zone_radius": 24, "menu_scale": 100}},
+        on_gesture=lambda *a: calls["gesture"].append(a),
+        on_gesture_feedback=lambda *a: None,
+        on_menu_show=lambda *a: None,
+        on_menu_hide=lambda flag: calls["hide"].append(flag),
+        on_extension_hint=lambda *a: None)
+    eng._detect_window_type = lambda: "autocad"  # 测试桩：命中 CAD 窗口
+    return eng, calls
+
+
+def test_plain_right_click_preserves_cad_context_menu(monkeypatch):
+    """无滑动普通右键：hide 事件不要求取消 CAD 菜单，也不触发手势
+
+    回归：ce7eb79 把 ESC 取消从命令路径挪到每次右键松手后，普通右键的
+    CAD 原生菜单被 ESC 关掉。现在只有实际手势交互才发 ESC。
+    """
+    import ctypes
+    from src.gesture_engine import WM_RBUTTONDOWN, WM_RBUTTONUP
+    monkeypatch.setattr(ctypes.windll.user32, "CallNextHookEx", lambda *a: 0)
+    eng, calls = _make_recording_engine()
+    _simulate_hook(eng, WM_RBUTTONDOWN, 100, 100)
+    _simulate_hook(eng, WM_RBUTTONUP, 100, 100)
+    assert calls["hide"] == [False], calls["hide"]
+    assert calls["gesture"] == []
+
+
+def test_menu_shown_center_release_still_cancels_cad_menu(monkeypatch):
+    """圆盘已弹出 + 中心死区松手（取消手势）：仍需取消 CAD 菜单"""
+    import ctypes
+    from src.gesture_engine import WM_RBUTTONDOWN, WM_RBUTTONUP
+    monkeypatch.setattr(ctypes.windll.user32, "CallNextHookEx", lambda *a: 0)
+    eng, calls = _make_recording_engine()
+    _simulate_hook(eng, WM_RBUTTONDOWN, 100, 100)
+    with eng._lock:
+        eng._menu_shown = True
+    _simulate_hook(eng, WM_RBUTTONUP, 100, 100)
+    assert calls["hide"] == [True], calls["hide"]
+    assert calls["gesture"] == []
+
+
+def test_menu_shown_sector_release_cancels_cad_menu(monkeypatch):
+    """圆盘已弹出 + 死区外松手：触发命令且取消 CAD 菜单"""
+    import ctypes
+    from src.gesture_engine import WM_RBUTTONDOWN, WM_RBUTTONUP
+    monkeypatch.setattr(ctypes.windll.user32, "CallNextHookEx", lambda *a: 0)
+    eng, calls = _make_recording_engine()
+    _simulate_hook(eng, WM_RBUTTONDOWN, 100, 100)
+    with eng._lock:
+        eng._menu_shown = True
+    _simulate_hook(eng, WM_RBUTTONUP, 130, 100)
+    assert calls["hide"] == [True], calls["hide"]
+    assert len(calls["gesture"]) == 1
+
+
+def test_flick_fallback_release_cancels_cad_menu(monkeypatch):
+    """快速甩动兜底（未弹圆盘但触发命令）：松手仍需取消 CAD 菜单"""
+    import ctypes
+    from src.gesture_engine import WM_RBUTTONDOWN, WM_RBUTTONUP
+    monkeypatch.setattr(ctypes.windll.user32, "CallNextHookEx", lambda *a: 0)
+    eng, calls = _make_recording_engine()
+    _simulate_hook(eng, WM_RBUTTONDOWN, 100, 100)
+    with eng._lock:
+        eng._press_time -= 1.0  # 按住够久，满足快速甩动兜底条件
+    _simulate_hook(eng, WM_RBUTTONUP, 130, 100)
+    assert calls["hide"] == [True], calls["hide"]
+    assert len(calls["gesture"]) == 1
+
+
+def test_aborted_flick_preserves_cad_context_menu(monkeypatch):
+    """甩动未达触发距离：不取消 CAD 菜单，也不触发命令"""
+    import ctypes
+    from src.gesture_engine import WM_RBUTTONDOWN, WM_RBUTTONUP
+    monkeypatch.setattr(ctypes.windll.user32, "CallNextHookEx", lambda *a: 0)
+    eng, calls = _make_recording_engine()
+    _simulate_hook(eng, WM_RBUTTONDOWN, 100, 100)
+    with eng._lock:
+        eng._press_time -= 1.0
+    _simulate_hook(eng, WM_RBUTTONUP, 105, 100)  # 只拖出 5px
+    assert calls["hide"] == [False], calls["hide"]
+    assert calls["gesture"] == []

@@ -6,6 +6,8 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPainterPath,
                            QPen, QRadialGradient)
 
+from src.icon_library import resolve_icon
+
 INNER = "inner"
 OUTER = "outer"
 EXTENSION = "extension"
@@ -172,9 +174,12 @@ def _shadow_for(color: QColor, alpha: int = 120) -> QColor:
 def draw_label(p: QPainter, cx: float, cy: float, inner_r: float,
                outer_r: float, n: int, i: int, text: str, color: QColor,
                bold: bool = False, label_offset: float = 0.5,
-               light: bool = False, font_scale: float = 1.0) -> None:
-    """扇区环上的文字标签（沿角度方向居中，带投影提升对比）。
+               light: bool = False, font_scale: float = 1.0,
+               center=None) -> None:
+    """扇区环上的文字标签（带投影提升对比）。
 
+    center：文字中心点（屏幕坐标），用于"图标在上、文字在下"布局；
+    不传则按 label_offset 放在径向线上。
     light：浅色主题。浅底深字 / 主题色底白字对比已足够，去掉投影
     （Quicker 风格干净无重影），字号略大。
     """
@@ -182,9 +187,13 @@ def draw_label(p: QPainter, cx: float, cy: float, inner_r: float,
     p.setOpacity(1.0)  # 文字不随圆盘透明度变淡
     mid = math.radians(i * 360 / n - 90)
     tr = inner_r + (outer_r - inner_r) * label_offset
-    tx = cx + tr * math.cos(mid)
-    ty = cy - tr * math.sin(mid)
-    avail = tr * (2 * math.pi / n) * 0.85
+    if center is not None:
+        tx, ty = center
+        avail = math.hypot(tx - cx, ty - cy) * (2 * math.pi / n) * 0.85
+    else:
+        tx = cx + tr * math.cos(mid)
+        ty = cy - tr * math.sin(mid)
+        avail = tr * (2 * math.pi / n) * 0.85
     font = _fit_font(text, (12 if light else 11) * font_scale, avail, bold)
     rect = QRectF(tx - avail / 2, ty - 10, avail, 20)
     if not light:
@@ -202,7 +211,9 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
               layer: str = INNER, hl_idx: int = -1, hl_layer=None,
               hl_fade: float = 1.0, sel=None, hov=None,
               label_offset: float = 0.5, light: bool = False,
-              placeholder: bool = False, font_scale: float = 1.0) -> None:
+              placeholder: bool = False, font_scale: float = 1.0,
+              hide_label_with_icon: bool = False,
+              icon_scale: float = 1.0) -> None:
     """画一层扇区环。
 
     高亮优先级：selected > hovered > 高亮层。
@@ -223,6 +234,19 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
         is_hl = (hl_idx >= 0 and hl_layer == layer and i == hl_idx)
         is_sel = sel is not None and sel[0] == layer and sel[1] == i
         is_hov = hov is not None and hov[0] == layer and hov[1] == i
+        icon_ref = (cfg.get("icon") or "").strip()
+        icon_pm = None
+        if icon_ref:
+            icon_color = rc.text if light else (
+                rc.text if (is_hl or is_sel or is_hov) else rc.text_dim)
+            thickness = outer_r - inner_r
+            base_size = min(thickness * 0.45,
+                            (inner_r + thickness * 0.50)
+                            * (2 * math.pi / n) * 0.72)
+            # 图标大小随 menu_icon_scale 缩放，上限为环厚 50%，防止溢出扇区
+            icon_size = max(6, min(int(base_size * icon_scale),
+                                       int(thickness * 0.50)))
+            icon_pm = resolve_icon(icon_ref, icon_color, icon_size)
         if light:
             # 浅色：普通近白扇面，高亮直接填主题色 + 白字（对比反转）；
             # 扇区边界用白色模糊线条（soft_outline），高亮扇区用深主题色
@@ -259,7 +283,26 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
         if is_hl or is_sel or is_hov:
             draw_glow(p, cx, cy, inner_r, outer_r, n, i,
                       hl_fade if is_hl else 1.0, glow_color)
-        if label:
+        icon_center = None   # 图标中心（屏幕坐标），文字固定在图标下方
+        if icon_pm is not None:
+            # 图标在扇区径向中央；文字始终放在图标下方（屏幕坐标）。
+            # 有文字时“图标+文字”组合整体上移半个文字偏移量，让组合居中于扇区
+            mid_i = math.radians(i * 360 / n - 90)
+            tr_i = inner_r + (outer_r - inner_r) * 0.5
+            base_cx = cx + tr_i * math.cos(mid_i)
+            base_cy = cy - tr_i * math.sin(mid_i)
+            if label and not hide_label_with_icon:
+                shift = (7.0 + 5.0) / 2   # 文字间距 7px + 文字半高估算 5px
+                icon_cx, icon_cy = base_cx, base_cy - shift
+            else:
+                icon_cx, icon_cy = base_cx, base_cy
+            icon_center = (icon_cx, icon_cy)
+            ix = icon_cx - icon_pm.width() / 2
+            iy = icon_cy - icon_pm.height() / 2
+            p.drawPixmap(QRectF(ix, iy, icon_pm.width(), icon_pm.height()),
+                         icon_pm,
+                         QRectF(0, 0, icon_pm.width(), icon_pm.height()))
+        if label and not (icon_pm is not None and hide_label_with_icon):
             if light:
                 # 浅色主题：高亮扇区是淡主题色底，一律用深字（淡底深字对比高，
                 # 且高亮不"变深"——之前白字方案在绿色/紫色主题对比不足）
@@ -267,8 +310,16 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
             else:
                 color = QColor(rc.text if (is_hl or is_sel or is_hov)
                                else rc.text_dim)
-            draw_label(p, cx, cy, inner_r, outer_r, n, i, label, color,
-                       bold, label_offset, light, font_scale)
+            fs = font_scale * (0.78 if icon_pm is not None else 1.0)
+            if icon_pm is not None and icon_center is not None:
+                # 文字始终在图标下方（屏幕坐标），与图标保持合适间距
+                txt_cx = icon_center[0]
+                txt_cy = icon_center[1] + icon_pm.height() / 2 + 7.0
+                draw_label(p, cx, cy, inner_r, outer_r, n, i, label, color,
+                           bold, label_offset, light, fs, center=(txt_cx, txt_cy))
+            else:
+                draw_label(p, cx, cy, inner_r, outer_r, n, i, label, color,
+                           bold, label_offset, light, fs)
         elif placeholder and not is_hl and not is_sel and not is_hov:
             # 空扇区占位：径向中点一个小圆点，提示该位置可放置命令（仅编辑/尺寸预览）
             mid = math.radians(i * 360 / n - 90)

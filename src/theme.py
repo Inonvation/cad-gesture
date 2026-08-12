@@ -406,6 +406,26 @@ QListWidget#ctxList::item:selected {{
     background: transparent; color: {t.accent};
     border-left: 3px solid {t.accent}; padding-left: 7px; }}
 
+/* ---- 方案卡片（可折叠、可拖动排序） ---- */
+QFrame#profileCard {{
+    background: {t.bg_card}; border: 1px solid {t.border};
+    border-radius: 8px; }}
+QFrame#cardHeader {{
+    background: transparent; border: none; border-radius: 7px; }}
+QFrame#cardHeader:hover {{ background: {t.bg_hover}; }}
+QLabel#cardArrow {{ color: {t.text_secondary}; font-size: 12px; }}
+QLabel#cardTitle {{ color: {t.text}; font-weight: 600; font-size: 12px; }}
+QLabel#cardCurrent {{ color: {t.text_secondary}; font-size: 11px; }}
+QLabel#cardHandle {{ color: {t.text_muted}; font-size: 13px; padding-right: 2px; }}
+QLabel#cardHandle:hover {{ color: {t.accent}; }}
+QPushButton#profileRow {{
+    background: transparent; border: none; color: {t.text_secondary};
+    text-align: left; padding: 4px 0; border-radius: 5px;
+    font-size: 12px; }}
+QPushButton#profileRow:hover {{ background: {t.bg_hover}; color: {t.text}; }}
+QPushButton#profileRow[current="true"] {{
+    color: {t.accent}; font-weight: 600; }}
+
 /* ---- 顶栏操作按钮（撤销/重做/清除/恢复默认） ---- */
 QPushButton.topBtn {{
     background: {t.bg_raised}; border: 1px solid {t.border_strong};
@@ -437,10 +457,21 @@ QFrame#popupCard {{
     border-radius: {RADIUS_LG}px;
 }}
 QFrame#popupCard QLabel {{ background: transparent; }}
-QWidget#commandPreview {{
+QFrame#popupCard QPushButton#iconPickBtn {{
+    background: {t.bg_input}; border: 1px dashed {t.border_strong};
+    border-radius: 10px; color: {t.text_secondary}; font-size: 30px;
+    padding: 0; min-width: 56px; max-width: 56px;
+    min-height: 56px; max-height: 56px; }}
+QFrame#popupCard QPushButton#iconPickBtn[iconSet="true"] {{ border-style: solid; }}
+QFrame#popupCard QPushButton#iconPickBtn:hover {{
+    background: {t.bg_hover}; border-color: {t.accent}; color: {t.text}; }}
+QPushButton#iconTile {{
     background: {t.bg_raised}; border: 1px solid {t.border};
-    border-radius: {RADIUS_MD}px; }}
-QLabel#previewCaption {{ color: {t.text_secondary};
+    border-radius: 8px; padding: 0; }}
+QPushButton#iconTile:hover {{ background: {t.bg_hover}; border-color: {t.accent}; }}
+QPushButton#iconTile:checked {{
+    border: 2px solid {t.accent}; background: {t.bg_selected}; }}
+QLabel#iconSectionTitle {{ color: {t.text_muted};
     font-size: {font_px(FONT_XS)}px; font-weight: 600; }}
 QLabel#popupTitle {{
     color: {t.text}; font-size: {font_px(FONT_SM)}px; font-weight: 600;
@@ -639,12 +670,12 @@ def _reg(t: MenuTheme):
     MENU_THEMES[t.name] = t
 
 
-# 5 套预设主题（其余需求交给"自定义"直接指定颜色）
+# 5 套预设主题（其余需求交给“自定义”直接指定颜色）
+_reg(_make_theme("graphite", "石墨", _hue_of("#94a3b8"), 0.22))
 _reg(_make_theme("azure", "天蓝", _hue_of("#38bdf8"), 0.30))
 _reg(_make_theme("emerald", "翡翠", _hue_of("#34d399"), 0.30))
 _reg(_make_theme("crimson", "绯红", _hue_of("#fb7185"), 0.30))
 _reg(_make_theme("midnight", "午夜", _hue_of("#a78bfa"), 0.34))
-_reg(_make_theme("graphite", "石墨", _hue_of("#94a3b8"), 0.22))
 
 # 自定义主题四个颜色项的默认值（深色界面基调）
 _CUSTOM_DEFAULTS = {
@@ -697,7 +728,7 @@ def make_custom_theme(text: str, highlight: str, bg: str,
     )
 
 
-def get_menu_theme(name: str = "azure") -> MenuTheme:
+def get_menu_theme(name: str = "graphite") -> MenuTheme:
     """按名称获取预设圆盘主题；未知名称回退天蓝（custom 由 theme_from_settings 处理）"""
     return MENU_THEMES.get(name, MENU_THEMES["azure"])
 
@@ -708,8 +739,8 @@ def theme_from_settings(settings: dict, ui_mode: str = None) -> MenuTheme:
     浅色界面模式下自动返回浅色版主题（亮扇面 + 深色文字），
     与浅色 chrome 协调；深色模式返回原深色主题。
     """
-    mode = (ui_mode or settings.get("ui_mode", "dark"))
-    name = settings.get("menu_theme", "azure")
+    mode = (ui_mode or settings.get("ui_mode", "light"))
+    name = settings.get("menu_theme", "graphite")
     if name == "custom":
         # 自定义主题直接使用用户四色：不再套 make_light_theme 推导，
         # 否则用户设置的文字/高亮/背景/悬浮会被浅色推导全部覆盖

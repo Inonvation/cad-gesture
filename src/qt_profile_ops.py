@@ -21,7 +21,7 @@ def add_profile(config: dict, name: str, target: str,
         return False, tr("名称不能为空")
     if name in config.get("profiles", {}):
         return False, tr("方案「{name}」已存在").format(name=name)
-    sectors = {str(i): {"label": "", "key": "", "description": ""}
+    sectors = {str(i): {"label": "", "key": "", "description": "", "icon": ""}
                for i in range(sector_count)}
     config.setdefault("profiles", {})[name] = {
         "name": name, "target": target, "sectors": sectors,
@@ -61,7 +61,9 @@ def rename_profile(config: dict, old_name: str, new_name: str,
     s = config.setdefault("settings", {})
     if s.get("active_profile") == old_name:
         s["active_profile"] = new_name
-    for key in ("autocad_profile", "zwcad_profile"):
+    # 所有 {target}_profile 绑定键（含自定义应用）统一更新
+    for key in [k for k in s if k.endswith("_profile")
+                and k != "active_profile"]:
         if s.get(key) == old_name:
             s[key] = new_name
     return True, None
@@ -79,9 +81,11 @@ def delete_profile(config: dict, name: str,
     del profiles[name]
     remaining = list(profiles.keys())
     s = config.setdefault("settings", {})
-    for key, tgt in (("autocad_profile", "autocad"),
-                     ("zwcad_profile", "zwcad")):
+    # 所有 {target}_profile 绑定键（含自定义应用）统一重置为该 target 下首个方案
+    for key in [k for k in list(s) if k.endswith("_profile")
+                and k != "active_profile"]:
         if s.get(key) == name:
+            tgt = key[: -len("_profile")]
             s[key] = next((n for n in remaining
                            if profiles[n].get("target") == tgt), "")
     s["active_profile"] = remaining[0]

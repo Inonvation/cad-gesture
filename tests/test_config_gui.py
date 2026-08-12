@@ -165,3 +165,168 @@ def test_open_test_via_maintenance(gui):
     idx = 1 + [k for k, _ in qt_config_gui._SETTINGS_PAGES].index("test")
     gui._setting_pages["about"].on_open_test()
     assert gui._main_stack.currentIndex() == idx
+
+
+# ========== 卡片式方案列表（折叠 / 当前方案 / 拖动排序 / 添加应用） ==========
+
+def test_card_default_collapsed_and_current(gui):
+    """默认全部折叠；卡片头部显示应用名与当前方案次标题"""
+    gui._refresh_profiles()
+    targets = gui.profile_list.order()
+    assert targets == ["autocad", "zwcad"]
+    for t in targets:
+        assert gui._collapsed.get(t) is True
+        card = gui._cards[t]
+        title = card.header.title.text()
+        assert "AutoCAD" in title or "中望" in title
+        assert card.header.current.text() != ""
+
+
+def test_card_toggle_expand_collapse(gui):
+    """点击卡片头折叠/展开：状态切换正确，动画结束后方案列表显隐正确。
+
+    offscreen 平台不推进 QVariantAnimation，这里直接断言状态机，
+    并用 _on_anim_finished 模拟动画完成回调。
+    """
+    gui._refresh_profiles()
+    card = gui._cards["autocad"]
+    # 展开：body 可见，动画结束后恢复无限制高度
+    gui._toggle_card("autocad")
+    assert gui._collapsed["autocad"] is False
+    assert card._expanded is True
+    assert card.body.isHidden() is False
+    card._on_anim_finished()
+    assert card.body.maximumHeight() == 16777215
+    # 折叠：动画结束后 body 隐藏
+    gui._toggle_card("autocad")
+    assert gui._collapsed["autocad"] is True
+    assert card._expanded is False
+    card._on_anim_finished()
+    assert card.body.isHidden() is True
+
+
+def test_add_custom_target_shows_card(gui):
+    """添加自定义应用：出现新卡片并可按 target 匹配方案"""
+    from src.config_manager import add_custom_target, get_profile_for_window
+    ok, err = add_custom_target(gui.config, "SolidWorks", "sldworks.exe")
+    assert ok and err is None
+    gui._refresh_profiles()
+    targets = gui.profile_list.order()
+    assert "app_sldworks" in targets
+    prof = get_profile_for_window(gui.config, "app_sldworks")
+    assert prof is not None and prof.get("name") == "SolidWorks"
+
+
+def test_card_order_change_persists(gui):
+    """拖动排序回调写回 settings.app_order"""
+    from src.config_manager import add_custom_target
+    add_custom_target(gui.config, "SolidWorks", "sldworks.exe")
+    gui._refresh_profiles()
+    gui._on_card_order_changed(["autocad", "app_sldworks", "zwcad"])
+    assert gui.config["settings"]["app_order"] == [
+        "autocad", "app_sldworks", "zwcad"]
+
+
+def test_app_menu_builtin_has_no_delete(gui):
+    """内置应用菜单不含「删除此应用」，自定义应用含"""
+    from src.config_manager import add_custom_target
+    gui._refresh_profiles()
+    builtin_acts = [a.text() for a in gui._build_app_menu("autocad").actions()]
+    assert not any("删除" in a for a in builtin_acts)
+    add_custom_target(gui.config, "SolidWorks", "sldworks.exe")
+    gui._refresh_profiles()
+    custom_acts = [a.text() for a in gui._build_app_menu("app_sldworks").actions()]
+    assert any("删除" in a for a in custom_acts)
+
+
+def test_card_list_drop_reorder(app):
+    """卡片容器拖动排序：drop 到末尾后顺序与回调正确"""
+    from PySide6.QtCore import Qt, QPointF, QMimeData
+    from PySide6.QtGui import QDropEvent
+    from src.qt_config_gui import (_CardListWidget, _ProfileCard, _CARD_MIME)
+
+    lst = _CardListWidget()
+    changed = []
+    lst.on_order_changed = lambda o: changed.append(list(o))
+    for t in ("a", "b", "c"):
+        lst.add_card(_ProfileCard(t, t, on_toggle=lambda: None))
+    lst.show()
+    for _ in range(5):
+        app.processEvents()
+    mime = QMimeData()
+    mime.setData(_CARD_MIME, b"a")
+    # 用足够大的 y 强制插到末尾
+    ev = QDropEvent(QPointF(10, 100000), Qt.MoveAction, mime,
+                    Qt.LeftButton, Qt.NoModifier)
+    lst.dropEvent(ev)
+    assert lst.order() == ["b", "c", "a"]
+    assert changed and changed[-1] == ["b", "c", "a"]
+
+
+def test_card_header_drag_vs_click(app):
+    """卡片头：按下移动超阈值触发拖动，原地松开触发折叠（拖动与点击分离）"""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from src.qt_config_gui import _CardListWidget, _ProfileCard
+
+    lst = _CardListWidget()
+    card = _ProfileCard("a", "A", on_toggle=None)
+    lst.add_card(card)
+    started, toggled = [], []
+    card.header._on_toggle = lambda: toggled.append(1)
+    lst.start_drag = lambda c: started.append(c)
+
+    h = card.header
+    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(20, 15),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    h.mousePressEvent(press)
+    move = QMouseEvent(QEvent.MouseMove, QPointF(60, 15),
+                       Qt.NoButton, Qt.LeftButton, Qt.NoModifier)
+    h.mouseMoveEvent(move)
+    assert len(started) == 1 and started[0] is card
+    assert not toggled
+
+    # 原地点击：press + release -> toggle，不触发拖动
+    card2 = _ProfileCard("b", "B", on_toggle=None)
+    toggled2 = []
+    card2.header._on_toggle = lambda: toggled2.append(1)
+    press2 = QMouseEvent(QEvent.MouseButtonPress, QPointF(20, 15),
+                         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    card2.header.mousePressEvent(press2)
+    rel2 = QMouseEvent(QEvent.MouseButtonRelease, QPointF(20, 15),
+                       Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    card2.header.mouseReleaseEvent(rel2)
+    assert toggled2 == [1]
+
+
+
+
+def test_window_pick_overlay_click_does_not_confirm(app):
+    """窗口捕捉覆盖层：点击不提前确认且鼠标穿透，倒计时结束自动确认"""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from src.qt_config_gui import _WindowPickOverlay
+
+    ov = _WindowPickOverlay()
+    picked = []
+    ov.show_pick(on_picked=lambda exe, title: picked.append((exe, title)))
+    for _ in range(3):
+        app.processEvents()
+    assert ov.isVisible()
+    # 点击穿透属性已设置（不拦截点击，用户可正常操作切换窗口）
+    assert ov.testAttribute(Qt.WA_TransparentForMouseEvents)
+    # 点击不提前确认
+    click = QMouseEvent(QEvent.MouseButtonPress, QPointF(100, 100),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    ov.mousePressEvent(click)
+    for _ in range(3):
+        app.processEvents()
+    assert ov.isVisible(), "click should NOT confirm early"
+    assert picked == []
+    # 倒计时结束自动确认
+    ov._seconds = 1
+    ov._tick()
+    for _ in range(3):
+        app.processEvents()
+    assert not ov.isVisible()
+    assert len(picked) == 1

@@ -14,6 +14,7 @@
 """
 
 import os
+from datetime import datetime
 from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import (QColor, QFont, QIcon, QPainter, QPixmap,
                            QRadialGradient)
@@ -144,6 +145,8 @@ class _MenuPreview(QWidget):
         n = int(s.get("sector_count", 8))
         theme = theme_from_settings(s)
         fs = float(s.get("menu_font_scale", 100)) / 100.0
+        hide_icon_label = bool(s.get("menu_icon_hide_label", False))
+        icon_scale = float(s.get("menu_icon_scale", 100)) / 100.0
 
         avail = min(self.width(), self.height()) / 2 - 24
         fit = avail / ext if ext else 1.0
@@ -153,13 +156,19 @@ class _MenuPreview(QWidget):
         draw_shadow(p, cx, cy, ext * fit)
         draw_ring(p, cx, cy, outer * fit, ext * fit, n,
                   prof.get("extension_sectors", {}), theme.extension,
-                  layer=EXTENSION, placeholder=True, font_scale=fs)
+                  layer=EXTENSION, placeholder=True, font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
         draw_ring(p, cx, cy, inner * fit, outer * fit, n,
                   prof.get("outer_sectors", {}), theme.outer,
-                  layer=OUTER, placeholder=True, font_scale=fs)
+                  layer=OUTER, placeholder=True, font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
         draw_ring(p, cx, cy, dead * fit, inner * fit, n,
                   prof.get("sectors", {}), theme.inner,
-                  layer=INNER, placeholder=True, font_scale=fs)
+                  layer=INNER, placeholder=True, font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
         name = prof.get("name", "") if prof else ""
         draw_center(p, cx, cy, dead * fit, theme,
                     min(self.width(), self.height()), "", name, font_scale=fs)
@@ -535,6 +544,10 @@ class AppearancePage(_BasePage):
             "圆盘文字大小", "menu_font_scale", 70, 160, "%",
             on_change=self._update_preview, container=lv,
             help="圆盘扇区内命令文字的缩放比例，100% 为默认大小。")
+        self._icon_scale_slider, self._icon_scale_label = self._slider_row(
+            "图标大小", "menu_icon_scale", 50, 150, "%",
+            on_change=self._update_preview, container=lv,
+            help="圆盘扇区内图标的缩放比例，100% 为默认大小；图标过大时会自动限制并下移文字避免重叠。")
         self._ui_font_slider, self._ui_font_label = self._slider_row(
             "界面文字大小", "ui_font_scale", 75, 160, "%",
             on_change=self._on_ui_font_changed, container=lv,
@@ -565,6 +578,10 @@ class AppearancePage(_BasePage):
             "显示限制在屏幕范围内", "menu_clamp_to_screen", True,
             container=lv,
             help="开启后圆盘整体保持完整可见；关闭后圆心始终对准按下位置，靠近屏幕边缘可能被裁剪。")
+        self.chk_hide_icon_label = self._check_row(
+            "有图标时隐藏文字标签", "menu_icon_hide_label", False,
+            container=lv,
+            help="扇区设置了图标时只显示图标不显示文字；关闭则图标和文字同时显示。")
         lv.addStretch(1)
 
         hbox.addWidget(left, 1)
@@ -718,7 +735,7 @@ class AppearancePage(_BasePage):
             self.mode_combo.setCurrentIndex(idx)
             self.mode_combo.blockSignals(False)
         # 主题选中态
-        name = s.get("menu_theme", "azure")
+        name = s.get("menu_theme", "graphite")
         try:
             self._theme_group.buttonClicked.disconnect(self._on_theme_picked)
         except (RuntimeError, TypeError):
@@ -939,13 +956,23 @@ class AboutPage(_BasePage):
         # 更新
         self._section("更新")
         self.chk_update = self._check_row(
-            "启动时检查更新", "check_update_on_start", True,
+            "启动时检查更新", "check_update_on_start", False,
             help="每次启动自动联网检查新版本，发现更新会提示你。")
         self.btn_check_update = QPushButton(T("检查更新"))
         self.btn_check_update.setToolTip(T("立即检查是否有新版本"))
         self.btn_check_update.clicked.connect(self._on_check_update_click)
         self.body.addWidget(self.btn_check_update)
         self.register_text(self.btn_check_update, "检查更新")
+
+        last_row = QHBoxLayout()
+        last_row.setSpacing(6)
+        self._lb_last_check_title = QLabel(T("上次检查更新"))
+        self.register_text(self._lb_last_check_title, "上次检查更新")
+        last_row.addWidget(self._lb_last_check_title)
+        self._lb_last_check_value = QLabel()
+        last_row.addWidget(self._lb_last_check_value)
+        last_row.addStretch(1)
+        self.body.addLayout(last_row)
 
 
         # 配置目录
@@ -1067,6 +1094,16 @@ class AboutPage(_BasePage):
             if self.on_language_changed:
                 self.on_language_changed(lang)
 
+    @staticmethod
+    def _fmt_last_check(iso: str) -> str:
+        """ISO 时间转可读格式；无记录显示从未检查过"""
+        if not iso:
+            return T("从未检查过")
+        try:
+            return datetime.fromisoformat(iso).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return iso
+
     def _on_check_update_click(self):
         if self.on_check_update:
             self.on_check_update()
@@ -1092,13 +1129,18 @@ class AboutPage(_BasePage):
         self.chk_open.setChecked(bool(s.get("open_config_on_start", False)))
         self.chk_auto.setChecked(bool(s.get("auto_switch_profile", True)))
         self.chk_startup.setChecked(get_auto_start())
-        self.chk_update.setChecked(bool(s.get("check_update_on_start", True)))
+        self.chk_update.setChecked(bool(s.get("check_update_on_start", False)))
         for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
             w.blockSignals(False)
         self._config_dir_label.setText(get_config_path())
+        self._lb_last_check_value.setText(
+            self._fmt_last_check(s.get("last_update_check", "")))
 
     def retranslate(self):
         super().retranslate()
+        self._lb_last_check_value.setText(
+            self._fmt_last_check(
+                self.config.get("settings", {}).get("last_update_check", "")))
 
 
 

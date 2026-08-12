@@ -381,18 +381,28 @@ class QRadialPreview(QWidget):
         hov = self._drag_hover if self._drag_from is not None else self.hovered
         fs = float(self.config.get("settings", {}).get(
             "menu_font_scale", 100)) / 100.0
+        hide_icon_label = bool(self.config.get("settings", {}).get(
+            "menu_icon_hide_label", False))
+        icon_scale = float(self.config.get("settings", {}).get(
+            "menu_icon_scale", 100)) / 100.0
         draw_ring(p, cx, cy, outer, ext, n,
                   self.profile.get("extension_sectors", {}), t.extension,
                   layer=EXTENSION, sel=sel, hov=hov, light=t.light,
-                  placeholder=True, font_scale=fs)
+                  placeholder=True, font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
         draw_ring(p, cx, cy, inner, outer, n,
                   self.profile.get("outer_sectors", {}), t.outer,
                   layer=OUTER, sel=sel, hov=hov, light=t.light,
-                  placeholder=True, font_scale=fs)
+                  placeholder=True, font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
         draw_ring(p, cx, cy, dead, inner, n,
                   self.profile.get("sectors", {}), t.inner,
                   layer=INNER, sel=sel, hov=hov, light=t.light,
-                  placeholder=True, font_scale=fs)
+                  placeholder=True, font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
 
         label, sub = self._center_texts()
         draw_center(p, cx, cy, dead, t, min(self.width(), self.height()),

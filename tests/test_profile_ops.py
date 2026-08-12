@@ -31,6 +31,8 @@ def test_add_profile_creates_sectors():
     assert prof["target"] == "autocad"
     assert len(prof["sectors"]) == 8
     assert prof["outer_sectors"] == {} and prof["extension_sectors"] == {}
+    assert prof["sectors"]["0"] == {"label": "", "key": "", "description": "",
+                                    "icon": ""}
 
 
 def test_add_profile_duplicate():
@@ -124,3 +126,12 @@ def test_place_under_clamps_to_screen():
     assert pos.x() >= geo.left() + 8
     pos = place_under(QPoint(1910, 540), 277, 320, 200, geo)
     assert pos.x() + 320 <= geo.right() - 8
+
+def test_apply_profile_data_keeps_icon():
+    """导入方案数据保留 icon 字段"""
+    cfg = _cfg()
+    profile = cfg["profiles"]["A"]
+    data = {"sectors": {"0": {"label": "直线", "key": "l",
+                              "description": "LINE", "icon": "preset:line"}}}
+    apply_profile_data(profile, data)
+    assert profile["sectors"]["0"]["icon"] == "preset:line"

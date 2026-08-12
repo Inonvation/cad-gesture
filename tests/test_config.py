@@ -107,6 +107,9 @@ def test_default_config():
     config = _default_config()
     assert "settings" in config
     assert config["settings"]["version"] == 1
+    assert config["settings"]["menu_theme"] == "graphite"
+    assert config["settings"]["ui_mode"] == "light"
+    assert config["settings"]["check_update_on_start"] is False
     assert "AutoCAD-常用" in config["profiles"]
     assert "ZWCAD-机械" in config["profiles"]
     print(f"[OK]  默认配置: {len(config['profiles'])}个Profile")
@@ -278,3 +281,34 @@ def test_migrate_adds_new_settings():
     assert s["feedback_duration_ms"] == 1500
     assert s["feedback_offset_x"] == 0
     assert s["feedback_offset_y"] == 0
+
+
+def test_default_config_icons():
+    """默认方案常用扇区带预设矢量图标，隐藏文字开关默认关"""
+    config = _default_config()
+    prof = next(p for p in config["profiles"].values()
+                if p.get("target") == "autocad" and p.get("name") == "常用")
+    assert prof["sectors"]["0"].get("icon") == "preset:line"
+    assert prof["sectors"]["2"].get("icon") == "preset:copy"
+    assert config["settings"]["menu_icon_hide_label"] is False
+    assert config["settings"]["menu_icon_scale"] == 100
+
+
+def test_preset_commands_carry_icon():
+    """命令库高频命令带 icon，拖放/应用命令时随数据复制到扇区"""
+    ac = get_preset_commands("autocad")
+    found = False
+    for cat in ac.values():
+        for entry in cat.values():
+            if entry.get("description") == "LINE":
+                assert entry.get("icon") == "preset:line"
+                found = True
+    assert found
+
+
+def test_migrate_adds_icon_hide_setting():
+    """旧配置迁移补 menu_icon_hide_label 默认值"""
+    cfg = {"settings": {}, "profiles": {}}
+    assert _migrate_config(cfg)
+    assert cfg["settings"]["menu_icon_hide_label"] is False
+    assert cfg["settings"]["menu_icon_scale"] == 100

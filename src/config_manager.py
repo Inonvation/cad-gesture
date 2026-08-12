@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sys
 import copy
 import winreg
@@ -53,6 +54,9 @@ def get_config_path() -> str:
 
 
 CONFIG_FILE = get_config_path()
+
+# 内置目标软件（不允许删除，固定存在）
+BUILTIN_TARGETS = ("autocad", "zwcad")
 
 
 def set_config_dir(path: str) -> str:
@@ -188,7 +192,7 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         settings["open_config_on_start"] = False
         migrated = True
     if "menu_theme" not in settings:
-        settings["menu_theme"] = "azure"
+        settings["menu_theme"] = "graphite"
         migrated = True
     if "custom_trail" not in settings:
         settings["custom_trail"] = "#6fa3d8"
@@ -209,7 +213,7 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         settings["menu_scale"] = 100
         migrated = True
     if "check_update_on_start" not in settings:
-        settings["check_update_on_start"] = True
+        settings["check_update_on_start"] = False
         migrated = True
     if "update_source_url" not in settings:
         settings["update_source_url"] = "https://github.com/Inonvation/cad-gesture/releases/latest"
@@ -217,11 +221,19 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "last_update_check" not in settings:
         settings["last_update_check"] = ""
         migrated = True
+    # 卡片顺序（内置 autocad/zwcad 优先，自定义应用追加）与自定义应用列表
+    if "app_order" not in settings:
+        settings["app_order"] = list(BUILTIN_TARGETS)
+        migrated = True
+    if "custom_targets" not in settings or not isinstance(
+            settings["custom_targets"], list):
+        settings["custom_targets"] = []
+        migrated = True
     if "language" not in settings:
         settings["language"] = "zh"
         migrated = True
     if "ui_mode" not in settings:
-        settings["ui_mode"] = "dark"
+        settings["ui_mode"] = "light"
         migrated = True
     if "trigger_button" not in settings:
         settings["trigger_button"] = "right"
@@ -237,6 +249,14 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         migrated = True
     if "ui_font_scale" not in settings:
         settings["ui_font_scale"] = 100
+        migrated = True
+
+    if "menu_icon_scale" not in settings:
+        settings["menu_icon_scale"] = 100
+        migrated = True
+
+    if "menu_icon_hide_label" not in settings:
+        settings["menu_icon_hide_label"] = False
         migrated = True
     # 旧版本 divisor 误用会把字号百分比写成小数（如 1.0=100%），归一为整数百分比
     for _k in ("menu_font_scale", "ui_font_scale"):
@@ -333,13 +353,13 @@ def get_profile_for_window(config: Dict[str, Any], window_type: str) -> Optional
 
     Args:
         config: 配置字典
-        window_type: "autocad" 或 "zwcad"
+        window_type: "autocad" / "zwcad" / 自定义应用 id
 
     Returns:
         匹配的 Profile，如果没有匹配则返回当前 active_profile
 
     选择优先级（auto_switch_profile=True 时）：
-        1. settings 中显式绑定的方案（autocad_profile / zwcad_profile）
+        1. settings 中显式绑定的方案（{window_type}_profile，含自定义应用）
         2. 该 target 下第一个方案（旧版本行为，向后兼容）
     """
     if not config.get("settings", {}).get("auto_switch_profile", True):
@@ -390,6 +410,143 @@ def get_profile_names_by_target(config: Dict[str, Any], target: str) -> List[str
         if profile.get("target", "") == target
     ]
 
+
+# ========== 自定义应用（其他软件） ==========
+
+def get_custom_targets(config: Dict[str, Any]) -> List[dict]:
+    """返回用户添加的自定义应用列表（settings.custom_targets，结构化为 list）"""
+    settings = config.setdefault("settings", {})
+    apps = settings.get("custom_targets")
+    if not isinstance(apps, list):
+        apps = []
+        settings["custom_targets"] = apps
+    return apps
+
+
+def get_target_order(config: Dict[str, Any]) -> List[str]:
+    """卡片显示顺序：内置 autocad/zwcad 在前，自定义应用按添加/拖动顺序在后。
+
+    返回的列表同时会规范化写回 settings.app_order（去重、剔除已删除应用），
+    保证内存态与磁盘态一致。
+    """
+    settings = config.setdefault("settings", {})
+    order = settings.get("app_order")
+    if not isinstance(order, list):
+        order = []
+    custom_ids = [a.get("id", "") for a in get_custom_targets(config)
+                  if a.get("id")]
+    seen, out = set(), []
+    for t in list(BUILTIN_TARGETS) + order + custom_ids:
+        if not t:
+            continue
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    settings["app_order"] = out
+    return out
+
+
+def set_target_order(config: Dict[str, Any], ordered_ids: List[str]) -> List[str]:
+    """按拖动结果重排卡片顺序；只保留有效 target，未出现的目标追加到末尾。"""
+    custom_ids = {a.get("id", "") for a in get_custom_targets(config)
+                  if a.get("id")}
+    valid = [t for t in ordered_ids
+             if t in BUILTIN_TARGETS or t in custom_ids]
+    rest = [t for t in get_target_order(config) if t not in valid]
+    config.setdefault("settings", {})["app_order"] = valid + rest
+    return config["settings"]["app_order"]
+
+
+def get_target_label(config: Dict[str, Any], target: str) -> str:
+    """target 的显示名。autocad/zwcad 返回固定名（调用方可用 T() 本地化），
+    自定义应用返回用户填写的应用名。"""
+    if target == "autocad":
+        return "AutoCAD"
+    if target == "zwcad":
+        return "中望CAD"
+    for app in get_custom_targets(config):
+        if app.get("id") == target:
+            return app.get("name", "") or target
+    return target
+
+
+def _target_id_slug(exe_name: str) -> str:
+    """从可执行文件名生成稳定的 target id：sldworks.exe -> app_sldworks"""
+    name = (exe_name or "").lower()
+    if name.endswith(".exe"):
+        name = name[: -4]
+    base = re.sub(r"[^a-z0-9]+", "_", name).strip("_")
+    return ("app_" + base) if base else ""
+
+def add_custom_target(config: Dict[str, Any], name: str,
+                      match_exe: str = "", match_title: str = "") -> tuple:
+    """添加自定义应用：注册应用 + 自动创建同名方案并绑定。
+
+    Returns:
+        (ok, err)：成功 ok=True；否则 err 为中文错误信息。
+    """
+    if not name or not name.strip():
+        return False, "应用名称不能为空"
+    if not match_exe.strip() and not match_title.strip():
+        return False, "请填写可执行文件名或窗口标题（至少一项）"
+    apps = get_custom_targets(config)
+    existing_ids = {a.get("id", "") for a in apps}
+    base = _target_id_slug(match_exe) or "app_custom"
+    tid, n = base, 1
+    while tid in existing_ids:
+        n += 1
+        tid = f"{base}_{n}"
+    apps.append({
+        "id": tid,
+        "name": name.strip(),
+        "match_exe": match_exe.strip(),
+        "match_title": match_title.strip(),
+    })
+    # 自动创建同名方案（重名时加序号）
+    profiles = config.setdefault("profiles", {})
+    pname, pn = name.strip(), 1
+    while pname in profiles:
+        pn += 1
+        pname = f"{name.strip()}-{pn}"
+    sector_count = config.setdefault("settings", {}).get("sector_count", 8)
+    profiles[pname] = {
+        "name": pname,
+        "target": tid,
+        "sectors": {str(i): {"label": "", "key": "", "description": "", "icon": ""}
+                    for i in range(sector_count)},
+        "outer_sectors": {},
+        "extension_sectors": {},
+    }
+    config.setdefault("settings", {})[f"{tid}_profile"] = pname
+    get_target_order(config)  # 把新应用追加进 app_order
+    return True, None
+
+
+def remove_custom_target(config: Dict[str, Any], target: str) -> tuple:
+    """删除自定义应用：移除应用条目、其全部方案、绑定键与顺序项。
+
+    Returns:
+        (ok, err)
+    """
+    apps = get_custom_targets(config)
+    app = next((a for a in apps if a.get("id") == target), None)
+    if app is None:
+        return False, "应用不存在"
+    if target in BUILTIN_TARGETS:
+        return False, "内置应用不能删除"
+    apps.remove(app)
+    profiles = config.setdefault("profiles", {})
+    for name in [n for n, p in list(profiles.items())
+                 if p.get("target") == target]:
+        del profiles[name]
+    settings = config.setdefault("settings", {})
+    settings.pop(f"{target}_profile", None)
+    order = settings.get("app_order")
+    if isinstance(order, list):
+        settings["app_order"] = [t for t in order if t != target]
+    if settings.get("active_profile") not in profiles:
+        settings["active_profile"] = next(iter(profiles), "")
+    return True, None
 
 def set_active_profile(config: Dict[str, Any], profile_name: str) -> bool:
     """设置活动Profile"""
@@ -466,3 +623,4 @@ def set_auto_start(enabled: bool) -> bool:
         return True
     except Exception:
         return False
+

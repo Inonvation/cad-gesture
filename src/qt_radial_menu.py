@@ -56,8 +56,6 @@ class QRadialMenu(QWidget):
         self._theme = theme_from_settings(
             config.get("settings", {}))
         self._shadow_pm = None  # 投影层缓存（重绘开销最大，缓存在 QPixmap）
-        self._trail_dx = None   # 手势轨迹终点（相对圆盘中心逻辑坐标）
-        self._trail_dy = None
 
         # 窗口尺寸覆盖到扩展圈判定范围（第三圈区域透明）
         self._apply_size()
@@ -301,21 +299,31 @@ class QRadialMenu(QWidget):
 
         fs = float(self.config.get("settings", {}).get(
             "menu_font_scale", 100)) / 100.0
+        hide_icon_label = bool(self.config.get("settings", {}).get(
+            "menu_icon_hide_label", False))
+        icon_scale = float(self.config.get("settings", {}).get(
+            "menu_icon_scale", 100)) / 100.0
         draw_ring(p, cx, cy, self.outer_ring_radius, self.ext_ring_radius,
                   n, self._profile.get("extension_sectors", {}), t.extension,
                   layer=EXTENSION, hl_idx=self._highlighted_sector,
                   hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light,
-                  font_scale=fs)
+                  font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
         draw_ring(p, cx, cy, self.ring_radius, self.outer_ring_radius,
                   n, self._profile.get("outer_sectors", {}), t.outer,
                   layer=OUTER, hl_idx=self._highlighted_sector,
                   hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light,
-                  font_scale=fs)
+                  font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
         draw_ring(p, cx, cy, self.dead_zone, self.ring_radius,
                   n, self._profile.get("sectors", {}), t.inner,
                   layer=INNER, hl_idx=self._highlighted_sector,
                   hl_layer=hl_layer, hl_fade=self._hl_fade, light=t.light,
-                  font_scale=fs)
+                  font_scale=fs,
+                  hide_label_with_icon=hide_icon_label,
+                  icon_scale=icon_scale)
 
         draw_center(p, cx, cy, self.dead_zone, t, self._size,
                     *self._center_texts(), font_scale=fs)

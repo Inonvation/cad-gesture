@@ -29,23 +29,36 @@ def _version_ok() -> bool:
 
 
 def main():
-    print("[1/4] 语法检查...")
+    print("[1/5] 语法检查...")
     for f in sorted(glob.glob("src/*.py")) + ["main.py"]:
         py_compile_ok(f)
     print("       语法检查通过")
 
-    print("[2/4] 版本号一致性检查...")
+    print("[2/5] 版本号一致性检查...")
     if not _version_ok():
         sys.exit("版本号不一致：version.txt 与 src/version.py 不同步，"
                  "请用 scripts/set_version.py 更新")
     print("       版本号一致")
 
-    print("[3/4] 单元测试...")
+
+    print("[3/5] 模块导入检查（防 PySide6 类导入错误溜过）...")
+    import importlib
+    _bad = []
+    for _mod in sorted(os.path.splitext(os.path.basename(f))[0] for f in glob.glob("src/*.py")):
+        try:
+            importlib.import_module(f"src.{_mod}")
+        except Exception as _e:
+            _bad.append(f"src.{_mod}: {_e}")
+    if _bad:
+        sys.exit("导入失败:\n" + "\n".join(_bad))
+    print("       导入检查通过")
+
+    print("[4/5] 单元测试...")
     r = subprocess.run([sys.executable, "-m", "pytest", "tests/", "-q"])
     if r.returncode != 0:
         sys.exit("测试失败，请先修复")
 
-    print("[4/4] 启动/覆盖更新程序...")
+    print("[5/5] 启动/覆盖更新程序...")
     # 直接启动新实例：单实例机制会自动请求旧实例退出并由新实例接管。
     # 重定向输出，避免子进程继承本脚本管道导致调用方等待
     # （不能用 taskkill，会误杀 verify.py 自身）

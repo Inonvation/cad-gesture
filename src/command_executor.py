@@ -42,6 +42,9 @@ COMBO_TO_COMMAND = {
     "ctrl+shift+v": "_.PASTEBLOCK",
 }
 
+# 支持 COM SendCommand 的目标：其他自定义应用只能按键模拟（pyautogui）
+_CAD_TARGETS = ("autocad", "zwcad")
+
 # IME 控制消息常量（WM_IME_CONTROL 相关）
 WM_IME_CONTROL = 0x0283
 IMC_GETCONVERSIONMODE = 0x0001
@@ -196,6 +199,8 @@ def _send_com_command(cmd_text: str, target: str = "autocad") -> bool:
 
 def _send_via_com(key: str, cmd_name: str = "", target: str = "autocad") -> bool:
     """通过 COM 发送命令，优先完整命令名"""
+    if target not in _CAD_TARGETS:
+        return False  # 非 CAD：直接走 pyautogui 按键回退
     if cmd_name:
         return _send_com_command(f"_.{cmd_name.upper()}\n", target)
     parts = [k.strip().lower() for k in key.split("+")]
@@ -210,8 +215,9 @@ def _send_via_com(key: str, cmd_name: str = "", target: str = "autocad") -> bool
 def cancel_context_menu():
     """连发两次 ESC 取消 CAD 的右键上下文菜单。
 
-    钩子不拦截右键，CAD 收到右键释放会弹菜单；在松手时刻统一调用
-    （app 的 hide 事件处理），无论是否触发命令都取消，避免菜单残留。
+    钩子不拦截右键，CAD 收到右键释放会弹菜单。仅在发生了手势交互
+    （圆盘已弹出或有手势触发）时由 app 的 hide 事件处理调用；无滑动的
+    普通右键不取消，保留 CAD 原生右键菜单。
     与命令回退的按键模拟共用 _input_lock，防止并发 SendInput 交错。
     """
     with _input_lock:
