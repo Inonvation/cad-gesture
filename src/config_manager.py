@@ -190,6 +190,12 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "menu_theme" not in settings:
         settings["menu_theme"] = "azure"
         migrated = True
+    if "custom_trail" not in settings:
+        settings["custom_trail"] = "#6fa3d8"
+        migrated = True
+    if "custom_outline" not in settings:
+        settings["custom_outline"] = "#3a4757"
+        migrated = True
     if "trigger_distance" not in settings:
         settings["trigger_distance"] = 10
         migrated = True

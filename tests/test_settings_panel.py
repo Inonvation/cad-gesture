@@ -50,8 +50,8 @@ def test_help_icons_have_tooltips():
     """各设置页的说明图标存在且 tooltip 非空（中文模式）"""
     _app()
     from src.qt_settings_panel import (_HelpIcon, AppearancePage, TriggerPage,
-                                       GeneralPage, MaintenancePage)
-    for cls in (AppearancePage, TriggerPage, GeneralPage, MaintenancePage):
+                                       AboutPage)
+    for cls in (AppearancePage, TriggerPage, AboutPage):
         page = cls({"settings": {}})
         icons = page.findChildren(_HelpIcon)
         assert icons, f"{cls.__name__} 应有说明图标"

@@ -153,15 +153,15 @@ def test_undo_redo_restores_config(gui):
 
 
 def test_settings_anchor_excludes_test(gui):
-    """侧边栏设置锚点 4 项（外观与尺寸/触发与反馈/常规/维护），不含「测试」"""
+    """侧边栏设置锚点 3 项（外观与尺寸/触发与反馈/关于），不含「测试」"""
     texts = [gui.anchor_list.item(i).text()
              for i in range(gui.anchor_list.count())]
-    assert texts == ["外观与尺寸", "触发与反馈", "常规", "维护"]
+    assert texts == ["外观与尺寸", "触发与反馈", "关于"]
 
 
 def test_open_test_via_maintenance(gui):
-    """维护页「打开手势测试」按钮回调可切到测试页"""
+    """关于页「打开手势测试」按钮回调可切到测试页"""
     from src import qt_config_gui
     idx = 1 + [k for k, _ in qt_config_gui._SETTINGS_PAGES].index("test")
-    gui._setting_pages["maintenance"].on_open_test()
+    gui._setting_pages["about"].on_open_test()
     assert gui._main_stack.currentIndex() == idx

@@ -510,6 +510,7 @@ class MenuTheme:
     border: str
     accent_dim: str
     menu_bg: str = "#010101"
+    trail: str = ""      # 手势轨迹线颜色（自定义主题用；空=按主题推导）
     light: bool = False  # 浅色主题（Quicker 风：白扇面 + 主题色高亮白字 + 扇区间隙）
 
 
@@ -651,15 +652,25 @@ _CUSTOM_DEFAULTS = {
     "custom_highlight": "#6fa3d8",
     "custom_bg": "#1a202b",
     "custom_hover": "#2a3a4d",
+    "custom_trail": "#6fa3d8",
+    "custom_outline": "#3a4757",
 }
 
 
 def make_custom_theme(text: str, highlight: str, bg: str,
-                      hover: str) -> MenuTheme:
-    """由用户指定的四个颜色构建圆盘主题（文字 / 高亮 / 背景 / 悬浮）。"""
+                      hover: str, trail: str = None,
+                      outline: str = None) -> MenuTheme:
+    """由用户指定的颜色构建圆盘主题
+    （文字 / 高亮 / 背景 / 悬浮 / 轨迹线 / 分隔线）。
+
+    trail / outline 缺省时自动推导（轨迹线=高亮色，分隔线=背景加深），
+    兼容只传四色的旧调用。"""
     h, l, s = _hex_to_hls(bg)
     th, tl, ts = _hex_to_hls(text)
-    outline = _hls(h, max(0.0, l - 0.15), min(0.4, s + 0.12))
+    if outline is None:
+        outline = _hls(h, max(0.0, l - 0.15), min(0.4, s + 0.12))
+    if trail is None:
+        trail = highlight
 
     def ring():
         return RingColors(
@@ -682,6 +693,7 @@ def make_custom_theme(text: str, highlight: str, bg: str,
         selected_border=highlight,
         border=outline,
         accent_dim=highlight,
+        trail=trail,
     )
 
 
@@ -705,7 +717,9 @@ def theme_from_settings(settings: dict, ui_mode: str = None) -> MenuTheme:
             settings.get("custom_text", _CUSTOM_DEFAULTS["custom_text"]),
             settings.get("custom_highlight", _CUSTOM_DEFAULTS["custom_highlight"]),
             settings.get("custom_bg", _CUSTOM_DEFAULTS["custom_bg"]),
-            settings.get("custom_hover", _CUSTOM_DEFAULTS["custom_hover"]))
+            settings.get("custom_hover", _CUSTOM_DEFAULTS["custom_hover"]),
+            settings.get("custom_trail", _CUSTOM_DEFAULTS["custom_trail"]),
+            settings.get("custom_outline", _CUSTOM_DEFAULTS["custom_outline"]))
     t = MENU_THEMES.get(name, MENU_THEMES["azure"])
     if effective_ui_mode(mode) == "light":
         return make_light_theme(t)

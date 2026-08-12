@@ -69,6 +69,45 @@ def test_theme_from_settings_custom():
     assert t.inner.text == "#e9edf2"
 
 
+def test_custom_theme_trail_outline_explicit():
+    """?????????????/????????????????"""
+    t = make_custom_theme("#e9edf2", "#6fa3d8", "#1a202b", "#2a3a4d",
+                          "#ff0000", "#00ff00")
+    assert t.trail == "#ff0000"
+    for ring in (t.inner, t.outer, t.extension):
+        assert ring.outline == "#00ff00"
+
+
+def test_custom_theme_trail_outline_defaults():
+    """????????????????????????????????"""
+    t = make_custom_theme("#e9edf2", "#6fa3d8", "#1a202b", "#2a3a4d")
+    assert t.trail == "#6fa3d8"
+    for ring in (t.inner, t.outer, t.extension):
+        assert ring.outline
+
+
+def test_theme_from_settings_custom_new_keys():
+    """theme_from_settings ????? custom_trail / custom_outline"""
+    t = theme_from_settings({"menu_theme": "custom",
+                             "custom_text": "#e9edf2",
+                             "custom_highlight": "#6fa3d8",
+                             "custom_bg": "#1a202b",
+                             "custom_hover": "#2a3a4d",
+                             "custom_trail": "#abcabc",
+                             "custom_outline": "#defdef",
+                             "ui_mode": "dark"})
+    assert t.trail == "#abcabc"
+    assert t.inner.outline == "#defdef"
+
+
+def test_theme_from_settings_custom_new_keys_defaults():
+    """?????? _CUSTOM_DEFAULTS ???"""
+    from src.theme import _CUSTOM_DEFAULTS
+    t = theme_from_settings({"menu_theme": "custom", "ui_mode": "dark"})
+    assert t.trail == _CUSTOM_DEFAULTS["custom_trail"]
+    assert t.inner.outline == _CUSTOM_DEFAULTS["custom_outline"]
+
+
 def test_text_contrast_on_normal():
     """白字在扇区底色上的对比度 >= 4（保证任何主题标签可读）"""
     for t in MENU_THEMES.values():

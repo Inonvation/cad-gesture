@@ -3,8 +3,7 @@
 页面（与侧边栏分类一一对应，qt_config_gui 将其加入 QStackedWidget）：
 - AppearancePage  外观与尺寸：界面模式、主题、自定义主色、不透明度、字号 + 圆盘大小/半径/屏幕内限制 + 实时预览
 - TriggerPage     触发与反馈：触发按键、长按延迟、触发距离、手势轨迹线 + 命令反馈提示
-- GeneralPage     常规：语言、启动项、检查更新
-- MaintenancePage 维护：配置目录、方案操作、备份恢复、手势测试入口
+- AboutPage       关于：版本、语言、启动项、检查更新、配置目录、方案操作、备份恢复、项目主页
 - TestPage        手势测试页保留在页面栈中，但不在侧边栏（由维护页按钮进入）
 
 公共基类 _BasePage 提供：slider_row / save / refresh 骨架 / retranslate 钩子。
@@ -14,10 +13,13 @@
 - on_language_changed(lang)  语言切换（主窗口调 i18n.set_language）
 """
 
+import os
 from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
+from PySide6.QtGui import (QColor, QFont, QIcon, QPainter, QPixmap,
+                           QRadialGradient)
+from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
-                               QComboBox, QFileDialog, QGridLayout,
+                               QComboBox, QFileDialog, QFrame, QGridLayout,
                                QHBoxLayout, QLabel, QPushButton, QScrollArea,
                                QSlider, QSpinBox, QToolTip, QVBoxLayout, QWidget,
                                QMessageBox)
@@ -29,10 +31,20 @@ from src.i18n import T
 from src.menu_geometry import scaled_radii
 from src.theme import (get_ui, MENU_THEMES, make_custom_theme,
                        make_light_theme, theme_from_settings,
-                       effective_ui_mode, FONT_XS, font_px, _CUSTOM_DEFAULTS)
+                       effective_ui_mode, current_ui_mode,
+                       _asset_path, FONT_XS, font_px, _CUSTOM_DEFAULTS)
 from src.qt_renderer import (draw_shadow, draw_ring, draw_center,
                              INNER, OUTER, EXTENSION)
 
+_PROJECT_URL = "https://github.com/Inonvation/cad-gesture"  # GitHub project homepage
+
+
+
+class _NoWheelSlider(QSlider):
+    """禁用鼠标滚轮修改滑块值：悬停在滑块上滚动滚轮不再误改设置"""
+
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 def _tile_pixmap(t, w=96, h=96) -> QPixmap:
@@ -280,7 +292,7 @@ class _BasePage(QWidget):
         val = int(round(raw * divisor)) if divisor != 1.0 else int(raw)
         val = max(lo, min(hi, val))
 
-        sl = QSlider(Qt.Horizontal)
+        sl = _NoWheelSlider(Qt.Horizontal)
         sl.setRange(lo, hi)
         sl.setValue(val)
         spin = QSpinBox()
@@ -460,21 +472,45 @@ class AppearancePage(_BasePage):
         self._theme_group.buttonClicked.connect(self._on_theme_picked)
         lv.addLayout(grid)
 
-        # 自定义主题四个颜色（选"自定义"时显示）
+        # 非自定义主题时提示可自定义颜色（避免用户找不到调色入口）
+        self._custom_hint = QLabel(
+            T("选择「自定义」主题可自定义文字 / 轨迹线 / 悬浮 / 分隔线颜色"))
+        self._custom_hint.setWordWrap(True)
+        self._custom_hint.setObjectName("pageSub")
+        lv.addWidget(self._custom_hint)
+
+        # 自定义主题颜色（选"自定义"时显示：文字/高亮/背景/悬浮/轨迹线/分隔线）
         self._custom_color_row = QWidget()
         cc = QVBoxLayout(self._custom_color_row)
         cc.setContentsMargins(0, 0, 0, 0)
         cc.setSpacing(8)
         self._color_fields = {}   # key -> 色块按钮
-        for key, zh in (("custom_text", "文字颜色"),
-                        ("custom_highlight", "高亮颜色"),
-                        ("custom_bg", "背景颜色"),
-                        ("custom_hover", "悬浮颜色")):
+        # 两列布局：6 项排 3 行 × 2 列，中间竖直虚线分隔，色块靠内侧排列
+        color_grid = QGridLayout()
+        color_grid.setSpacing(10)
+        color_grid.setColumnStretch(0, 1)
+        color_grid.setColumnStretch(1, 0)
+        color_grid.setColumnStretch(2, 1)
+        # 竖直虚线分隔线（跨 3 行，颜色跟随主题边框）
+        vline = QFrame()
+        vline.setFrameShape(QFrame.VLine)
+        vline.setStyleSheet(
+            f"QFrame {{ border: none; border-left: 1px dashed "
+            f"{get_ui().text_muted}; }}")
+        color_grid.addWidget(vline, 0, 1, 3, 1)
+        for i, (key, zh) in enumerate((
+                ("custom_text", "文字颜色"),
+                ("custom_highlight", "高亮颜色"),
+                ("custom_bg", "背景颜色"),
+                ("custom_hover", "悬浮颜色"),
+                ("custom_trail", "轨迹线颜色"),
+                ("custom_outline", "分隔线颜色"))):
             row = QHBoxLayout()
             row.setSpacing(10)
             lb = QLabel(T(zh))
             self.register_text(lb, zh)
             row.addWidget(lb)
+            row.addStretch(1)
             btn = QPushButton()
             btn.setFixedSize(28, 22)
             btn.setCursor(Qt.PointingHandCursor)
@@ -483,8 +519,8 @@ class AppearancePage(_BasePage):
                 lambda _=False, k=key: self._pick_custom_color(k))
             self._color_fields[key] = btn
             row.addWidget(btn)
-            row.addStretch(1)
-            cc.addLayout(row)
+            color_grid.addLayout(row, i // 2, (i % 2) * 2)
+        cc.addLayout(color_grid)
         self._custom_color_row.hide()
         lv.addWidget(self._custom_color_row)
 
@@ -618,6 +654,7 @@ class AppearancePage(_BasePage):
         name = self._tile_by_btn[btn]
         self.config.setdefault("settings", {})["menu_theme"] = name
         self._custom_color_row.setVisible(name == "custom")
+        self._custom_hint.setVisible(name != "custom")
         if name == "custom":
             self._sync_custom_colors()
             self._refresh_custom_tile()
@@ -652,7 +689,9 @@ class AppearancePage(_BasePage):
             s.get("custom_text", _CUSTOM_DEFAULTS["custom_text"]),
             s.get("custom_highlight", _CUSTOM_DEFAULTS["custom_highlight"]),
             s.get("custom_bg", _CUSTOM_DEFAULTS["custom_bg"]),
-            s.get("custom_hover", _CUSTOM_DEFAULTS["custom_hover"]))
+            s.get("custom_hover", _CUSTOM_DEFAULTS["custom_hover"]),
+            s.get("custom_trail", _CUSTOM_DEFAULTS["custom_trail"]),
+            s.get("custom_outline", _CUSTOM_DEFAULTS["custom_outline"]))
         if effective_ui_mode(s.get("ui_mode", "dark")) == "light":
             t = make_light_theme(t)
         self._custom_tile.set_icon_pixmap(_tile_pixmap(t))
@@ -688,6 +727,7 @@ class AppearancePage(_BasePage):
             tile.setChecked(n == name)
         self._theme_group.buttonClicked.connect(self._on_theme_picked)
         self._custom_color_row.setVisible(name == "custom")
+        self._custom_hint.setVisible(name != "custom")
         if name == "custom":
             self._sync_custom_colors()
         self._refresh_theme_thumbnails()
@@ -850,13 +890,24 @@ class TriggerPage(_BasePage):
         self.pos_combo.blockSignals(False)
 
 
-class GeneralPage(_BasePage):
-    """常规：语言、启动项、检查更新"""
-
+class AboutPage(_BasePage):
+    """关于：版本、语言、启动、检查更新、配置目录、方案操作、备份与恢复、项目主页"""
     def __init__(self, config, parent=None):
-        self.title_zh = "常规"
+        self.title_zh = "关于"
         super().__init__(config, parent)
         self.title.setText(T(self.title_zh))
+
+        # 版本
+        self._section("版本")
+        ver_row = QHBoxLayout()
+        ver_row.setSpacing(10)
+        self._lb_version = QLabel(T("版本"))
+        self.register_text(self._lb_version, "版本")
+        ver_row.addWidget(self._lb_version)
+        from src.version import __version__
+        ver_row.addWidget(QLabel(__version__))
+        ver_row.addStretch(1)
+        self.body.addLayout(ver_row)
 
         # 语言
         self._section("语言")
@@ -894,57 +945,8 @@ class GeneralPage(_BasePage):
         self.btn_check_update.setToolTip(T("立即检查是否有新版本"))
         self.btn_check_update.clicked.connect(self._on_check_update_click)
         self.body.addWidget(self.btn_check_update)
-        self.body.addStretch(1)
         self.register_text(self.btn_check_update, "检查更新")
 
-    def _on_lang_changed(self, idx):
-        lang = self.lang_combo.itemData(idx)
-        s = self.config.setdefault("settings", {})
-        if s.get("language") != lang:
-            s["language"] = lang
-            self._save()
-            if self.on_language_changed:
-                self.on_language_changed(lang)
-
-    def _on_check_update_click(self):
-        if self.on_check_update:
-            self.on_check_update()
-        self.btn_check_update.setEnabled(False)
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(5000, lambda: self.btn_check_update.setEnabled(True))
-
-    def _on_startup(self, checked):
-        set_auto_start(checked)
-
-    def refresh(self, config, profile=None):
-        self.config = config
-        s = config.get("settings", {})
-        lang = s.get("language", "zh")
-        idx = self.lang_combo.findData(lang)
-        if idx >= 0:
-            self.lang_combo.blockSignals(True)
-            self.lang_combo.setCurrentIndex(idx)
-            self.lang_combo.blockSignals(False)
-        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
-            w.blockSignals(True)
-        self.chk_open.setChecked(bool(s.get("open_config_on_start", False)))
-        self.chk_auto.setChecked(bool(s.get("auto_switch_profile", True)))
-        self.chk_startup.setChecked(get_auto_start())
-        self.chk_update.setChecked(bool(s.get("check_update_on_start", True)))
-        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
-            w.blockSignals(False)
-
-    def retranslate(self):
-        super().retranslate()
-
-
-class MaintenancePage(_BasePage):
-    """维护：配置目录、方案导入导出、恢复默认"""
-
-    def __init__(self, config, parent=None):
-        self.title_zh = "维护"
-        super().__init__(config, parent)
-        self.title.setText(T(self.title_zh))
 
         # 配置目录
         self._section("配置目录")
@@ -1020,7 +1022,85 @@ class MaintenancePage(_BasePage):
         row2.addWidget(btn_restore)
         row2.addStretch(1)
         self.body.addLayout(row2)
+
+        # 项目主页
+        self._section("项目主页")
+        home_row = QHBoxLayout()
+        home_row.setSpacing(10)
+        self._home_icon = QSvgWidget(_asset_path(f"github_mark_{current_ui_mode()}.svg"))
+        self._home_icon.setFixedSize(20, 20)
+        home_row.addWidget(self._home_icon)
+        self._home_link = QLabel(
+            '<a href="%s" style="color:%s; text-decoration:none;">%s</a>'
+            % (_PROJECT_URL, get_ui().accent,
+               _PROJECT_URL.replace("https://", "")))
+        self._home_link.setOpenExternalLinks(True)
+        self._home_link.setTextFormat(Qt.RichText)
+        self._home_link.setToolTip(T("打开项目主页"))
+        home_row.addWidget(self._home_link)
+        btn_home = QPushButton()
+        btn_home.setIcon(QIcon(_asset_path("external_link.svg")))
+        btn_home.setToolTip(T("打开项目主页"))
+        btn_home.setCursor(Qt.PointingHandCursor)
+        btn_home.setFixedSize(28, 28)
+        btn_home.setProperty("class", "iconBtn")
+        btn_home.clicked.connect(self._open_project_home)
+        home_row.addWidget(btn_home)
+        home_row.addStretch(1)
+        self.body.addLayout(home_row)
+
         self.body.addStretch(1)
+
+    def _open_project_home(self):
+        """打开 GitHub 项目主页（默认浏览器）"""
+        try:
+            os.startfile(_PROJECT_URL)
+        except Exception:
+            QMessageBox.warning(self, T("提示"), T("打开项目主页失败"))
+
+    def _on_lang_changed(self, idx):
+        lang = self.lang_combo.itemData(idx)
+        s = self.config.setdefault("settings", {})
+        if s.get("language") != lang:
+            s["language"] = lang
+            self._save()
+            if self.on_language_changed:
+                self.on_language_changed(lang)
+
+    def _on_check_update_click(self):
+        if self.on_check_update:
+            self.on_check_update()
+        self.btn_check_update.setEnabled(False)
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(5000, lambda: self.btn_check_update.setEnabled(True))
+
+    def _on_startup(self, checked):
+        set_auto_start(checked)
+
+
+    def refresh(self, config, profile=None):
+        self.config = config
+        s = config.get("settings", {})
+        lang = s.get("language", "zh")
+        idx = self.lang_combo.findData(lang)
+        if idx >= 0:
+            self.lang_combo.blockSignals(True)
+            self.lang_combo.setCurrentIndex(idx)
+            self.lang_combo.blockSignals(False)
+        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
+            w.blockSignals(True)
+        self.chk_open.setChecked(bool(s.get("open_config_on_start", False)))
+        self.chk_auto.setChecked(bool(s.get("auto_switch_profile", True)))
+        self.chk_startup.setChecked(get_auto_start())
+        self.chk_update.setChecked(bool(s.get("check_update_on_start", True)))
+        for w in (self.chk_open, self.chk_auto, self.chk_startup, self.chk_update):
+            w.blockSignals(False)
+        self._config_dir_label.setText(get_config_path())
+
+    def retranslate(self):
+        super().retranslate()
+
+
 
     def _change_config_dir(self):
         d = QFileDialog.getExistingDirectory(self, T("选择配置目录"))
@@ -1058,11 +1138,6 @@ class MaintenancePage(_BasePage):
         self.refresh(self.config)
         self._save()
         QMessageBox.information(self, T("提示"), T("已重置为默认配置"))
-
-    def refresh(self, config, profile=None):
-        self.config = config
-        self._config_dir_label.setText(get_config_path())
-
 
 class TestPage(_BasePage):
     """手势测试：真实配置圆盘预览，移动鼠标查看扇区命令"""

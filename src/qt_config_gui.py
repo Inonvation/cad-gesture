@@ -2,7 +2,7 @@
 
 结构：左侧导航栏 + 上下文区（方案列表），主区 QStackedWidget 多页：
   - 圆盘编辑页：大圆盘预览 + 可折叠命令库；点击扇区弹出就地编辑器
-  - 设置分类页：外观与尺寸 / 触发与反馈 / 常规 / 维护（侧边栏进入；测试页由维护页按钮进入）
+  - 设置分类页：外观与尺寸 / 触发与反馈 / 关于（侧边栏进入；测试页由关于页按钮进入）
 功能：方案增删改、命令库拖放/搜索/放置模式、撤销重做、自动保存、
 中英文切换、浅色/深色界面模式。
 """
@@ -42,11 +42,11 @@ from src.qt_profile_ops import (add_profile, copy_profile, rename_profile,
                                 delete_profile, export_profile,
                                 load_profile_data, apply_profile_data)
 from src.qt_settings_panel import (AppearancePage, TriggerPage,
-                                   GeneralPage, MaintenancePage, TestPage)
+                                   AboutPage, TestPage)
 
 # 侧边栏分类页元数据：(分类 key, 中文标题)
 _SETTINGS_PAGES = (("appearance", "外观与尺寸"), ("trigger", "触发与反馈"),
-                   ("general", "常规"), ("maintenance", "维护"),
+                   ("about", "关于"),
                    ("test", "测试"))
 
 # 侧边栏锚点分类：与 _SETTINGS_PAGES 一致，但跳过「测试」（由维护页按钮进入）
@@ -127,11 +127,10 @@ class QConfigGUI(QMainWindow):
         self._main_stack = QStackedWidget()
         self._main_stack.addWidget(self._build_editor_page())
 
-        # 设置分类页（外观与尺寸 / 触发与反馈 / 常规 / 维护 / 测试）
+        # 设置分类页（外观与尺寸 / 触发与反馈 / 关于 / 测试）
         self._setting_pages = {}
         page_cls = {"appearance": AppearancePage, "trigger": TriggerPage,
-                    "general": GeneralPage, "maintenance": MaintenancePage,
-                    "test": TestPage}
+                    "about": AboutPage, "test": TestPage}
         for key, _zh in _SETTINGS_PAGES:
             page = page_cls[key](self.config)
             page.on_saved = self._on_settings_saved
@@ -166,6 +165,10 @@ class QConfigGUI(QMainWindow):
         if geo is not None:
             self.restoreGeometry(geo)
         set_title_bar_theme(self, current_ui_mode() == "dark")
+        # 窗口完全映射后再校验几何：showEvent 阶段 frameGeometry 可能未反映
+        # 恢复后的位置（拔掉副屏/分辨率变化遗留的屏幕外位置）；
+        # 同时负责把异常状态导致的隐藏窗口重新显示
+        QTimer.singleShot(100, self._validate_geometry)
         # 窗口完全显示后 DWM 属性更稳定，延迟再应用一次（覆盖显示时序问题）
         QTimer.singleShot(150,
                           lambda: set_title_bar_theme(self, current_ui_mode() == "dark"))
@@ -1440,9 +1443,61 @@ class QConfigGUI(QMainWindow):
         if ok and self.on_save:
             self.on_save(self.config)
 
+    def _frame_intersects_any_screen(self) -> bool:
+        """窗口矩形是否至少部分落在某个屏幕的可用区域内"""
+        rect = self.frameGeometry()
+        for scr in QApplication.screens():
+            if rect.intersects(scr.availableGeometry()):
+                return True
+        return False
+
+    def _center_on_primary(self):
+        """把窗口移到主屏可用区中央（窗口位置异常时的兜底）"""
+        scr = QApplication.primaryScreen()
+        if scr is None:
+            return
+        geo = scr.availableGeometry()
+        self.move(geo.center().x() - self.width() // 2,
+                  geo.center().y() - self.height() // 2)
+
+    def _validate_geometry(self):
+        """窗口映射后校验几何：屏幕外则居中并清掉坏记忆，隐藏则重新显示"""
+        try:
+            if not self._frame_intersects_any_screen():
+                self._center_on_primary()
+                # 清掉异常的位置记忆，免下次启动再恢复屏幕外位置
+                try:
+                    QSettings("CADGesture", "CADGesture").remove("config_win_geometry")
+                except Exception:
+                    pass
+            if not self.isVisible():
+                self.show()
+                self.raise_()
+                self.activateWindow()
+        except Exception:
+            pass
+
     def closeEvent(self, e):
-        QSettings("CADGesture", "CADGesture").setValue(
-            "config_win_geometry", self.saveGeometry())
+        # 只在窗口位于屏幕内时记忆位置；屏幕外（拔掉副屏/分辨率变化遗留）
+
+        # 不保存，避免下次启动恢复不可见位置
+
+        try:
+
+            if self._frame_intersects_any_screen():
+
+                QSettings("CADGesture", "CADGesture").setValue(
+
+                    "config_win_geometry", self.saveGeometry())
+
+            else:
+
+                QSettings("CADGesture", "CADGesture").remove("config_win_geometry")
+
+        except Exception:
+
+            pass
+
         remove_listener(self._lang_listener)
         # 设置页防抖中的修改先落盘（各页共享同一 config 对象）
         for page in self._setting_pages.values():

@@ -322,25 +322,25 @@ def draw_center(p: QPainter, cx: float, cy: float, dead_r: float,
     half = size / 2
     if label and sub_label:
         # 两行布局以 cy 为中心定位（避免误减 half 把文字画到窗口外）
-        main_rect = QRectF(cx - half, cy - 20, size, 22)
-        sub_rect = QRectF(cx - half, cy + 4, size, 18)
+        main_rect = QRectF(cx - half, cy - 21, size, 22)
+        sub_rect = QRectF(cx - half, cy + 5, size, 18)
         sub_color = QColor(theme.center_text)
         sub_color.setAlpha(160)
         _center_line(p, main_rect, label,
-                     _fit_font(label, 12 * font_scale, dead_r * 2 * 0.85, bold=True),
+                     _fit_font(label, 13 * font_scale, dead_r * 2 * 0.85, bold=True),
                      QColor(theme.center_text), shadow=shadow)
         _center_line(p, sub_rect, sub_label,
-                     _fit_font(sub_label, 10 * font_scale, dead_r * 2 * 0.72),
+                     _fit_font(sub_label, 11 * font_scale, dead_r * 2 * 0.72),
                      sub_color, shadow=sub_shadow)
     elif label:
         rect = QRectF(cx - half, cy - half, size, size)
         _center_line(p, rect, label,
-                     _fit_font(label, 12 * font_scale, dead_r * 2 * 0.85, bold=True),
+                     _fit_font(label, 13 * font_scale, dead_r * 2 * 0.85, bold=True),
                      QColor(theme.center_text), shadow=shadow)
     else:
         rect = QRectF(cx - half, cy - half, size, size)
         sub_color = QColor(theme.center_text)
-        sub_color.setAlpha(120)
+        sub_color.setAlpha(150)
         _center_line(p, rect, sub_label,
-                     _fit_font(sub_label, 10 * font_scale, dead_r * 2 * 0.72),
+                     _fit_font(sub_label, 11 * font_scale, dead_r * 2 * 0.72),
                      sub_color, shadow=sub_shadow)

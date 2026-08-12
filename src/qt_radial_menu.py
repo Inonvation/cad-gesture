@@ -48,11 +48,11 @@ class QRadialMenu(QWidget):
         self._center_x = 0
         self._center_y = 0
         self._center_physical = (0, 0)  # 实际显示中心（物理像素）
-        self._press_logical = (0.0, 0.0)  # 按下位置（逻辑坐标，方向判定原点）
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
         self._trail_dx = self._trail_dy = None
+        self._last_mouse = None  # 上一次重绘时的鼠标位置（静止时不重绘用）
         self._theme = theme_from_settings(
             config.get("settings", {}))
         self._shadow_pm = None  # 投影层缓存（重绘开销最大，缓存在 QPixmap）
@@ -70,7 +70,7 @@ class QRadialMenu(QWidget):
         # 高亮淡入动画（颜色平滑过渡，约 120ms）
         self._hl_fade = 1.0
         self._hl_fade_timer = QTimer(self)
-        self._hl_fade_timer.setInterval(8)
+        self._hl_fade_timer.setInterval(16)  # 高亮动画轮询 16ms，减少重绘频率
         self._hl_fade_timer.timeout.connect(self._on_hl_fade_tick)
 
     # ========== 配置属性 ==========
@@ -140,7 +140,6 @@ class QRadialMenu(QWidget):
             # 关闭限制：中心始终对准鼠标按下位置，不偏移（圆盘可能被边缘遮挡）
             self._center_physical = (x, y)
         self._center_x, self._center_y = cx, cy
-        self._press_logical = (lx, ly)  # 方向判定始终以按下点为原点
         self._highlighted_sector = -1
         self._highlighted_outer = False
         self._in_extension_zone = False
@@ -207,12 +206,16 @@ class QRadialMenu(QWidget):
             self._highlighted_sector = new_sec
             self._highlighted_outer = new_outer
             self._in_extension_zone = new_ext
+            self._last_mouse = (mouse_x, mouse_y)
             self._start_hl_fade()
             self.update()
         elif self._trail_enabled():
             # 轨迹线开启时：鼠标在同一扇区内移动也要重绘，
-            # 否则轨迹只在跨扇区时才跳变，看起来卡顿不跟手
-            self.update()
+            # 否则轨迹只在跨扇区时才跳变，看起来卡顿不跟手；
+            # 鼠标未移动（如按住静止）时不重绘，避免整窗高频空转
+            if (mouse_x, mouse_y) != self._last_mouse:
+                self._last_mouse = (mouse_x, mouse_y)
+                self.update()
 
     def set_extension_hint(self, is_in_zone: bool):
         if is_in_zone != self._in_extension_zone:
@@ -343,8 +346,9 @@ class QRadialMenu(QWidget):
             return
         saved_opacity = p.opacity()
         # 颜色：浅色主题用主题色描边，深色主题用亮色；半透明细线
-        color = (t.extension.outline_hl if t.light
-                 else t.inner.highlight)
+        trail = getattr(t, "trail", "") or None
+        color = trail or (t.extension.outline_hl if t.light
+                          else t.inner.highlight)
         pen = QPen(QColor(color), 1.5)
         pen.setCapStyle(Qt.RoundCap)
         p.setOpacity(max(0.35, min(0.85, saved_opacity)))

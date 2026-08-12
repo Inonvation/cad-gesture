@@ -364,6 +364,8 @@ def _default_config() -> Dict[str, Any]:
             "custom_highlight": "#6fa3d8",
             "custom_bg": "#1a202b",
             "custom_hover": "#2a3a4d",
+            "custom_trail": "#6fa3d8",
+            "custom_outline": "#3a4757",
             "command_feedback": True,
             "feedback_position": "bottom_center",
             "feedback_show_name": True,
