@@ -22,6 +22,7 @@ DefaultDirName={localappdata}\Programs\CADGesture
 DisableDirPage=no
 DefaultGroupName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=assets\icon.ico
 Compression=lzma2/max
 SolidCompression=yes
 OutputDir=dist
@@ -58,6 +59,25 @@ Filename: "{app}\{#MyAppExeName}"; Description: "立即启动"; Flags: nowait po
 
 ; 卸载前终止运行中的主程序，否则 exe 被锁定删不掉（卸载残留）
 [Code]
+// 安装前自动结束运行中的主程序：解决 Restart Manager 关不掉托盘进程、
+// 导致"文件被占用"无法覆盖安装的问题（先请求正常退出，再强制兜底）
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  // 第一遍：请求正常退出，给程序保存状态的机会
+  Exec('taskkill.exe', '/IM {#MyAppExeName}', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  // 第二遍：强制结束（含子进程树），确保 exe 文件解锁可覆盖
+  Exec('taskkill.exe', '/F /T /IM {#MyAppExeName}', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  // 0=已结束；128=本来就没有该进程；其他（如 1）=权限不足等原因
+  if (ResultCode <> 0) and (ResultCode <> 128) then
+    Result := '无法自动结束正在运行的 ' + '{#MyAppExeName}' + '（错误码 ' +
+              IntToStr(ResultCode) + '）。请先手动关闭该程序后再安装。';
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ResultCode: Integer;
