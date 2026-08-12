@@ -205,6 +205,20 @@ class CADGestureApp:
                         QSystemTrayIcon.Warning, 3000)
                 except Exception:
                     pass
+            # 升级提示：版本变化时托盘提示一次（记录上次运行版本）
+            s2 = self.config.get("settings", {})
+            last_run = s2.get("last_run_version", "")
+            if last_run and last_run != __version__:
+                try:
+                    self.tray.showMessage(
+                        "CAD鼠标手势",
+                        T("已更新到 v{ver}").format(ver=__version__),
+                        QSystemTrayIcon.Information, 4000)
+                except Exception:
+                    pass
+            s2["last_run_version"] = __version__
+            save_config(self.config)
+
             # 首次运行或配置了"启动时打开此界面"则自动打开配置
             if self._is_first_run or self.config.get("settings", {}).get(
                     "open_config_on_start", False):
@@ -777,7 +791,7 @@ class CADGestureApp:
             self.log.error("更新进度更新失败: %s", e, exc_info=True)
 
     def _on_update_download_done(self, data: tuple):
-        """下载完成：确认后静默安装并退出"""
+        """下载完成：直接静默安装并退出（用户已在“发现新版本”确认过，不再二次确认）"""
         ok, dest = data
         if self._update_progress is not None:
             self._update_progress.close()
@@ -786,26 +800,26 @@ class CADGestureApp:
             self._tray_message("CAD鼠标手势", T("更新已取消"))
             return
         if not ok:
-            self._tray_message("CAD鼠标手势", T("下载失败，请检查网络后重试"),
-                               QSystemTrayIcon.Warning)
-            return
-        box = QMessageBox()
-        box.setIcon(QMessageBox.Question)
-        box.setWindowTitle(T("更新就绪"))
-        box.setText(T("更新包已下载完成。"))
-        box.setInformativeText(T("将退出程序并自动完成更新，更新完成后会重新启动。"))
-        btn_now = box.addButton(T("立即更新"), QMessageBox.AcceptRole)
-        box.addButton(T("取消"), QMessageBox.RejectRole)
-        box.exec()
-        if box.clickedButton() is not btn_now:
-            self._tray_message("CAD鼠标手势", T("已取消更新"))
+            # 下载失败用弹窗（托盘气泡可能被系统屏蔽），确保用户看到
+            try:
+                QMessageBox.warning(
+                    None, T("更新失败"),
+                    T("下载失败，请检查网络后重试"))
+            except Exception:
+                pass
             return
         from src.updater import run_installer
         if not run_installer(dest):
-            self._tray_message("CAD鼠标手势",
-                               T("启动安装程序失败，请手动运行更新包"),
-                               QSystemTrayIcon.Warning)
+            try:
+                QMessageBox.warning(
+                    None, T("更新失败"),
+                    T("启动安装程序失败，请手动运行更新包"))
+            except Exception:
+                pass
             return
+        # 安装前提示：程序即将退出，静默安装后自动启动新版
+        self._tray_message("CAD鼠标手势",
+                           T("正在安装更新，完成后自动启动"))
         self.log.info("更新流程启动，即将退出当前实例")
         self._quit()
 

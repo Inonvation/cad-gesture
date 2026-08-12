@@ -15,6 +15,7 @@ import html
 import os
 import re
 import subprocess
+import time
 import urllib.request
 
 from src.version import __version__
@@ -191,14 +192,19 @@ def run_installer(installer_path: str) -> bool:
     """以静默模式启动安装程序（不等待，调用方随后退出）
 
     参数与 cad_gesture.iss 的静默安装约定一致：
-    /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+    /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- + /LOG 写安装日志（排查时用）。
+    启动后等待短时间确认 Setup 进程已真正起来（立即退出 = 启动失败）。
     """
     try:
+        log = os.path.join(os.environ.get("TEMP", "."), "CADGesture-Setup.log")
         args = [installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES",
-                "/NORESTART", "/SP-"]
+                "/NORESTART", "/SP-", f"/LOG={log}"]
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         subprocess.Popen(args, creationflags=flags, close_fds=True,
                          stdin=None, stdout=None, stderr=None)
+        # Popen 成功即视为已启动：Setup 静默安装可能很快完成并退出，
+        # 不能用进程退出判断失败（会误判安装成功为失败）
+        time.sleep(0.5)
         return True
     except Exception:
         return False

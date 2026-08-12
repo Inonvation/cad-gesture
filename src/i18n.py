@@ -95,6 +95,23 @@ _EN: Dict[str, str] = {
     "清空": "Clear",
     "删除该扇区命令": "Delete this sector's command",
     "保存该扇区的命令修改": "Save changes to this sector",
+    "图标": "Icon",
+    "选择图标": "Choose Icon",
+    "从内置矢量图标库选择": "Pick from the built-in vector icon library",
+    "从文件选择": "From File...",
+    "选择本地图片（png/svg/ico），自动复制到应用数据目录":
+        "Pick a local image (png/svg/ico); it will be copied into the app data folder",
+    "清除图标": "Remove Icon",
+    "无": "None",
+    "搜索图标…": "Search icons...",
+    "无匹配图标": "No matching icons",
+    "选择图片文件": "Select Image File",
+    "图片文件 (*.png *.jpg *.jpeg *.bmp *.ico *.svg)":
+        "Image Files (*.png *.jpg *.jpeg *.bmp *.ico *.svg)",
+    "无法使用该图片: {msg}": "Cannot use this image: {msg}",
+    "有图标时隐藏文字标签": "Hide text label when icon is set",
+    "扇区设置了图标时只显示图标不显示文字；关闭则图标和文字同时显示。":
+        "Show only the icon (hide text) when a sector has an icon; off shows both icon and text.",
     "编辑 {layer}扇区 {idx}：点击外部关闭":
         "Editing {layer} sector {idx}: click outside to close",
     "未保存的修改": "Unsaved Changes",
@@ -229,6 +246,9 @@ _EN: Dict[str, str] = {
     "正在下载更新包... {got} KB / {total} KB":
         "Downloading update... {got} KB / {total} KB",
     "更新已取消": "Update cancelled",
+    "更新失败": "Update Failed",
+    "正在安装更新，完成后自动启动": "Installing update, will restart automatically",
+    "已更新到 v{ver}": "Updated to v{ver}",
     "下载失败，请检查网络后重试": "Download failed, check network and retry",
     "更新就绪": "Update Ready",
     "更新包已下载完成。": "Update package downloaded.",
