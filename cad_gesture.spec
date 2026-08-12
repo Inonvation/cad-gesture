@@ -85,6 +85,7 @@ a = Analysis(
         'matplotlib', 'numpy', 'scipy', 'pandas',
         'cv2', 'torch', 'tensorflow',
         'tkinter', '_tkinter',  # 程序不用 tkinter，排除可省 tcl/tk DLL
+        'win32ui', 'win32uiole',  # 未使用的 win32 MFC 绑定（省 ~5.4MB）
         'unittest', 'pydoc', 'doctest', 'pydoc_data',
         'sqlite3', 'mailbox', 'venv', 'ensurepip', 'lib2to3',
         'http.server', 'http.cookiejar',
@@ -153,6 +154,13 @@ _EXCLUDE_EXTRA = {
     "tcl86t.dll", "tk86t.dll", "tcl87t.dll", "tk87t.dll",  # tkinter 依赖
     # 注意：libcrypto-3.dll / libssl-3.dll 不能排除——Python 的 ssl 模块（_ssl.pyd）
     # 依赖它们，排除了会导致打包版 https 请求全部失败（unknown url type: https）
+    # win32ui 的 MFC 绑定（程序未使用，约 5.4MB）
+    "mfc140u.dll", "win32ui.pyd", "win32uiole.pyd",
+    # 用不到的 Qt 图片格式插件（程序资源仅 png/svg/ico，png 由 QtGui 内置）
+    "qgif.dll", "qicns.dll", "qjpeg.dll", "qpdf.dll", "qtga.dll",
+    "qtiff.dll", "qwbmp.dll", "qwebp.dll",
+    # 可选平台/渲染插件（运行时只需 qwindows；qdirect2d 删除后 Qt 回退 raster 软绘）
+    "qdirect2d.dll", "qminimal.dll", "qoffscreen.dll",
 }
 a.binaries = [b for b in a.binaries
               if _os.path.basename(b[0]) not in _EXCLUDE_EXTRA
