@@ -58,6 +58,15 @@ qt_radial_menu hover、配置两处预览共用）：
 - **Qt 坐标是逻辑像素，钩子给物理像素**：`QRadialMenu.show(x, y)` 内部用 `_to_logical` 按所在屏幕 DPI 换算，圆盘中心才对准鼠标。别直接拿钩子的 `pt.x/pt.y` 去 `move()`（DPI 缩放≠100% 时圆盘会偏移）。
 - **单实例机制**：`main.py` 开头 `ensure_single_instance()` 用命名互斥体判断，新实例会置位命名事件请求旧实例优雅退出（覆盖更新，避免多托盘图标）。app.py 主循环每 32 帧轮询 `is_exit_requested()`。启动逻辑别改坏这两处。
 
+- **PowerShell 管道会把中文弄坏（本次最大坑）**：`@'...'@ | python -` 的 here-string 传给 Python 时中文常损坏成 `?`/乱码，`$env:PYTHONUTF8='1'` 也不总是可靠。脚本/文件里出现中文时，一律改用 Node REPL（node_repl 的 js 工具）读写，或先让 Node 写 UTF-8 文件再让 Python 读取；PowerShell here-string 只适合纯 ASCII。
+- **git commit message 含中文**：绝不用 `git commit -m "中文"`（PowerShell 直传会乱码），也不要让中文经 PowerShell here-string 写进 message 文件。可靠流程：Node 写 UTF-8 message 文件 → `git commit -F <文件>`。提交后必须验证：`git cat-file commit HEAD` 看原始字节是否 UTF-8——终端显示正常不代表存对了（PowerShell 管道会把 git 输出的 UTF-8 显示成乱码假象）。验证文件内容用 Python subprocess capture 或直接读文件，别用 `git show | python` 经管道（会乱码+行尾转换）。
+- **Qt 窗口“假可见”**：Qt `isVisible()` 对隐藏/残留窗口可能返回 True，但 Win32 `IsWindowVisible(hwnd)` 为 False。判断窗口是否真正显示必须查 Win32（ctypes）：`GetWindowThreadProcessId` + `IsWindowVisible` + `IsIconic` + `GetWindowRect`。`_config_win_usable` 加了 Win32 校验才修好“配置打不开”。
+- **启动方式影响窗口显示**：`Start-Process -WindowStyle Hidden` 启动的程序，所有顶层窗口初始 Win32 隐藏（无 WS_VISIBLE），表现为“窗口打不开”。排查窗口显示问题用正常方式启动。
+- **托盘双击不可靠**：Windows 上 QSystemTrayIcon 设置 contextMenu 后，单击会自动弹菜单抢焦点，双击信号（DoubleClick）常收不到。方案：不设 contextMenu，单击(Trigger)/双击(DoubleClick)都打开功能，右键(Context)手动 `menu.popup(QCursor.pos())`。
+- **托盘图标残留**：多次覆盖启动（单实例替换）后系统托盘可能残留多个死图标，点击无反应。用户报“点了没反应”先确认点的是不是最新实例的图标，重新覆盖启动可刷新。
+- **showEvent 延迟定时器“复活”窗口**：`showEvent` 里 `QTimer.singleShot(100, ...)` 做延迟校验时，若窗口在定时器触发前被 close，回调可能把已关闭窗口重新 show。延迟回调里要判窗口仍有效（`isVisible()` 且未被 close）。
+- **已提交 message 发现乱码**：`git reset --soft <坏提交的 parent>` 把改动放回暂存区，重新 `git commit -F` 正确文件（会重写 commit hash，多人协作分支慎用）。
+
 ## 改动联动清单（一处改动，多处必须同步）
 
 | 改动内容 | 必须同步的地方 |
