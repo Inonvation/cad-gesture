@@ -112,6 +112,7 @@ class GestureEngine:
 
         self._press_pos: Tuple[int, int] = (0, 0)
         self._press_time: float = 0.0
+        self._press_dpr: float = 1.0  # 按下点所在屏 DPI（触发/松手结算统一用）
         self._is_pressed: bool = False
         self._menu_shown: bool = False
         self._in_extension_zone: bool = False
@@ -188,19 +189,18 @@ class GestureEngine:
     def sector_count(self) -> int:
         return self.config.get("settings", {}).get("sector_count", 8)
 
-    def _dpr(self) -> float:
-        """当前手势位置所在屏幕的 DPI 缩放（物理像素 → 逻辑像素）。
+    def _dpr_at(self, x: int, y: int) -> float:
+        """指定点所在屏幕的 DPI 缩放（物理像素 → 逻辑像素）。
 
-        优先按鼠标所在显示器查（混合 DPI 多屏时准确），失败回退系统 DPI，
-        再失败按 1:1 处理。
+        优先按点所在显示器查（混合 DPI 多屏时准确），失败回退系统 DPI，
+        再失败按 1:1 处理。调用方应在锁外调用（Win32 API）。
         """
         try:
             user32 = ctypes.windll.user32
-            # 鼠标所在显示器（MONITOR_DEFAULTTONEAREST = 2）
+            # 点所在显示器（MONITOR_DEFAULTTONEAREST = 2）
             user32.MonitorFromPoint.restype = wintypes.HMONITOR
             user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
-            hmon = user32.MonitorFromPoint(
-                wintypes.POINT(self._latest_pos[0], self._latest_pos[1]), 2)
+            hmon = user32.MonitorFromPoint(wintypes.POINT(x, y), 2)
             if hmon:
                 shcore = ctypes.windll.shcore
                 shcore.GetDpiForMonitor.restype = ctypes.c_long
@@ -354,32 +354,49 @@ class GestureEngine:
 
         用独立线程轮询而不是在 mousemove 回调里判定：鼠标停住后
         mousemove 不再产生，原实现会永远等不到触发（快速甩动后停住
-        必须继续滑动才出菜单）。"""
-        while True:
-            time.sleep(0.015)
-            cb = None
-            cb_args = None
-            with self._lock:
-                if not self._is_pressed or self._menu_shown:
-                    break
-                dx = self._latest_pos[0] - self._press_pos[0]
-                dy = self._latest_pos[1] - self._press_pos[1]
+        必须继续滑动才出菜单）。
+        距离换算与配置读取放在锁外（钩子线程不被 DPI/配置访问阻塞）；
+        配置值非法等异常时记录并复位状态，防止手势永久失效。
+        """
+        failed = False
+        try:
+            while True:
+                time.sleep(0.015)
+                cb = None
+                cb_args = None
+                with self._lock:
+                    if not self._is_pressed or self._menu_shown:
+                        break
+                    lx, ly = self._latest_pos
+                    px, py = self._press_pos
+                    dpr = self._press_dpr  # 按下点所在屏缩放（锁内读常量）
+                    held_ms = (time.monotonic() - self._press_time) * 1000
+                    win_type = self._window_type
                 # 钩子给物理像素：换算成逻辑像素再与触发距离比较
                 dist = physical_to_logical(
-                    math.sqrt(dx * dx + dy * dy), self._dpr())
-                held_ms = (time.monotonic() - self._press_time) * 1000
+                    math.hypot(lx - px, ly - py), dpr)
                 if should_trigger_now(dist, held_ms,
                                       self.trigger_distance,
                                       self.hold_threshold_ms):
-                    self._menu_shown = True
+                    with self._lock:
+                        self._menu_shown = True
                     cb = self.on_menu_show
-                    cb_args = (self._press_pos[0], self._press_pos[1],
-                               self._window_type)
-            if cb:
-                cb(*cb_args)
-                break
-        with self._lock:
-            self._trigger_thread = None
+                    cb_args = (px, py, win_type)
+                if cb:
+                    cb(*cb_args)
+                    break
+        except Exception as e:
+            # 配置值非法（menu_scale/sector_count 非数字等）或 API 异常：
+            # 记录并复位按压状态，避免轮询线程崩溃后手势永久失效
+            self._log(f"触发判定线程异常: {e}")
+            failed = True
+        finally:
+            with self._lock:
+                self._trigger_thread = None
+                if failed:
+                    # 异常退出时复位，防止手势卡在按下状态
+                    self._is_pressed = False
+                    self._menu_shown = False
 
     def _hook_proc(self, nCode: int, wParam: wintypes.WPARAM,
                    lParam: wintypes.LPARAM) -> ctypes.c_ssize_t:
@@ -421,10 +438,14 @@ class GestureEngine:
         if btn_down:
             win_type = self._detect_cad_window()
             if win_type:
+                # 锁外取按下点所在屏 DPI（Win32 调用）：触发判定、扩展区判定与松手
+                # 结算统一用它换算距离，跨屏混合 DPI 不偏差
+                press_dpr = self._dpr_at(x, y)
                 with self._lock:
                     self._press_pos = (x, y)
                     self._press_time = time.monotonic()
                     self._latest_pos = (x, y)
+                    self._press_dpr = press_dpr
                     self._is_pressed = True
                     self._menu_shown = False
                     self._window_type = win_type
@@ -439,7 +460,7 @@ class GestureEngine:
                     if self._menu_shown:
                         dx, dy = x - self._press_pos[0], y - self._press_pos[1]
                         dist = physical_to_logical(
-                            math.sqrt(dx * dx + dy * dy), self._dpr())
+                            math.sqrt(dx * dx + dy * dy), self._press_dpr)
                         is_ext = dist > self.outer_ring_radius
                         if is_ext != self._in_extension_zone:
                             self._in_extension_zone = is_ext
@@ -455,7 +476,7 @@ class GestureEngine:
                     dx, dy = x - self._press_pos[0], y - self._press_pos[1]
                     # 物理像素距离 → 逻辑像素，圈层/死区判定与圆盘显示一致
                     dist = physical_to_logical(
-                        math.sqrt(dx * dx + dy * dy), self._dpr())
+                        math.sqrt(dx * dx + dy * dy), self._press_dpr)
                     held_ms = (time.monotonic() - self._press_time) * 1000
                     if should_trigger_on_release(
                             self._menu_shown, dist, self.dead_zone,
