@@ -33,6 +33,9 @@ def gui(app, monkeypatch):
     w._autosave_timer.stop()
     yield w
     w.close()
+    w.deleteLater()  # 彻底销毁，避免残留窗口拖慢后续构造（setStyleSheet 工作量随窗口数膨胀）
+    from PySide6.QtCore import QEvent
+    QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
 def _profile(w):
@@ -268,7 +271,8 @@ def test_card_list_drop_reorder(app):
 def test_card_header_drag_vs_click(app):
     """卡片头：按下移动超阈值触发拖动，原地松开触发折叠（拖动与点击分离）"""
     from PySide6.QtCore import QEvent, QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtGui import QMouseEvent, QPointingDevice
+    _pdev = QPointingDevice.primaryPointingDevice()
     from src.qt_config_gui import _CardListWidget, _ProfileCard
 
     lst = _CardListWidget()
@@ -279,11 +283,11 @@ def test_card_header_drag_vs_click(app):
     lst.start_drag = lambda c: started.append(c)
 
     h = card.header
-    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(20, 15),
-                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(20, 15), QPointF(20, 15),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     h.mousePressEvent(press)
-    move = QMouseEvent(QEvent.MouseMove, QPointF(60, 15),
-                       Qt.NoButton, Qt.LeftButton, Qt.NoModifier)
+    move = QMouseEvent(QEvent.MouseMove, QPointF(60, 15), QPointF(60, 15),
+                       Qt.NoButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     h.mouseMoveEvent(move)
     assert len(started) == 1 and started[0] is card
     assert not toggled
@@ -292,11 +296,11 @@ def test_card_header_drag_vs_click(app):
     card2 = _ProfileCard("b", "B", on_toggle=None)
     toggled2 = []
     card2.header._on_toggle = lambda: toggled2.append(1)
-    press2 = QMouseEvent(QEvent.MouseButtonPress, QPointF(20, 15),
-                         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    press2 = QMouseEvent(QEvent.MouseButtonPress, QPointF(20, 15), QPointF(20, 15),
+                         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     card2.header.mousePressEvent(press2)
-    rel2 = QMouseEvent(QEvent.MouseButtonRelease, QPointF(20, 15),
-                       Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    rel2 = QMouseEvent(QEvent.MouseButtonRelease, QPointF(20, 15), QPointF(20, 15),
+                       Qt.LeftButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     card2.header.mouseReleaseEvent(rel2)
     assert toggled2 == [1]
 
@@ -306,7 +310,8 @@ def test_card_header_drag_vs_click(app):
 def test_window_pick_overlay_click_does_not_confirm(app):
     """窗口捕捉覆盖层：点击不提前确认且鼠标穿透，倒计时结束自动确认"""
     from PySide6.QtCore import QEvent, QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtGui import QMouseEvent, QPointingDevice
+    _pdev = QPointingDevice.primaryPointingDevice()
     from src.qt_config_gui import _WindowPickOverlay
 
     ov = _WindowPickOverlay()
@@ -318,8 +323,8 @@ def test_window_pick_overlay_click_does_not_confirm(app):
     # 点击穿透属性已设置（不拦截点击，用户可正常操作切换窗口）
     assert ov.testAttribute(Qt.WA_TransparentForMouseEvents)
     # 点击不提前确认
-    click = QMouseEvent(QEvent.MouseButtonPress, QPointF(100, 100),
-                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    click = QMouseEvent(QEvent.MouseButtonPress, QPointF(100, 100), QPointF(100, 100),
+                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     ov.mousePressEvent(click)
     for _ in range(3):
         app.processEvents()
