@@ -21,15 +21,7 @@ hidden_imports = [
     'win32com.client',
     'pythoncom',
     'pywintypes',
-    'ctypes',
-    'ctypes.wintypes',
-    'json',
-    'math',
-    'threading',
-    'queue',
-    'time',
-    'os',
-    'sys',
+    # 标准库（ctypes/json/math/threading/queue/time/os/sys 等）由 PyInstaller 自动收集
     # PySide6 由 PyInstaller 内置 hook 自动收集（Qt 插件/DLL）
 ]
 
@@ -156,9 +148,10 @@ _EXCLUDE_EXTRA = {
     # 依赖它们，排除了会导致打包版 https 请求全部失败（unknown url type: https）
     # win32ui 的 MFC 绑定（程序未使用，约 5.4MB）
     "mfc140u.dll", "win32ui.pyd", "win32uiole.pyd",
-    # 用不到的 Qt 图片格式插件（程序资源仅 png/svg/ico，png 由 QtGui 内置）
-    "qgif.dll", "qicns.dll", "qjpeg.dll", "qpdf.dll", "qtga.dll",
-    "qtiff.dll", "qwbmp.dll", "qwebp.dll",
+    # 用不到的 Qt 图片格式插件（png 由 QtGui 内置）
+    # 注意：qjpeg/qwebp 保留——界面允许导入 jpg/webp 图标，打包版需要解码
+    "qgif.dll", "qicns.dll", "qpdf.dll", "qtga.dll",
+    "qtiff.dll", "qwbmp.dll",
     # 可选平台/渲染插件（运行时只需 qwindows；qdirect2d 删除后 Qt 回退 raster 软绘）
     "qdirect2d.dll", "qminimal.dll", "qoffscreen.dll",
 }

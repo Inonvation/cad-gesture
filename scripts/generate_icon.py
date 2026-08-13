@@ -2,13 +2,41 @@
 
 与 Qt 圆盘菜单视觉统一：8 扇区 + 高亮扇区 + 中心高光 + 柔和投影。
 """
+import io
 import os
 import math
+import struct
 from PIL import Image, ImageDraw
 
 ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "..", "assets")
 os.makedirs(ICON_DIR, exist_ok=True)
+
+
+def _build_ico(imgs, path):
+    """手动构造多尺寸 ICO（PNG 压缩条目，Vista+ 支持）。
+
+    Pillow 12 的 ICO 保存存在回归：传 sizes + append_images 也只写出
+    第一个尺寸（16x16），托盘/任务栏大图标会糊。这里按 ICO 规范直接
+    拼 ICONDIR + 每条目 PNG 数据，保证 16~256 全尺寸入库。
+    """
+    entries = b""
+    data = b""
+    offset = 6 + 16 * len(imgs)
+    for img in imgs:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png = buf.getvalue()
+        w, h = img.size
+        entries += struct.pack(
+            "<BBBBHHII",
+            w if w < 256 else 0,
+            h if h < 256 else 0,
+            0, 0, 1, 32, len(png), offset)
+        data += png
+        offset += len(png)
+    with open(path, "wb") as f:
+        f.write(struct.pack("<HHH", 0, 1, len(imgs)) + entries + data)
 
 
 def create_layer(size: int) -> Image.Image:
@@ -61,6 +89,5 @@ sizes = [16, 32, 48, 64, 128, 256]
 layers = [create_layer(s) for s in sizes]
 
 ico_path = os.path.join(ICON_DIR, "icon.ico")
-layers[0].save(ico_path, format="ICO", sizes=[(s, s) for s in sizes],
-               append_images=layers[1:])
+_build_ico(layers, ico_path)
 print(f"OK: {ico_path}  ({os.path.getsize(ico_path)} bytes)  sizes={sizes}")

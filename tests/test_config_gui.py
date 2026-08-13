@@ -10,6 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+
+pytestmark = pytest.mark.slow  # 完整构造 QConfigGUI 较慢，verify.py 默认跳过
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 

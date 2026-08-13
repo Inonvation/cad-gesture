@@ -2,21 +2,52 @@
   "settings": {
     "version": 1,
     "hold_threshold_ms": 80,
-    "trigger_distance": 15,
-    "dead_zone_radius": 30,
-    "ring_radius": 100,
-    "outer_ring_radius": 180,
-    "ext_ring_radius": 240,
+    "trigger_distance": 10,
+    "dead_zone_radius": 24,
+    "ring_radius": 70,
+    "outer_ring_radius": 135,
+    "ext_ring_radius": 185,
+    "menu_scale": 100,
     "sector_count": 8,
+    "menu_opacity": 0.95,
     "active_profile": "AutoCAD-常用",
+    "autocad_profile": "AutoCAD-常用",
+    "zwcad_profile": "ZWCAD-常用",
     "auto_start": false,
     "auto_switch_profile": true,
     "open_config_on_start": false,
     "menu_theme": "graphite",
-    "ui_mode": "light",
     "check_update_on_start": false,
-    "update_source_url": "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest",
-    "last_update_check": ""
+    "update_source_url": "https://github.com/Inonvation/cad-gesture/releases/latest",
+    "last_update_check": "",
+    "app_order": [
+      "autocad",
+      "zwcad"
+    ],
+    "custom_targets": [],
+    "language": "zh",
+    "ui_mode": "light",
+    "trigger_button": "right",
+    "gesture_trail": true,
+    "menu_clamp_to_screen": true,
+    "menu_font_scale": 100,
+    "ui_font_scale": 100,
+    "menu_icon_scale": 100,
+    "menu_icon_hide_label": false,
+    "custom_text": "#e9edf2",
+    "custom_highlight": "#6fa3d8",
+    "custom_bg": "#1a202b",
+    "custom_hover": "#2a3a4d",
+    "custom_trail": "#6fa3d8",
+    "custom_outline": "#3a4757",
+    "command_feedback": true,
+    "feedback_position": "bottom_center",
+    "feedback_show_name": true,
+    "feedback_show_key": true,
+    "feedback_duration_ms": 1500,
+    "feedback_offset_x": 0,
+    "feedback_offset_y": 0,
+    "gesture_paused": false
   },
   "profiles": {
     "AutoCAD-常用": {
@@ -26,91 +57,108 @@
         "0": {
           "label": "直线",
           "key": "l",
-          "description": "LINE"
+          "description": "LINE",
+          "icon": "preset:line"
         },
         "1": {
           "label": "偏移",
           "key": "o",
-          "description": "OFFSET"
+          "description": "OFFSET",
+          "icon": "preset:offset"
         },
         "2": {
           "label": "复制",
           "key": "co",
-          "description": "COPY"
+          "description": "COPY",
+          "icon": "preset:copy"
         },
         "3": {
           "label": "镜像",
           "key": "mi",
-          "description": "MIRROR"
+          "description": "MIRROR",
+          "icon": "preset:mirror"
         },
         "4": {
           "label": "删除",
           "key": "e",
-          "description": "ERASE"
+          "description": "ERASE",
+          "icon": "preset:erase"
         },
         "5": {
           "label": "修剪",
           "key": "tr",
-          "description": "TRIM"
+          "description": "TRIM",
+          "icon": "preset:trim"
         },
         "6": {
           "label": "移动",
           "key": "m",
-          "description": "MOVE"
+          "description": "MOVE",
+          "icon": "preset:move"
         },
         "7": {
           "label": "圆",
           "key": "c",
-          "description": "CIRCLE"
+          "description": "CIRCLE",
+          "icon": "preset:circle"
         }
       },
       "outer_sectors": {
         "0": {
           "label": "圆弧",
           "key": "a",
-          "description": "ARC"
+          "description": "ARC",
+          "icon": "preset:arc"
         },
         "1": {
           "label": "矩形",
           "key": "rec",
-          "description": "RECTANG"
+          "description": "RECTANG",
+          "icon": "preset:rect"
         },
         "2": {
           "label": "延伸",
           "key": "ex",
-          "description": "EXTEND"
+          "description": "EXTEND",
+          "icon": "preset:extend"
         },
         "3": {
           "label": "旋转",
           "key": "ro",
-          "description": "ROTATE"
+          "description": "ROTATE",
+          "icon": "preset:rotate"
         },
         "4": {
           "label": "缩放",
           "key": "sc",
-          "description": "SCALE"
+          "description": "SCALE",
+          "icon": "preset:scale"
         },
         "5": {
           "label": "圆角",
           "key": "f",
-          "description": "FILLET"
+          "description": "FILLET",
+          "icon": "preset:fillet"
         },
         "6": {
           "label": "分解",
           "key": "x",
-          "description": "EXPLODE"
+          "description": "EXPLODE",
+          "icon": "preset:explode"
         },
         "7": {
           "label": "多段线",
           "key": "pl",
-          "description": "PLINE"
+          "description": "PLINE",
+          "icon": "preset:polyline"
         }
       },
       "extension_sectors": {
         "0": {
           "label": "构造线",
           "key": "xl",
-          "description": "XLINE"
+          "description": "XLINE",
+          "icon": "preset:xline"
         },
         "1": {
           "label": "射线",
@@ -130,22 +178,26 @@
         "4": {
           "label": "正交",
           "key": "f8",
-          "description": "ORTHO"
+          "description": "ORTHO",
+          "icon": "preset:ortho"
         },
         "5": {
           "label": "极轴",
           "key": "f10",
-          "description": "POLAR"
+          "description": "POLAR",
+          "icon": "preset:polar"
         },
         "6": {
           "label": "对象捕捉",
           "key": "f3",
-          "description": "OSNAP"
+          "description": "OSNAP",
+          "icon": "preset:osnap"
         },
         "7": {
           "label": "栅格",
           "key": "f7",
-          "description": "GRID"
+          "description": "GRID",
+          "icon": "preset:grid"
         }
       }
     },
@@ -156,64 +208,76 @@
         "0": {
           "label": "直线",
           "key": "l",
-          "description": "LINE"
+          "description": "LINE",
+          "icon": "preset:line"
         },
         "1": {
           "label": "圆",
           "key": "c",
-          "description": "CIRCLE"
+          "description": "CIRCLE",
+          "icon": "preset:circle"
         },
         "2": {
           "label": "矩形",
           "key": "rec",
-          "description": "RECTANG"
+          "description": "RECTANG",
+          "icon": "preset:rect"
         },
         "3": {
           "label": "圆弧",
           "key": "a",
-          "description": "ARC"
+          "description": "ARC",
+          "icon": "preset:arc"
         },
         "4": {
           "label": "多段线",
           "key": "pl",
-          "description": "PLINE"
+          "description": "PLINE",
+          "icon": "preset:polyline"
         },
         "5": {
           "label": "样条",
           "key": "spl",
-          "description": "SPLINE"
+          "description": "SPLINE",
+          "icon": "preset:spline"
         },
         "6": {
           "label": "椭圆",
           "key": "el",
-          "description": "ELLIPSE"
+          "description": "ELLIPSE",
+          "icon": "preset:ellipse"
         },
         "7": {
           "label": "填充",
           "key": "h",
-          "description": "BHATCH"
+          "description": "BHATCH",
+          "icon": "preset:hatch"
         }
       },
       "outer_sectors": {
         "0": {
           "label": "构造线",
           "key": "xl",
-          "description": "XLINE"
+          "description": "XLINE",
+          "icon": "preset:xline"
         },
         "1": {
           "label": "块",
           "key": "b",
-          "description": "BLOCK"
+          "description": "BLOCK",
+          "icon": "preset:block"
         },
         "2": {
           "label": "插入块",
           "key": "i",
-          "description": "INSERT"
+          "description": "INSERT",
+          "icon": "preset:insert"
         },
         "3": {
           "label": "正多边形",
           "key": "pol",
-          "description": "POLYGON"
+          "description": "POLYGON",
+          "icon": "preset:polygon"
         },
         "4": {
           "label": "圆环",
@@ -250,12 +314,14 @@
         "2": {
           "label": "正多边形",
           "key": "pol",
-          "description": "POLYGON"
+          "description": "POLYGON",
+          "icon": "preset:polygon"
         },
         "3": {
           "label": "构造线",
           "key": "xl",
-          "description": "XLINE"
+          "description": "XLINE",
+          "icon": "preset:xline"
         },
         "4": {
           "label": "射线",
@@ -291,37 +357,44 @@
         "1": {
           "label": "线性标注",
           "key": "dli",
-          "description": "DIMLINEAR"
+          "description": "DIMLINEAR",
+          "icon": "preset:dim"
         },
         "2": {
           "label": "对齐标注",
           "key": "dal",
-          "description": "DIMALIGNED"
+          "description": "DIMALIGNED",
+          "icon": "preset:dim"
         },
         "3": {
           "label": "半径标注",
           "key": "dra",
-          "description": "DIMRADIUS"
+          "description": "DIMRADIUS",
+          "icon": "preset:dim"
         },
         "4": {
           "label": "直径标注",
           "key": "ddi",
-          "description": "DIMDIAMETER"
+          "description": "DIMDIAMETER",
+          "icon": "preset:dim"
         },
         "5": {
           "label": "角度标注",
           "key": "dan",
-          "description": "DIMANGULAR"
+          "description": "DIMANGULAR",
+          "icon": "preset:dim"
         },
         "6": {
           "label": "连续标注",
           "key": "dco",
-          "description": "DIMCONTINUE"
+          "description": "DIMCONTINUE",
+          "icon": "preset:dim"
         },
         "7": {
           "label": "基线标注",
           "key": "dba",
-          "description": "DIMBASELINE"
+          "description": "DIMBASELINE",
+          "icon": "preset:dim"
         }
       },
       "outer_sectors": {
@@ -333,12 +406,14 @@
         "1": {
           "label": "圆心标记",
           "key": "dce",
-          "description": "DIMCENTER"
+          "description": "DIMCENTER",
+          "icon": "preset:dim"
         },
         "2": {
           "label": "坐标标注",
           "key": "dor",
-          "description": "DIMORDINATE"
+          "description": "DIMORDINATE",
+          "icon": "preset:dim"
         },
         "3": {
           "label": "编辑标注",
@@ -358,12 +433,14 @@
         "6": {
           "label": "文字编辑",
           "key": "ed",
-          "description": "TEXTEDIT"
+          "description": "TEXTEDIT",
+          "icon": "preset:text"
         },
         "7": {
           "label": "图层",
           "key": "la",
-          "description": "LAYER"
+          "description": "LAYER",
+          "icon": "preset:layer"
         }
       },
       "extension_sectors": {
@@ -375,12 +452,14 @@
         "1": {
           "label": "圆心标记",
           "key": "dce",
-          "description": "DIMCENTER"
+          "description": "DIMCENTER",
+          "icon": "preset:dim"
         },
         "2": {
           "label": "坐标标注",
           "key": "dor",
-          "description": "DIMORDINATE"
+          "description": "DIMORDINATE",
+          "icon": "preset:dim"
         },
         "3": {
           "label": "编辑标注",
@@ -395,12 +474,14 @@
         "5": {
           "label": "图层",
           "key": "la",
-          "description": "LAYER"
+          "description": "LAYER",
+          "icon": "preset:layer"
         },
         "6": {
           "label": "文字编辑",
           "key": "ed",
-          "description": "TEXTEDIT"
+          "description": "TEXTEDIT",
+          "icon": "preset:text"
         },
         "7": {
           "label": "选项",
@@ -426,22 +507,26 @@
         "2": {
           "label": "正交",
           "key": "f8",
-          "description": "ORTHO"
+          "description": "ORTHO",
+          "icon": "preset:ortho"
         },
         "3": {
           "label": "对象捕捉",
           "key": "f3",
-          "description": "OSNAP"
+          "description": "OSNAP",
+          "icon": "preset:osnap"
         },
         "4": {
           "label": "栅格",
           "key": "f7",
-          "description": "GRID"
+          "description": "GRID",
+          "icon": "preset:grid"
         },
         "5": {
           "label": "极轴",
           "key": "f10",
-          "description": "POLAR"
+          "description": "POLAR",
+          "icon": "preset:polar"
         },
         "6": {
           "label": "距离测量",
@@ -556,7 +641,8 @@
         "2": {
           "label": "圆",
           "key": "c",
-          "description": "CIRCLE"
+          "description": "CIRCLE",
+          "icon": "preset:circle"
         },
         "3": {
           "label": "粗糙度",
@@ -566,7 +652,8 @@
         "4": {
           "label": "标注",
           "key": "dli",
-          "description": "DIMLINEAR"
+          "description": "DIMLINEAR",
+          "icon": "preset:dim"
         },
         "5": {
           "label": "中心线",
@@ -576,12 +663,14 @@
         "6": {
           "label": "直线",
           "key": "l",
-          "description": "LINE"
+          "description": "LINE",
+          "icon": "preset:line"
         },
         "7": {
           "label": "裁剪",
           "key": "tr",
-          "description": "TRIM"
+          "description": "TRIM",
+          "icon": "preset:trim"
         }
       },
       "outer_sectors": {
@@ -603,7 +692,8 @@
         "3": {
           "label": "一键标注φ",
           "key": "ddi",
-          "description": "DIMDIAMETER"
+          "description": "DIMDIAMETER",
+          "icon": "preset:dim"
         },
         "4": {
           "label": "方向符号",
@@ -613,7 +703,8 @@
         "5": {
           "label": "剖面线",
           "key": "h",
-          "description": "BHATCH"
+          "description": "BHATCH",
+          "icon": "preset:hatch"
         },
         "6": {
           "label": "图幅",
@@ -635,84 +726,100 @@
         "0": {
           "label": "直线",
           "key": "l",
-          "description": "LINE"
+          "description": "LINE",
+          "icon": "preset:line"
         },
         "1": {
           "label": "偏移",
           "key": "o",
-          "description": "OFFSET"
+          "description": "OFFSET",
+          "icon": "preset:offset"
         },
         "2": {
           "label": "复制",
           "key": "co",
-          "description": "COPY"
+          "description": "COPY",
+          "icon": "preset:copy"
         },
         "3": {
           "label": "镜像",
           "key": "mi",
-          "description": "MIRROR"
+          "description": "MIRROR",
+          "icon": "preset:mirror"
         },
         "4": {
           "label": "删除",
           "key": "e",
-          "description": "ERASE"
+          "description": "ERASE",
+          "icon": "preset:erase"
         },
         "5": {
           "label": "修剪",
           "key": "tr",
-          "description": "TRIM"
+          "description": "TRIM",
+          "icon": "preset:trim"
         },
         "6": {
           "label": "移动",
           "key": "m",
-          "description": "MOVE"
+          "description": "MOVE",
+          "icon": "preset:move"
         },
         "7": {
           "label": "圆",
           "key": "c",
-          "description": "CIRCLE"
+          "description": "CIRCLE",
+          "icon": "preset:circle"
         }
       },
       "outer_sectors": {
         "0": {
           "label": "圆弧",
           "key": "a",
-          "description": "ARC"
+          "description": "ARC",
+          "icon": "preset:arc"
         },
         "1": {
           "label": "矩形",
           "key": "rec",
-          "description": "RECTANG"
+          "description": "RECTANG",
+          "icon": "preset:rect"
         },
         "2": {
           "label": "延伸",
           "key": "ex",
-          "description": "EXTEND"
+          "description": "EXTEND",
+          "icon": "preset:extend"
         },
         "3": {
           "label": "旋转",
           "key": "ro",
-          "description": "ROTATE"
+          "description": "ROTATE",
+          "icon": "preset:rotate"
         },
         "4": {
           "label": "缩放",
           "key": "sc",
-          "description": "SCALE"
+          "description": "SCALE",
+          "icon": "preset:scale"
         },
         "5": {
           "label": "圆角",
           "key": "f",
-          "description": "FILLET"
+          "description": "FILLET",
+          "icon": "preset:fillet"
         },
         "6": {
           "label": "分解",
           "key": "x",
-          "description": "EXPLODE"
+          "description": "EXPLODE",
+          "icon": "preset:explode"
         },
         "7": {
           "label": "多段线",
           "key": "pl",
-          "description": "PLINE"
+          "description": "PLINE",
+          "icon": "preset:polyline"
         }
       },
       "extension_sectors": {
@@ -749,7 +856,8 @@
         "6": {
           "label": "构造线",
           "key": "xl",
-          "description": "XLINE"
+          "description": "XLINE",
+          "icon": "preset:xline"
         },
         "7": {
           "label": "表格",
@@ -765,42 +873,50 @@
         "0": {
           "label": "直线",
           "key": "l",
-          "description": "LINE"
+          "description": "LINE",
+          "icon": "preset:line"
         },
         "1": {
           "label": "圆",
           "key": "c",
-          "description": "CIRCLE"
+          "description": "CIRCLE",
+          "icon": "preset:circle"
         },
         "2": {
           "label": "矩形",
           "key": "rec",
-          "description": "RECTANG"
+          "description": "RECTANG",
+          "icon": "preset:rect"
         },
         "3": {
           "label": "圆弧",
           "key": "a",
-          "description": "ARC"
+          "description": "ARC",
+          "icon": "preset:arc"
         },
         "4": {
           "label": "多段线",
           "key": "pl",
-          "description": "PLINE"
+          "description": "PLINE",
+          "icon": "preset:polyline"
         },
         "5": {
           "label": "样条",
           "key": "spl",
-          "description": "SPLINE"
+          "description": "SPLINE",
+          "icon": "preset:spline"
         },
         "6": {
           "label": "椭圆",
           "key": "el",
-          "description": "ELLIPSE"
+          "description": "ELLIPSE",
+          "icon": "preset:ellipse"
         },
         "7": {
           "label": "填充",
           "key": "h",
-          "description": "BHATCH"
+          "description": "BHATCH",
+          "icon": "preset:hatch"
         }
       },
       "outer_sectors": {
@@ -822,22 +938,26 @@
         "3": {
           "label": "构造线",
           "key": "xl",
-          "description": "XLINE"
+          "description": "XLINE",
+          "icon": "preset:xline"
         },
         "4": {
           "label": "块",
           "key": "b",
-          "description": "BLOCK"
+          "description": "BLOCK",
+          "icon": "preset:block"
         },
         "5": {
           "label": "插入块",
           "key": "i",
-          "description": "INSERT"
+          "description": "INSERT",
+          "icon": "preset:insert"
         },
         "6": {
           "label": "正多边形",
           "key": "pol",
-          "description": "POLYGON"
+          "description": "POLYGON",
+          "icon": "preset:polygon"
         },
         "7": {
           "label": "表格",
@@ -884,7 +1004,8 @@
         "7": {
           "label": "构造线",
           "key": "xl",
-          "description": "XLINE"
+          "description": "XLINE",
+          "icon": "preset:xline"
         }
       }
     },
@@ -947,7 +1068,8 @@
         "2": {
           "label": "文字标注",
           "key": "wz",
-          "description": "ZWMDIMTEXT"
+          "description": "ZWMDIMTEXT",
+          "icon": "preset:text"
         },
         "3": {
           "label": "超级符号",

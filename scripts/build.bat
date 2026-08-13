@@ -44,11 +44,11 @@ echo [3/5] 复制配置文件...
 if not exist "dist\config" (
     mkdir "dist\config"
 )
-if exist "config\config.json" (
-    copy "config\config.json" "dist\config\config.json" >nul
-    echo       已复制 config\config.json
+if exist "config\config.example.json" (
+    copy "config\config.example.json" "dist\config\config.example.json" >nul
+    echo       已复制 config\config.example.json
 ) else (
-    echo [WARNING] config\config.json 不存在，跳过复制
+    echo [WARNING] config\config.example.json 不存在，跳过复制
 )
 echo.
 
@@ -89,7 +89,7 @@ echo ========================================
 echo   输出目录: dist\
 echo   绿色版:   dist\CADGesture-v%VERSION%.zip
 echo   安装版:   dist\Setup-CADGesture-v%VERSION%.exe
-echo   配置文件: dist\config\config.json
+echo   配置文件: dist\config\config.example.json
 echo ========================================
 echo.
 echo   使用方法: 将 dist 文件夹整个复制到任意位置

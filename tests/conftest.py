@@ -12,6 +12,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 
 
+def pytest_configure(config):
+    """注册自定义 marker，避免 -m not slow 时出现未知 marker 警告"""
+    config.addinivalue_line(
+        "markers", "slow: 慢速 GUI 测试（构造完整界面），verify.py 默认跳过")
+
+
 @pytest.fixture(autouse=True)
 def isolate_config(monkeypatch, tmp_path):
     from src import config_manager

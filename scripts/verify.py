@@ -54,7 +54,9 @@ def main():
     print("       导入检查通过")
 
     print("[4/5] 单元测试...")
-    r = subprocess.run([sys.executable, "-m", "pytest", "tests/", "-q"])
+    # 默认跳过 slow 标记的慢速 GUI 测试（全量请手动跑 pytest tests/ -q）
+    r = subprocess.run([sys.executable, "-m", "pytest", "tests/", "-q",
+                        "-m", "not slow"])
     if r.returncode != 0:
         sys.exit("测试失败，请先修复")
 
