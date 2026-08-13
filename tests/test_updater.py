@@ -210,3 +210,58 @@ def test_download_network_error(tmp_path):
     with mock.patch("urllib.request.urlopen", side_effect=OSError("down")):
         assert download_update("https://example.com/setup.exe", dest, 0) is False
     assert not os.path.exists(dest)
+
+
+
+# ========== 安装程序启动（run_installer） ==========
+
+def test_run_installer_ok_when_alive():
+    """Setup 进程仍存活 → 返回 (True, "")"""
+    from src.updater import run_installer
+    proc = mock.Mock()
+    proc.poll.return_value = None
+    with mock.patch("subprocess.Popen", return_value=proc):
+        ok, reason = run_installer("C:/fake/setup.exe")
+    assert ok is True
+    assert reason == ""
+
+
+def test_run_installer_fails_on_immediate_exit():
+    """Setup 启动后立即非 0 退出 → 返回 (False, 说明)，不假装成功"""
+    from src.updater import run_installer
+    proc = mock.Mock()
+    proc.poll.return_value = 5
+    with mock.patch("subprocess.Popen", return_value=proc):
+        ok, reason = run_installer("C:/fake/setup.exe")
+    assert ok is False
+    assert "5" in reason
+
+
+def test_run_installer_popen_error():
+    from src.updater import run_installer
+    with mock.patch("subprocess.Popen", side_effect=OSError("no")):
+        ok, reason = run_installer("C:/fake/setup.exe")
+    assert ok is False
+    assert reason
+
+
+# ========== 下载大小兜底校验（expected_size 缺省时用 Content-Length） ==========
+
+def test_download_content_length_fallback_ok(tmp_path):
+    data = b"x" * 1000
+    dest = str(tmp_path / "setup.exe")
+    with mock.patch("urllib.request.urlopen",
+                    return_value=_fake_download_response(data)):
+        assert download_update("https://example.com/setup.exe", dest, 0) is True
+    assert os.path.getsize(dest) == 1000
+
+
+def test_download_content_length_fallback_mismatch(tmp_path):
+    """Content-Length 与实际下载量不符 → 判失败并清理 .part"""
+    data = b"x" * 1000
+    dest = str(tmp_path / "setup.exe")
+    with mock.patch("urllib.request.urlopen",
+                    return_value=_fake_download_response(data, content_length=2000)):
+        assert download_update("https://example.com/setup.exe", dest, 0) is False
+    assert not os.path.exists(dest)
+    assert not os.path.exists(dest + ".part")

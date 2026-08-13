@@ -118,7 +118,12 @@ def _to_releases_html_url(url: str) -> str:
 
 
 def _fetch_latest_release(html_url: str) -> tuple:
-    """请求 releases/latest 页面；返回 (tag, html)；失败返回 ("", "")"""
+    """请求 releases/latest 页面；返回 (tag, html)。
+
+    Raises:
+        UpdateError: 网络错误 / 超时（调用方据此给用户可理解的提示）。
+    页面无版本号返回 ("", "")，由调用方区分"解析失败"。
+    """
     try:
         req = urllib.request.Request(html_url,
                                      headers={"User-Agent": _USER_AGENT})
@@ -127,8 +132,10 @@ def _fetch_latest_release(html_url: str) -> tuple:
             page_html = resp.read().decode("utf-8", errors="ignore")
         m = re.search(r"/releases/tag/([^/?#]+)", final)
         return (m.group(1), page_html) if m else ("", "")
-    except Exception:
-        return "", ""
+    except Exception as e:
+        # 网络/超时与"页面无版本号"分开提示：断网时不该让用户以为软件坏了
+        raise UpdateError(
+            "检查更新失败（网络连接异常，请检查网络后重试）") from e
 
 
 def _extract_notes(page_html: str) -> str:
@@ -181,6 +188,11 @@ def download_update(url: str, dest: str, expected_size: int = 0,
         if expected_size > 0 and downloaded != expected_size:
             _safe_remove(part)
             return False
+        # expected_size 未提供时，用响应头 Content-Length 兜底校验，
+        # 防止下载被截断/被替换后"假成功"
+        if expected_size <= 0 and total > 0 and downloaded != total:
+            _safe_remove(part)
+            return False
         os.replace(part, dest)
         return True
     except Exception:
@@ -188,26 +200,33 @@ def download_update(url: str, dest: str, expected_size: int = 0,
         return False
 
 
-def run_installer(installer_path: str) -> bool:
-    """以静默模式启动安装程序（不等待，调用方随后退出）
+def run_installer(installer_path: str) -> tuple:
+    """以静默模式启动安装程序并确认其确实启动成功。
 
     参数与 cad_gesture.iss 的静默安装约定一致：
     /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- + /LOG 写安装日志（排查时用）。
-    启动后等待短时间确认 Setup 进程已真正起来（立即退出 = 启动失败）。
+
+    Returns:
+        (ok, reason)：ok=True 表示安装程序已正常启动（可能仍在安装中，
+        调用方随后退出，由 Inno Setup 接管替换）；ok=False 表示启动失败
+        或进程立即异常退出，reason 为给用户看的说明。
     """
     try:
         log = os.path.join(os.environ.get("TEMP", "."), "CADGesture-Setup.log")
         args = [installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES",
                 "/NORESTART", "/SP-", f"/LOG={log}"]
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        subprocess.Popen(args, creationflags=flags, close_fds=True,
-                         stdin=None, stdout=None, stderr=None)
-        # Popen 成功即视为已启动：Setup 静默安装可能很快完成并退出，
-        # 不能用进程退出判断失败（会误判安装成功为失败）
-        time.sleep(0.5)
-        return True
-    except Exception:
-        return False
+        proc = subprocess.Popen(args, creationflags=flags, close_fds=True,
+                                stdin=None, stdout=None, stderr=None)
+    except Exception as e:
+        return False, f"启动安装程序失败: {e}"
+    # 短暂等待确认 Setup 进程真正起来：立即退出（非 0）说明启动即失败
+    # （被拦截/参数错误），此时不能退出主进程，否则用户"程序没了也没更新"
+    time.sleep(1.5)
+    ret = proc.poll()
+    if ret is not None and ret != 0:
+        return False, f"安装程序异常退出（代码 {ret}）"
+    return True, ""
 
 
 def _safe_remove(path: str):
