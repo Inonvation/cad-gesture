@@ -1,10 +1,10 @@
 ; CAD鼠标手势 - Inno Setup 安装脚本
 ; 要求: Inno Setup 6.3+（x64compatible / CloseApplications 需要）
-; 用法: ISCC.exe /DMyAppVersion=0.0.2 cad_gesture.iss
+; 用法: ISCC.exe /DMyAppVersion=0.0.8 cad_gesture.iss
 ;       （scripts\build.bat 自动注入版本号）
 
 #ifndef MyAppVersion
-#define MyAppVersion "0.0.2"
+#define MyAppVersion "0.0.8"
 #endif
 #define MyAppName "CAD鼠标手势"
 #define MyAppExeName "CADGesture-x64.exe"

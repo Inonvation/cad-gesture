@@ -1,10 +1,12 @@
 ﻿# CADGesture 安装包（Inno Setup）+ 一键更新 实施规划
 
-> 版本：v1.0（规划稿）
+> 版本：v1.0（规划稿，已实施）
 > 日期：2026-08-09
-> 状态：✅ 已实施（2026-08-10，待发版 v0.0.3 验证端到端更新链路）
-> 更新（2026-08-12）：v0.0.7 起绿色版改为 onedir 目录压缩为 zip（启动免解压秒开），下文 onefile 描述仅作历史参考。
-> 背景：当前仅发布绿色版 onefile exe（28.7MB，双击即用）。本规划新增**安装版 Setup.exe** 与**程序内一键更新**，双形态发布。
+> 状态：✅ 已实施（2026-08-10 起随版本发布）
+> 注意：本文是**历史实施规划**，仅作存档参考，现状以 README 与代码为准：
+> - 绿色版已是 onedir 目录压缩为 zip（`dist/CADGesture-vX.Y.Z.zip`，解压运行 `CADGesture-x64.exe`），不再是 onefile exe
+> - 发布物为三件：绿色版 zip + 安装版 Setup.exe + `config.example.json`
+> 背景：规划时仅发布绿色版 onefile exe（28.7MB，双击即用）。规划新增**安装版 Setup.exe** 与**程序内一键更新**，双形态发布。
 
 ---
 
@@ -12,7 +14,7 @@
 
 | 形态 | 产物 | 用户场景 |
 |------|------|----------|
-| 绿色版（现有） | `dist\CADGesture-x64.exe` | 免安装，双击即用 |
+| 绿色版（现有） | `dist/CADGesture-vX.Y.Z.zip`（onedir 目录压缩） | 免安装，解压后运行 `CADGesture-x64.exe` |
 | 安装版（新增） | `dist\Setup-CADGesture-vX.Y.Z.exe` | 走标准安装向导，开始菜单/卸载入口 |
 | 自动更新（新增） | 程序内 `src/updater.py` | 检测新版 → 下载 Setup → 静默覆盖安装 |
 
@@ -20,7 +22,7 @@
 → 安装/覆盖/卸载都不影响配置，两种形态可无缝互换。
 
 ```
-PyInstaller onefile ──> CADGesture-x64.exe（绿色版）
+PyInstaller onedir ──> dist\CADGesture-x64\（绿色版目录压缩为 zip）
         │
         └──> Inno Setup 打包 ──> Setup-CADGesture-vX.Y.Z.exe（安装版）
                                      │
