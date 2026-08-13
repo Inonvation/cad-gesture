@@ -40,6 +40,8 @@ Thumbs.db
 
 # Test / tools
 .pytest_cache/
+.pytest_tmp/
+.pyinstaller_home/
 .reasonix/
 
 # AI 开发助手配置（本地环境相关，不随源码发布）
