@@ -76,3 +76,13 @@ def test_help_icons_follow_language():
     finally:
         i18n.set_language("zh")
         page.retranslate()
+
+
+
+def test_radius_defaults_single_source():
+    """设置页半径默认值必须与 menu_geometry 唯一来源一致"""
+    _app()
+    from src.qt_settings_panel import AppearancePage
+    from src.menu_geometry import DEFAULT_RADII
+    assert AppearancePage._RADIUS_DEFAULTS == DEFAULT_RADII
+    assert tuple(AppearancePage._RADIUS_KEYS) == tuple(DEFAULT_RADII)

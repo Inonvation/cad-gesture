@@ -77,3 +77,12 @@ def test_import_custom_icon_rejects(tmp_path):
 def test_icon_ids_assets_exist():
     for iid in ICON_IDS:
         assert os.path.isfile(preset_path(iid)), iid
+
+
+
+def test_zh_names_cover_all_icons():
+    from src.icon_library import ICON_IDS, ICON_ZH_NAMES
+    missing = [i for i in ICON_IDS if not ICON_ZH_NAMES.get(i)]
+    assert not missing, f"缺少中文别名的图标: {missing}"
+    names = [ICON_ZH_NAMES[i] for i in ICON_IDS]
+    assert len(set(names)) == len(names), "中文别名存在重复，搜索会歧义"

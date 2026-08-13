@@ -26,6 +26,19 @@ ICON_IDS = [
     "layer",
 ]
 
+# 内置图标的中文别名（id → 显示名）：图标选择器搜索与 tooltip 使用，
+# 让中文用户输入"直线/复制"等也能找到对应图标
+ICON_ZH_NAMES = {
+    "line": "直线", "polyline": "多段线", "circle": "圆", "arc": "圆弧",
+    "rect": "矩形", "ellipse": "椭圆", "spline": "样条曲线", "hatch": "填充",
+    "xline": "构造线", "polygon": "多边形", "erase": "删除", "copy": "复制",
+    "move": "移动", "offset": "偏移", "trim": "修剪", "extend": "延伸",
+    "mirror": "镜像", "rotate": "旋转", "scale": "缩放", "fillet": "圆角",
+    "explode": "分解", "block": "图块", "insert": "插入", "dim": "标注",
+    "text": "文字", "osnap": "对象捕捉", "ortho": "正交", "polar": "极轴",
+    "grid": "栅格", "layer": "图层",
+}
+
 _CACHE = {}
 _CACHE_MAX = 512
 

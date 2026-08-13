@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (QDialog, QFileDialog, QGridLayout, QHBoxLayout,
                                QScrollArea, QVBoxLayout, QWidget)
 
 from src.i18n import T
-from src.icon_library import (ICON_IDS, import_custom_icon, list_custom_icons,
-                              resolve_icon)
+from src.icon_library import (ICON_IDS, ICON_ZH_NAMES, import_custom_icon,
+                              list_custom_icons, resolve_icon)
 from src.theme import get_ui
 
 _COLS = 6
@@ -85,7 +85,8 @@ class IconPickerDialog(QDialog):
 
     def _items(self):
         """[(ref, 显示名, 是否自定义图片)]"""
-        items = [("preset:" + i, i, False) for i in ICON_IDS]
+        items = [("preset:" + i, ICON_ZH_NAMES.get(i, i), False)
+                 for i in ICON_IDS]
         items += [(ref, name, True) for ref, name in list_custom_icons()]
         return items
 
@@ -124,7 +125,9 @@ class IconPickerDialog(QDialog):
         self._tiles = []
         text = (text or "").strip().lower()
         ui = get_ui()
-        items = ([it for it in self._items() if text in it[1].lower()]
+        items = ([it for it in self._items()
+                  if text in it[1].lower()
+                  or (not it[2] and text in it[0].lower())]
                  if text else self._items())
         presets = [(it[0], it[1]) for it in items if not it[2]]
         customs = [(it[0], it[1]) for it in items if it[2]]

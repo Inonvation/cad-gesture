@@ -29,7 +29,7 @@ from src.config_manager import (save_config, get_auto_start, set_auto_start,
                                 get_config_path, set_config_dir,
                                 reset_config_dir, _default_config)
 from src.i18n import T
-from src.menu_geometry import scaled_radii
+from src.menu_geometry import scaled_radii, DEFAULT_RADII
 from src.theme import (get_ui, MENU_THEMES, make_custom_theme,
                        make_light_theme, theme_from_settings,
                        effective_ui_mode, current_ui_mode,
@@ -424,11 +424,10 @@ class _BasePage(QWidget):
 class AppearancePage(_BasePage):
     """外观与尺寸：界面模式、主题、自定义主色、不透明度、字号 + 圆盘大小/半径/屏幕内限制 + 实时预览"""
 
-    _RADIUS_KEYS = ("dead_zone_radius", "ring_radius",
-                    "outer_ring_radius", "ext_ring_radius")
+    # 半径键与默认值统一取自 menu_geometry（唯一来源，避免两处不一致）
+    _RADIUS_KEYS = tuple(DEFAULT_RADII)
     _RADIUS_GAP = 10  # 相邻圈层最小间隔（px）
-    _RADIUS_DEFAULTS = {"dead_zone_radius": 24, "ring_radius": 70,
-                        "outer_ring_radius": 135, "ext_ring_radius": 185}
+    _RADIUS_DEFAULTS = DEFAULT_RADII
 
     def __init__(self, config, parent=None):
         self.title_zh = "外观与尺寸"
@@ -1073,6 +1072,11 @@ class AboutPage(_BasePage):
         btn_home.setProperty("class", "iconBtn")
         btn_home.clicked.connect(self._open_project_home)
         home_row.addWidget(btn_home)
+        btn_log = QPushButton(T("打开日志文件"))
+        btn_log.setToolTip(T("日志文件"))
+        btn_log.clicked.connect(self._open_log_file)
+        self.register_text(btn_log, "打开日志文件")
+        home_row.addWidget(btn_log)
         home_row.addStretch(1)
         self.body.addLayout(home_row)
 
@@ -1084,6 +1088,18 @@ class AboutPage(_BasePage):
             os.startfile(_PROJECT_URL)
         except Exception:
             QMessageBox.warning(self, T("提示"), T("打开项目主页失败"))
+
+    def _open_log_file(self):
+        """打开日志文件（不存在则先创建），供排查问题时查看"""
+        try:
+            tmp = os.environ.get("TEMP", os.path.expanduser("~"))
+            path = os.path.join(tmp, "cad-gesture.log")
+            if not os.path.exists(path):
+                open(path, "a", encoding="utf-8").close()
+            os.startfile(path)
+        except Exception as e:
+            QMessageBox.warning(self, T("提示"),
+                                T("打开日志文件失败: {e}").format(e=e))
 
     def _on_lang_changed(self, idx):
         lang = self.lang_combo.itemData(idx)
