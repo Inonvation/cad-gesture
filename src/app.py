@@ -34,6 +34,10 @@ from src.version import __version__
 
 _CHECK_INTERVAL_SEC = 24 * 3600  # 启动自动检查的最小间隔
 _UPDATE_NOTES_MAX = 800
+# 更新成功的标记文件：更新流程退出前写入，新版启动时检测到即弹窗确认“已更新”，
+# 随后删除。写在 %TEMP%（与下载的安装包同目录），不落在用户配置里。
+_UPDATE_SUCCESS_MARKER = os.path.join(
+    tempfile.gettempdir(), "CADGesture-updated.txt")
 
 
 def _preload_pyautogui():
@@ -191,6 +195,9 @@ class CADGestureApp:
                 self._theme_poll_timer.start()
 
             self._init_late_done = True
+
+            # 更新成功反馈：走更新流程后新版启动，弹窗确认“已更新”（比气泡可靠）
+            QTimer.singleShot(800, self._show_update_success_if_any)
 
             # 预热 pyautogui：第一个手势的 ESC 取消/命令回退不卡顿
             try:
@@ -944,19 +951,25 @@ class CADGestureApp:
             self.log.error("更新进度更新失败: %s", e, exc_info=True)
 
     def _on_update_download_done(self, data: tuple):
-        """下载完成：直接静默安装并退出（用户已在“发现新版本”确认过，不再二次确认）"""
+        """下载完成：切到"开始安装"确认，用户确认后静默安装并退出。"""
         ok, dest = data
         dialog = getattr(self, "_update_dialog", None)
-        if dialog is not None:
+        if self._update_cancel:
+            self._update_dialog = None
             try:
-                dialog.close()
+                if dialog is not None:
+                    dialog.close()
             except Exception:
                 pass
-            self._update_dialog = None
-        if self._update_cancel:
             self._tray_message("CAD鼠标手势", T("更新已取消"))
             return
         if not ok:
+            self._update_dialog = None
+            try:
+                if dialog is not None:
+                    dialog.close()
+            except Exception:
+                pass
             # 下载失败用弹窗（托盘气泡可能被系统屏蔽），确保用户看到
             try:
                 QMessageBox.warning(
@@ -965,27 +978,91 @@ class CADGestureApp:
             except Exception:
                 pass
             return
+        # 复用弹窗切到"开始安装"确认；用户点「开始安装」后才启动安装器并退出
+        self._show_confirm_install(dest, dialog)
+        self.log.info("更新流程启动，等待用户确认后退出当前实例")
+
+    def _show_confirm_install(self, installer_path: str, dialog):
+        """切到"开始安装"确认模式：点「开始安装」→ 启动静默安装器 → 退出主进程。"""
+        try:
+            dialog.show_installing(
+                on_done=lambda: self._start_and_finish(installer_path))
+        except Exception as e:
+            self.log.error("切换安装确认模式失败: %s", e, exc_info=True)
+            # 兜底：仍按旧方式直接退出，不阻塞更新
+            self._start_and_finish(installer_path)
+            return
+        dialog.show()
+
+    def _start_and_finish(self, installer_path: str):
+        """用户点「开始安装」：先静默启动安装器并确认其正常，
+        再写更新标记并退出主进程，Inno 安装器接管。
+        顺序与旧版一致（先起安装器→再退出），避免安装器被判"应用仍在运行"卡住。
+        """
         from src.updater import run_installer
         try:
-            ok, reason = run_installer(dest)
+            ok, reason = run_installer(installer_path)
         except Exception as e:
             self.log.error("启动安装程序异常: %s", e, exc_info=True)
             ok, reason = False, str(e)
         if not ok:
+            dialog = getattr(self, "_update_dialog", None)
+            self._update_dialog = None
+            try:
+                if dialog is not None:
+                    dialog.close()
+            except Exception:
+                pass
             try:
                 QMessageBox.warning(
                     None, T("更新失败"),
                     T("启动安装程序失败，请手动运行更新包") +
-                    "\n\n" + dest +
+                    "\n\n" + installer_path +
                     (("\n" + reason) if reason else ""))
             except Exception:
                 pass
             return
-        # 安装前提示：程序即将退出，静默安装后自动启动新版
-        self._tray_message("CAD鼠标手势",
-                           T("正在安装更新，完成后自动启动"))
-        self.log.info("更新流程启动，即将退出当前实例")
+        self._write_update_success_marker(installer_path)
+        self.log.info("安装器已启动，退出当前实例以完成更新")
         self._quit()
+
+    def _write_update_success_marker(self, installer_path: str):
+        """记录“本次退出是为安装更新”，供新版启动时弹成功确认。
+
+        同时验证下载的安装包确实存在，避免误写标记导致新版误报已更新。
+        """
+        try:
+            if not os.path.exists(installer_path):
+                return
+            with open(_UPDATE_SUCCESS_MARKER, "w", encoding="utf-8") as f:
+                f.write(__version__)
+        except Exception as e:
+            self.log.error("写入更新标记失败: %s", e, exc_info=True)
+
+    def _show_update_success_if_any(self):
+        """新版启动时检测更新标记，有则弹窗确认“已更新”，随后删除标记。
+
+        比托盘气泡可靠（Windows 可能屏蔽气泡），且只有走更新流程才提示，
+        不依赖 last_run_version 差异。
+        """
+        try:
+            if not os.path.exists(_UPDATE_SUCCESS_MARKER):
+                return
+            try:
+                with open(_UPDATE_SUCCESS_MARKER, "r", encoding="utf-8") as f:
+                    ver = (f.read() or "").strip()
+            except Exception:
+                ver = ""
+            # 先删标记，再弹窗：即使用户长时间不点，下次启动也不会重复提示
+            try:
+                os.remove(_UPDATE_SUCCESS_MARKER)
+            except OSError:
+                pass
+            QMessageBox.information(
+                None, T("软件更新"),
+                T("已更新到 v{ver}，当前已运行新版本。").format(ver=ver or __version__))
+        except Exception as e:
+            self.log.error("更新成功提示失败: %s", e, exc_info=True)
 
     # ========== 退出 ==========
 

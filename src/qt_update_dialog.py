@@ -80,6 +80,7 @@ class UpdateDialog(QDialog):
         self._on_update = None
         self._on_later = None
         self._on_cancel = None
+        self._on_done = None
         self._btn_primary.clicked.connect(self._primary_clicked)
         self._btn_secondary.clicked.connect(self._secondary_clicked)
 
@@ -131,6 +132,7 @@ class UpdateDialog(QDialog):
         self._on_update = on_update
         self._on_later = on_later
         self._on_cancel = None
+        self._on_done = None
         for w in self._info_widgets:
             w.show()
         for w in self._progress_widgets:
@@ -157,6 +159,32 @@ class UpdateDialog(QDialog):
         self._on_cancel = on_cancel
         self._on_update = None
         self._on_later = None
+        self._on_done = None
+
+    def show_installing(self, on_done) -> None:
+        """安装确认：更新包已就绪，点「开始安装」退出主进程交给安装器接管。
+
+        下载完成后调用，把下载进度区替换为说明文字，原「取消」按钮变为
+        「开始安装」。点它触发 on_done（主进程内启动静默安装器并退出）。
+        """
+        self._title.setText(T("更新包已就绪"))
+        self._subtitle.setText("")
+        self._notes.setText("")
+        # 进度条转为忙碌模式（不定量动画），提示点「开始安装」后立即退出安装
+        self._progress.setRange(0, 0)
+        self._progress.setValue(0)
+        self._progress_label.setText(T("点击「开始安装」将退出程序并自动安装更新，完成后自动启动新版。"))
+        for w in self._info_widgets:
+            w.hide()
+        for w in self._progress_widgets:
+            w.show()
+        self._btn_primary.hide()
+        self._btn_secondary.setText(T("开始安装"))
+        self._btn_secondary.setFixedWidth(110)
+        self._on_done = on_done
+        self._on_cancel = None
+        self._on_update = None
+        self._on_later = None
 
     def set_progress(self, downloaded: int, total: int) -> None:
         """更新下载进度"""
@@ -179,6 +207,9 @@ class UpdateDialog(QDialog):
             self._on_update()
 
     def _secondary_clicked(self):
+        if self._on_done:
+            self._on_done()
+            return
         cb = self._on_cancel or self._on_later
         if cb:
             cb()

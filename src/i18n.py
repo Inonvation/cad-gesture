@@ -312,6 +312,16 @@ _EN: Dict[str, str] = {
     "下载失败，请检查网络后重试": "Download failed, check network and retry",
     "更新就绪": "Update Ready",
     "更新包已下载完成。": "Update package downloaded.",
+    "更新包已下载完成。\n\n将退出程序并自动完成更新，更新完成后会重新启动。":
+        "Update package downloaded.\n\nThe app will exit and finish "
+        "the update automatically, then restart.",
+    "已更新到 v{ver}，当前已运行新版本。":
+        "Updated to v{ver}; the new version is now running.",
+    "更新包已就绪": "Update Package Ready",
+    "开始安装": "Start Install",
+    "点击「开始安装」将退出程序并自动安装更新，完成后自动启动新版。":
+        "Click \"Start Install\" to quit and install the update automatically; "
+        "the new version will launch when done.",
     "将退出程序并自动完成更新，更新完成后会重新启动。":
         "The app will exit and update automatically, then restart.",
     "已取消更新": "Update cancelled",
