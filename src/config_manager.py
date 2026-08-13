@@ -175,7 +175,10 @@ def save_config(config: Dict[str, Any]) -> bool:
 def _migrate_config(config: Dict[str, Any]) -> bool:
     """兼容旧配置格式，返回是否进行了迁移"""
     migrated = False
-    settings = config.get("settings", {})
+    # 用 setdefault 而非 get：顶层缺 settings 键时必须把补全的 settings
+    # 写回 config，否则迁移写入全部落到临时空 dict 里丢失（每次启动
+    # 都重新"迁移"且应用全程跑默认值）
+    settings = config.setdefault("settings", {})
     if "version" not in settings:
         settings["version"] = 1
         migrated = True

@@ -666,6 +666,9 @@ class QConfigGUI(QMainWindow):
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.setInterval(500)
         self._autosave_timer.timeout.connect(self._do_save)
+        # 关闭标志：showEvent 里排队了延迟校验/标题栏回调，若用户在定时器
+        # 触发前关窗，这些回调不应把已关闭的窗口重新拉起（"复活窗口"坑）
+        self._closing = False
 
         self.setWindowTitle(T("CAD鼠标手势 - 配置"))
         icon_path = os.path.join(os.path.dirname(os.path.dirname(
@@ -770,11 +773,13 @@ class QConfigGUI(QMainWindow):
         set_title_bar_theme(self, current_ui_mode() == "dark")
         # 窗口完全映射后再校验几何：showEvent 阶段 frameGeometry 可能未反映
         # 恢复后的位置（拔掉副屏/分辨率变化遗留的屏幕外位置）；
-        # 同时负责把异常状态导致的隐藏窗口重新显示
+        # 同时负责把异常状态导致的隐藏窗口重新显示。
+        # 延迟回调必须判 _closing：用户在定时器触发前关窗时不重新拉起窗口
         QTimer.singleShot(100, self._validate_geometry)
         # 窗口完全显示后 DWM 属性更稳定，延迟再应用一次（覆盖显示时序问题）
         QTimer.singleShot(150,
-                          lambda: set_title_bar_theme(self, current_ui_mode() == "dark"))
+                          lambda: None if self._closing else
+                          set_title_bar_theme(self, current_ui_mode() == "dark"))
 
     def event(self, e):
         # DWM 标题栏属性在锁屏/远程桌面重连后可能丢失，窗口重新激活时重设
@@ -2204,6 +2209,10 @@ class QConfigGUI(QMainWindow):
     def _validate_geometry(self):
         """窗口映射后校验几何：屏幕外则居中并清掉坏记忆，隐藏则重新显示"""
         try:
+            # 延迟回调执行时窗口可能已被关闭（showEvent 排队 100ms），
+            # 不再把它"复活"
+            if getattr(self, "_closing", False):
+                return
             if not self._frame_intersects_any_screen():
                 self._center_on_primary()
                 # 清掉异常的位置记忆，免下次启动再恢复屏幕外位置
@@ -2219,6 +2228,7 @@ class QConfigGUI(QMainWindow):
             pass
 
     def closeEvent(self, e):
+        self._closing = True  # 阻止 showEvent 排队的延迟回调把窗口重新拉起
         # 只在窗口位于屏幕内时记忆位置；屏幕外（拔掉副屏/分辨率变化遗留）
         # 不保存，避免下次启动恢复不可见位置
         try:

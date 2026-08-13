@@ -238,7 +238,7 @@ def execute_with_cancel(key: str, cmd_name: str = "", target: str = "autocad") -
         "fallback": COM 不可用，已改用按键模拟发送
         "failed": 执行失败（无命令或按键模拟异常）
     """
-    if not key:
+    if not key and not cmd_name:
         return "failed"
 
     # COM 路径（最快，不干扰鼠标）

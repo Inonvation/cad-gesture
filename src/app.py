@@ -339,7 +339,9 @@ class CADGestureApp:
                                 if profile is None:
                                     profile = self.profile
                                 sector_cfg = get_sector_command(profile, ring_type, sector)
-                                if sector_cfg.get("key"):
+                                # 配置了命令（快捷键或 CAD 命令任一非空）就显示反馈；
+                                # 完全空扇区返回 {}，不显示也不执行
+                                if sector_cfg.get("key") or sector_cfg.get("description"):
                                     self._show_feedback(sector_cfg)
                                     self.log.info(
                                         "反馈: %s/%s扇区%d -> %s [%s]", window_type,
@@ -378,7 +380,10 @@ class CADGestureApp:
                                 key = sector_cfg.get("key", "")
                                 desc = sector_cfg.get("description", "")
                                 target = profile.get("target", "autocad")
-                                if key:
+                                # 快捷键或 CAD 命令任一非空即执行；只填 CAD 命令时
+                                # 由 command_executor 的 _send_via_com 用 cmd_name 走
+                                # COM。完全空扇区返回 {}，不触发命令
+                                if key or desc:
                                     self.log.info(
                                         "执行: %s/%s扇区%d -> %s [%s]", window_type,
                                         ring_type, sector,
@@ -432,8 +437,13 @@ class CADGestureApp:
         finally:
             if not self._quitting:
                 menu = getattr(self, "menu", None)
-                delay = 16 if (menu is not None and menu.is_visible()) else 250
-                self._timer.setInterval(delay)
+                # 异步初始化失败且未走到创建 QTimer 时（如 _apply_ui_mode /
+                # 圆盘构造早期抛异常），timer 不存在；这里判空避免 finally 里
+                # 抛 AttributeError 逃逸出 Qt 事件处理器导致应用被 abort
+                timer = getattr(self, "_timer", None)
+                if timer is not None:
+                    delay = 16 if (menu is not None and menu.is_visible()) else 250
+                    timer.setInterval(delay)
 
     # ========== 界面模式 ==========
 

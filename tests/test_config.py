@@ -161,6 +161,31 @@ def test_migrate_no_rewrite_empty_extension():
     assert migrated is False or old["profiles"]["AutoCAD-常用"]["extension_sectors"] == {}
 
 
+def test_migrate_missing_settings_key_regression():
+    """顶层缺失 settings 键时，迁移补全的 settings 必须写回 config
+
+    （回归 B2）：原来用 config.get("settings", {}) 拿到临时空 dict，
+    迁移写入全部丢失，配置永远修不好。setdefault 修复后应保留补全。
+    """
+    old = {
+        "profiles": {
+            "AutoCAD-常用": {
+                "name": "常用",
+                "sectors": {"0": {"label": "直线", "key": "l", "description": "LINE"}},
+            }
+        }
+    }
+    migrated = _migrate_config(old)
+    assert migrated
+    # settings 键必须存在且补全了 version / radius 等默认字段
+    assert isinstance(old.get("settings"), dict)
+    assert old["settings"]["version"] == 1
+    assert old["settings"]["outer_ring_radius"] == 135
+    assert "auto_switch_profile" in old["settings"]
+    # 再次调用应为幂等（不再产生新的迁移）
+    assert _migrate_config(old) is False
+
+
 def test_migrate_legacy_config(monkeypatch, tmp_path):
     """旧位置（exe/脚本旁 config/config.json）迁移到用户目录"""
     import json
