@@ -250,3 +250,33 @@ def test_aborted_flick_preserves_cad_context_menu(monkeypatch):
     _simulate_hook(eng, WM_RBUTTONUP, 105, 100)  # 只拖出 5px
     assert calls["hide"] == [False], calls["hide"]
     assert calls["gesture"] == []
+
+
+
+def _clamp_engine(settings):
+    from src.gesture_engine import GestureEngine
+    return GestureEngine(
+        config={"settings": settings},
+        on_gesture=lambda *a: None,
+        on_gesture_feedback=lambda *a: None,
+        on_menu_show=lambda *a: None,
+        on_menu_hide=lambda *a: None,
+        on_extension_hint=lambda *a: None)
+
+
+def test_trigger_distance_clamped():
+    eng = _clamp_engine({"trigger_distance": 0, "sector_count": 100})
+    assert eng.trigger_distance == 5
+    assert eng.sector_count == 24
+
+
+def test_trigger_values_invalid_fallback_defaults():
+    eng = _clamp_engine({"trigger_distance": "abc", "sector_count": None})
+    assert eng.trigger_distance == 10
+    assert eng.sector_count == 8
+
+
+def test_trigger_values_normal():
+    eng = _clamp_engine({"trigger_distance": 15, "sector_count": 8})
+    assert eng.trigger_distance == 15
+    assert eng.sector_count == 8

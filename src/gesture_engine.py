@@ -9,7 +9,7 @@ import ctypes.wintypes as wintypes
 from typing import Callable, Tuple
 
 from src.logger import get_logger
-from src.menu_geometry import menu_scale, scaled_radius
+from src.menu_geometry import RadiiMixin, _clamp_int
 
 # Win32 API常量
 WH_MOUSE_LL = 14
@@ -91,7 +91,7 @@ def should_trigger_on_release(menu_shown: bool, dist: float, dead_zone: float,
     return dist >= trigger_distance and held_ms >= hold_threshold_ms
 
 
-class GestureEngine:
+class GestureEngine(RadiiMixin):
     """鼠标手势引擎——监听右键拖拽，触发圆盘菜单和命令"""
 
     def __init__(
@@ -137,6 +137,13 @@ class GestureEngine:
         self._pending_logs: list = []
         self._pending_logs_lock = threading.Lock()
 
+        # 暂停手势：钩子继续监听但不触发任何手势（托盘可切换，状态持久化）；
+        # 启动时从配置读取，重启后保持上次的暂停状态
+        self._paused: bool = bool(
+            config.get("settings", {}).get("gesture_paused", False))
+        # 快路径（进程名）未命中前台窗口类型时，由触发轮询线程做慢路径确认
+        self._pending_win_confirm: bool = False
+
         # 设置 CallNextHookEx 参数类型（64位兼容）
         user32 = ctypes.windll.user32
         user32.CallNextHookEx.argtypes = [
@@ -159,18 +166,11 @@ class GestureEngine:
 
 
     @property
-    def menu_scale(self) -> float:
-        """整体圆盘缩放比例（50% ~ 150%，默认 100%）"""
-        return menu_scale(self.config.get("settings", {}))
-
-    @property
-    def dead_zone(self) -> int:
-        return scaled_radius(self.config.get("settings", {}), "dead_zone_radius")
-
-    @property
     def trigger_distance(self) -> int:
-        """弹出圆盘所需的拖动距离（px），独立于死区，可自定义"""
-        return self.config.get("settings", {}).get("trigger_distance", 10)
+        """弹出圆盘所需的拖动距离（px），独立于死区，可自定义（5~40）"""
+        return _clamp_int(
+            self.config.get("settings", {}).get("trigger_distance", 10),
+            10, 5, 40)
 
     @property
     def trigger_button(self) -> str:
@@ -178,20 +178,8 @@ class GestureEngine:
         return self.config.get("settings", {}).get("trigger_button", "right")
 
     @property
-    def ring_radius(self) -> int:
-        return scaled_radius(self.config.get("settings", {}), "ring_radius")
-
-    @property
-    def outer_ring_radius(self) -> int:
-        return scaled_radius(self.config.get("settings", {}), "outer_ring_radius")
-
-    @property
     def hold_threshold_ms(self) -> int:
         return self.config.get("settings", {}).get("hold_threshold_ms", 80)
-
-    @property
-    def sector_count(self) -> int:
-        return self.config.get("settings", {}).get("sector_count", 8)
 
     def _dpr_at(self, x: int, y: int) -> float:
         """指定点所在屏幕的 DPI 缩放（物理像素 → 逻辑像素）。
@@ -265,21 +253,20 @@ class GestureEngine:
         ] if isinstance(apps, list) else []
 
     def _detect_window_type(self) -> str:
-        """识别前台窗口属于哪个 target：内置 CAD 优先，再匹配自定义应用。
+        """快路径：识别前台窗口属于哪个 target（仅进程名匹配）。
 
-        内置规则（进程名最可靠）：exe 含 zwcad/标题或类名含 zwcad、中望 → zwcad；
-        exe 含 acad/标题含 autocad/类名 AFX → autocad。
-        自定义应用按 settings.custom_targets 匹配（exe 优先，标题/类名兜底）。
+        内置规则：exe 含 zwcad → zwcad；exe 含 acad → autocad；
+        自定义应用按 settings.custom_targets 的 match_exe 匹配。
+        只做进程名判断（不跨进程发消息），可在低级钩子回调内安全调用。
+        未命中返回 ""，由触发轮询线程调用 _confirm_window_type_slow
+        做标题/类名兜底——GetWindowTextW 是跨进程 WM_GETTEXT 同步调用，
+        CAD 繁忙时可能阻塞整个鼠标钩子链，不能放在钩子回调里。
         """
         now = time.monotonic()
         if now - self._window_cache[1] < 0.5:
             return self._window_cache[0]
         try:
-            user32 = ctypes.windll.user32
-            hwnd = user32.GetForegroundWindow()
-            # 进程名判断最可靠且不跨进程发消息：GetWindowTextW 是跨进程
-            # WM_GETTEXT 同步调用，CAD 繁忙时可能阻塞整个鼠标钩子链，
-            # 因此进程名命中就直接返回，标题/类名仅作兜底
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
             exe = self._foreground_exe(hwnd)
             if exe:
                 if "zwcad" in exe:
@@ -288,13 +275,22 @@ class GestureEngine:
                 if "acad" in exe:
                     self._window_cache = ("autocad", now)
                     return "autocad"
-                # 自定义应用：exe 名子串匹配
                 for app in self._custom_targets:
                     m = (app.get("match_exe") or "").strip().lower()
                     if m and m in exe:
                         t = app.get("id")
                         self._window_cache = (t, now)
                         return t
+        except Exception as e:
+            if self._debug:
+                self._log(f"窗口检测异常: {e}")
+        self._window_cache = ("", now)
+        return ""
+
+    def _confirm_window_type_slow(self, hwnd) -> str:
+        """慢路径：标题/类名兜底（轮询线程调用，跨进程消息不阻塞钩子链）"""
+        try:
+            user32 = ctypes.windll.user32
             class_name = ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, class_name, 256)
             title = ctypes.create_unicode_buffer(256)
@@ -303,28 +299,26 @@ class GestureEngine:
             self._log(f"前台窗口: title=[{ts[:60]}] class=[{cs[:40]}]")
 
             if "zwcad" in ts or "中望" in ts or "zwcad" in cs:
-                self._window_cache = ("zwcad", now)
+                self._window_cache = ("zwcad", time.monotonic())
                 return "zwcad"
 
             if "autocad" in ts:
-                self._window_cache = ("autocad", now)
+                self._window_cache = ("autocad", time.monotonic())
                 return "autocad"
 
-            # 自定义应用：窗口标题 / 类名子串匹配
             for app in self._custom_targets:
                 m = (app.get("match_title") or "").strip().lower()
                 if m and (m in ts or m in cs):
                     t = app.get("id")
-                    self._window_cache = (t, now)
+                    self._window_cache = (t, time.monotonic())
                     return t
 
             if "afx" in cs and "zwcad" not in cs:
-                self._window_cache = ("autocad", now)
+                self._window_cache = ("autocad", time.monotonic())
                 return "autocad"
         except Exception as e:
             if self._debug:
                 self._log(f"窗口检测异常: {e}")
-        self._window_cache = ("", now)
         return ""
 
     def _foreground_exe(self, hwnd) -> str:
@@ -397,6 +391,25 @@ class GestureEngine:
                 time.sleep(0.015)
                 cb = None
                 cb_args = None
+                # 慢路径窗口确认：钩子回调只做进程名匹配，标题/类名兜底放这里，
+                # GetWindowTextW 是跨进程同步调用，避免阻塞全局鼠标钩子链
+                need_confirm = False
+                with self._lock:
+                    if not self._is_pressed or self._menu_shown:
+                        break
+                    need_confirm = self._pending_win_confirm
+                if need_confirm:
+                    hwnd = ctypes.windll.user32.GetForegroundWindow()
+                    wt = self._confirm_window_type_slow(hwnd)
+                    with self._lock:
+                        if not self._is_pressed:
+                            break
+                        if not wt:
+                            # 非目标窗口：取消手势，保留原生右键菜单
+                            self._is_pressed = False
+                            break
+                        self._window_type = wt
+                        self._pending_win_confirm = False
                 with self._lock:
                     if not self._is_pressed or self._menu_shown:
                         break
@@ -454,6 +467,11 @@ class GestureEngine:
             return ctypes.windll.user32.CallNextHookEx(
                 self._hook, nCode, wParam, lParam)
 
+        # 暂停手势：钩子继续透传所有事件（不拦截），但不进入手势状态机
+        if self._paused:
+            return ctypes.windll.user32.CallNextHookEx(
+                self._hook, nCode, wParam, lParam)
+
         msll = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKEX)).contents
         x, y = msll.pt.x, msll.pt.y
 
@@ -469,20 +487,22 @@ class GestureEngine:
         btn_up = self._trigger_up(wParam, msll.mouseData)
 
         if btn_down:
+            # 快路径：仅进程名匹配（不跨进程发消息，钩子回调安全）；
+            # 未命中时由触发轮询线程做标题/类名兜底确认
             win_type = self._detect_window_type()
-            if win_type:
-                # 锁外取按下点所在屏 DPI（Win32 调用）：触发判定、扩展区判定与松手
-                # 结算统一用它换算距离，跨屏混合 DPI 不偏差
-                press_dpr = self._dpr_at(x, y)
-                with self._lock:
-                    self._press_pos = (x, y)
-                    self._press_time = time.monotonic()
-                    self._latest_pos = (x, y)
-                    self._press_dpr = press_dpr
-                    self._is_pressed = True
-                    self._menu_shown = False
-                    self._window_type = win_type
-                self._start_trigger_monitor()
+            # 锁外取按下点所在屏 DPI（Win32 调用）：触发判定、扩展区判定与松手
+            # 结算统一用它换算距离，跨屏混合 DPI 不偏差
+            press_dpr = self._dpr_at(x, y)
+            with self._lock:
+                self._press_pos = (x, y)
+                self._press_time = time.monotonic()
+                self._latest_pos = (x, y)
+                self._press_dpr = press_dpr
+                self._is_pressed = True
+                self._menu_shown = False
+                self._window_type = win_type
+                self._pending_win_confirm = not bool(win_type)
+            self._start_trigger_monitor()
 
         elif wParam == WM_MOUSEMOVE:
             with self._lock:
@@ -513,10 +533,13 @@ class GestureEngine:
                         math.sqrt(dx * dx + dy * dy), self._press_dpr)
                     held_ms = (time.monotonic() - self._press_time) * 1000
                     menu_shown = self._menu_shown
-                    if should_trigger_on_release(
-                            menu_shown, dist, self.dead_zone,
-                            self.trigger_distance, held_ms,
-                            self.hold_threshold_ms):
+                    # window_type 为空 = 快/慢路径都未确认目标窗口（如松手
+                    # 早于轮询线程完成确认），此时不结算命令，保留原生右键
+                    if (self._window_type
+                            and should_trigger_on_release(
+                                menu_shown, dist, self.dead_zone,
+                                self.trigger_distance, held_ms,
+                                self.hold_threshold_ms)):
                         callback = self.on_gesture
                         callback_args = self._resolve_gesture(dx, dy, dist)
                     # 仅在实际手势交互（圆盘已弹出或有手势触发）时才取消 CAD
@@ -571,6 +594,19 @@ class GestureEngine:
             self._is_pressed = False
             self._menu_shown = False
             self._in_extension_zone = False
+
+    def set_paused(self, paused: bool):
+        """暂停/恢复手势：暂停时钩子继续透传事件（不拦截），保留原生右键。
+
+        复位进行中的按压状态，避免恢复后卡在上一个手势里。
+        """
+        paused = bool(paused)
+        with self._lock:
+            self._paused = paused
+            if paused:
+                self._is_pressed = False
+                self._menu_shown = False
+                self._in_extension_zone = False
 
     def start(self) -> bool:
         """启动鼠标钩子，返回钩子是否安装成功"""
@@ -640,3 +676,10 @@ class GestureEngine:
     def update_config(self, config: dict):
         self.config = config
         self._load_custom_targets()
+        # 同步暂停状态（配置可能在配置界面/托盘被修改）
+        with self._lock:
+            self._paused = bool(
+                config.get("settings", {}).get("gesture_paused", False))
+            if self._paused:
+                self._is_pressed = False
+                self._menu_shown = False

@@ -17,7 +17,7 @@ from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent, QMimeData,
                             QVariantAnimation)
 from PySide6.QtGui import (QColor, QCursor, QDrag, QFont, QIcon, QPainter, QPen,
                            QPixmap, QKeySequence, QMouseEvent, QShortcut)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QDialog,
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog,
                                QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView,
                                QInputDialog, QLabel, QLineEdit, QListWidget,

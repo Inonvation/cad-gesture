@@ -75,3 +75,13 @@ def test_preview_uses_real_radii():
     # 自适应缩放后最外圈像素半径落在窗口内
     preview.resize(400, 400)
     assert 0 < preview.outermost_radius_px() <= 200
+
+
+
+def test_clamp_int():
+    from src.menu_geometry import _clamp_int
+    assert _clamp_int("abc", 10, 5, 40) == 10
+    assert _clamp_int(None, 10, 5, 40) == 10
+    assert _clamp_int(0, 10, 5, 40) == 5
+    assert _clamp_int(100, 10, 5, 40) == 40
+    assert _clamp_int(20, 10, 5, 40) == 20

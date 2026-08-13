@@ -46,3 +46,47 @@ def scaled_radius(settings: dict, key: str) -> int:
 def scaled_radii(settings: dict) -> dict:
     """一次取回四个半径（键同 DEFAULT_RADII）"""
     return {k: scaled_radius(settings, k) for k in _RADIUS_KEYS}
+
+
+def _clamp_int(value, default: int, lo: int, hi: int) -> int:
+    """把配置值夹紧到 [lo, hi]；非法类型回退默认值。
+
+    配置可能被用户手改为字符串/负数/超大值，读取处统一容错，
+    避免 trigger_distance=0 破坏普通右键、sector_count 过大拖垮绘制。
+    """
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        v = default
+    return max(lo, min(hi, v))
+
+
+class RadiiMixin:
+    """圆盘几何公共属性：运行时菜单与手势引擎共用 menu_geometry 取值。
+
+    半径/缩放/扇区数量的唯一来源是 menu_geometry；此处只做"从配置读取 +
+    夹紧"，避免各模块各写一份导致显示与判定不一致。依赖 self.config。
+    """
+
+    @property
+    def menu_scale(self) -> float:
+        return menu_scale(self.config.get("settings", {}))
+
+    @property
+    def dead_zone(self) -> int:
+        return scaled_radius(self.config.get("settings", {}), "dead_zone_radius")
+
+    @property
+    def ring_radius(self) -> int:
+        return scaled_radius(self.config.get("settings", {}), "ring_radius")
+
+    @property
+    def outer_ring_radius(self) -> int:
+        return scaled_radius(self.config.get("settings", {}), "outer_ring_radius")
+
+    @property
+    def sector_count(self) -> int:
+        """扇区数量（4~24，防止手改超大值拖垮绘制）"""
+        return _clamp_int(
+            self.config.get("settings", {}).get("sector_count", 8),
+            8, 4, 24)

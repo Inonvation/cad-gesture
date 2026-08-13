@@ -22,13 +22,13 @@ from PySide6.QtWidgets import QWidget
 
 from src.gesture_engine import calc_sector
 from src.i18n import T
-from src.menu_geometry import menu_scale, scaled_radius
+from src.menu_geometry import scaled_radius, RadiiMixin
 from src.theme import theme_from_settings
 from src.qt_renderer import (INNER, OUTER, EXTENSION, draw_shadow, draw_ring,
                              draw_center)
 
 
-class QRadialMenu(QWidget):
+class QRadialMenu(RadiiMixin, QWidget):
     """径向圆盘菜单——Fluent 风格三层扇形选择面板（Qt 实现，含动画）"""
 
     def __init__(self, config: dict, on_cancel=None):
@@ -83,29 +83,8 @@ class QRadialMenu(QWidget):
         self._shadow_pm = None  # 尺寸变化后投影缓存失效
 
     @property
-    def menu_scale(self) -> float:
-        """整体圆盘缩放比例（50% ~ 150%，默认 100%）"""
-        return menu_scale(self.config.get("settings", {}))
-
-    @property
-    def ring_radius(self) -> int:
-        return scaled_radius(self.config.get("settings", {}), "ring_radius")
-
-    @property
-    def outer_ring_radius(self) -> int:
-        return scaled_radius(self.config.get("settings", {}), "outer_ring_radius")
-
-    @property
     def ext_ring_radius(self) -> int:
         return scaled_radius(self.config.get("settings", {}), "ext_ring_radius")
-
-    @property
-    def sector_count(self) -> int:
-        return self.config.get("settings", {}).get("sector_count", 8)
-
-    @property
-    def dead_zone(self) -> int:
-        return scaled_radius(self.config.get("settings", {}), "dead_zone_radius")
 
     @property
     def menu_opacity(self) -> float:

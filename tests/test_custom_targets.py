@@ -183,7 +183,28 @@ def test_detect_window_type_custom_title(monkeypatch):
         buf.value = "SolidWorks - Part1"
     monkeypatch.setattr(ctypes.windll.user32, "GetClassNameW", fake_class)
     monkeypatch.setattr(ctypes.windll.user32, "GetWindowTextW", fake_title)
-    assert eng._detect_window_type() == "app_sldworks"
+    # 快路径（进程名）未命中返回空串，由慢路径（标题/类名）兜底确认
+    assert eng._detect_window_type() == ""
+    assert eng._confirm_window_type_slow(0) == "app_sldworks"
+
+
+def test_detect_window_type_slow_no_match(monkeypatch):
+    """慢路径（标题/类名）也无匹配时返回空串，不误判为 CAD"""
+    eng = _make_engine(monkeypatch, [
+        {"id": "app_sldworks", "name": "SolidWorks",
+         "match_exe": "", "match_title": "solidworks"},
+    ])
+    eng._foreground_exe = lambda hwnd: ""
+
+    def fake_class(hwnd, buf, n):
+        buf.value = "NotepadFrame"
+
+    def fake_title(hwnd, buf, n):
+        buf.value = "Untitled - Notepad"
+    monkeypatch.setattr(ctypes.windll.user32, "GetClassNameW", fake_class)
+    monkeypatch.setattr(ctypes.windll.user32, "GetWindowTextW", fake_title)
+    assert eng._detect_window_type() == ""
+    assert eng._confirm_window_type_slow(0) == ""
 
 
 def test_detect_window_type_builtin_priority(monkeypatch):
