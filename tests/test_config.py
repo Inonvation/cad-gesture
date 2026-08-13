@@ -312,3 +312,16 @@ def test_migrate_adds_icon_hide_setting():
     assert _migrate_config(cfg)
     assert cfg["settings"]["menu_icon_hide_label"] is False
     assert cfg["settings"]["menu_icon_scale"] == 100
+
+
+def test_migrate_adds_all_default_settings_keys():
+    """迁移必须补齐 _default_config 的全部 settings 键（防联动清单漏项）"""
+    old = {"settings": {"version": 1}, "profiles": {}}
+    _migrate_config(old)
+    defaults = _default_config().get("settings", {})
+    missing = [k for k in defaults if k not in old["settings"]]
+    assert not missing, f"迁移后仍缺失 settings 键: {missing}"
+    # 本次修复重点核对：这 6 个键必须补齐且值与默认一致
+    for key in ("active_profile", "dead_zone_radius", "ring_radius",
+                "hold_threshold_ms", "sector_count", "gesture_paused"):
+        assert old["settings"][key] == defaults[key]

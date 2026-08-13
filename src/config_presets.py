@@ -458,7 +458,8 @@ def _default_config() -> Dict[str, Any]:
             "feedback_show_key": True,
             "feedback_duration_ms": 1500,
             "feedback_offset_x": 0,
-            "feedback_offset_y": 0
+            "feedback_offset_y": 0,
+            "gesture_paused": False
         },
         "profiles": {
             "AutoCAD-常用": {

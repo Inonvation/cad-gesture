@@ -611,6 +611,13 @@ class CADGestureApp:
         add_profile_actions(other_profiles)
 
         menu.addSeparator()
+        act_pause = QAction(T("暂停手势"), menu)
+        act_pause.setCheckable(True)
+        act_pause.setChecked(bool(
+            self.config.get("settings", {}).get("gesture_paused", False)))
+        act_pause.setToolTip(T("暂停后 CAD 内长按右键恢复原生菜单，手势不触发"))
+        act_pause.triggered.connect(self._toggle_pause)
+        menu.addAction(act_pause)
         act_cfg = QAction(T("配置"), menu)
         act_cfg.triggered.connect(lambda _=False: self._open_config())
         menu.addAction(act_cfg)
@@ -643,6 +650,24 @@ class CADGestureApp:
                 pass
         except Exception as e:
             self.log.error("切换方案失败: %s", e, exc_info=True)
+
+    def _toggle_pause(self, checked: bool):
+        """托盘切换"暂停手势"：同步引擎与配置（状态持久化，重启仍生效）"""
+        try:
+            s = self.config.setdefault("settings", {})
+            s["gesture_paused"] = bool(checked)
+            engine = getattr(self, "gesture_engine", None)
+            if engine is not None:
+                engine.set_paused(bool(checked))
+            save_config(self.config)
+            self._tray_message(
+                "CAD鼠标手势",
+                T("手势已暂停，长按右键恢复原生菜单") if checked
+                else T("手势已恢复"))
+            # 语言/状态变化后重建菜单，保证勾选状态与引擎一致
+            self._rebuild_tray()
+        except Exception as e:
+            self.log.error("切换暂停手势失败: %s", e, exc_info=True)
 
     def _open_config(self):
         """打开配置界面（Qt 版，独立窗口；延迟 import 避免启动加载整个界面链）
@@ -826,9 +851,7 @@ class CADGestureApp:
                 try:
                     QMessageBox.warning(
                         None, T("检查更新"),
-                        data.get("error", T("检查更新")) +
-                        "\n\n" + T("提示：GitHub 接口有限频（约 60 次/小时），"
-                                  "如提示 403 请稍后再试"))
+                        data.get("error") or T("检查更新失败"))
                 except Exception as e:
                     self.log.error("提示弹窗失败: %s", e, exc_info=True)
             else:
@@ -933,11 +956,18 @@ class CADGestureApp:
                 pass
             return
         from src.updater import run_installer
-        if not run_installer(dest):
+        try:
+            ok, reason = run_installer(dest)
+        except Exception as e:
+            self.log.error("启动安装程序异常: %s", e, exc_info=True)
+            ok, reason = False, str(e)
+        if not ok:
             try:
                 QMessageBox.warning(
                     None, T("更新失败"),
-                    T("启动安装程序失败，请手动运行更新包"))
+                    T("启动安装程序失败，请手动运行更新包") +
+                    "\n\n" + dest +
+                    (("\n" + reason) if reason else ""))
             except Exception:
                 pass
             return

@@ -317,17 +317,27 @@ _EN: Dict[str, str] = {
     "已取消更新": "Update cancelled",
     "启动安装程序失败，请手动运行更新包":
         "Failed to start installer, please run the update package manually",
+    "暂停手势": "Pause Gestures",
+    "暂停后 CAD 内长按右键恢复原生菜单，手势不触发":
+        "Paused: right-click in CAD returns to native menu, gestures off",
+    "手势已暂停，长按右键恢复原生菜单":
+        "Gestures paused, right-click returns to native menu",
+    "手势已恢复": "Gestures resumed",
     "鼠标钩子安装失败，手势将不可用":
         "Mouse hook install failed, gestures unavailable",
     "已是最新版本（v{ver}）": "Already up to date (v{ver})",
+    "检查更新失败": "Update check failed",
+    "检查更新失败（网络连接异常，请检查网络后重试）":
+        "Update check failed (network error, please check connection and retry)",
     "检查更新": "Check for Updates",
     "项目主页": "Project Homepage",
     "打开项目主页": "Open Project Homepage",
     "打开项目主页失败": "Failed to open project homepage",
+    "打开日志文件": "Open Log File",
+    "日志文件": "Log File",
+    "打开日志文件失败: {e}": "Failed to open log file: {e}",
     "初始化失败，部分功能不可用": "Initialization failed, some features unavailable",
     "访问 GitHub 项目主页，查看源码、文档与更新": "Visit the GitHub project homepage for source code, docs, and updates",
-    "提示：GitHub 接口有限频（约 60 次/小时），如提示 403 请稍后再试":
-        "Note: GitHub API rate-limited (~60/hour); if 403 shown, try again later",
     "无": "None",
     "应用": "Apply",
     "关闭": "Close",

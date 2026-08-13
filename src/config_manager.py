@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import copy
+import time
 import winreg
 from typing import Dict, Any, Optional, List
 
@@ -57,6 +58,11 @@ CONFIG_FILE = get_config_path()
 
 # 内置目标软件（不允许删除，固定存在）
 BUILTIN_TARGETS = ("autocad", "zwcad")
+
+# 自动补绑方案时的写盘节流：{window_type: 上次落盘时间}，
+# 避免手势事件在主线程高频触发"备份+写盘+原子替换"造成卡顿
+_bind_save_ts: Dict[str, float] = {}
+_BIND_SAVE_INTERVAL = 5.0  # 同 target 至少间隔 5 秒写一次
 
 
 def set_config_dir(path: str) -> str:
@@ -297,6 +303,14 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
     if "feedback_offset_y" not in settings:
         settings["feedback_offset_y"] = 0
         migrated = True
+    # 补齐历史版本遗漏的 settings 键（默认值与 _default_config 保持一致，
+    # 避免旧配置升级后这些键缺失，各读取点只能靠兜底默认值）
+    _defaults_settings = _default_config().get("settings", {})
+    for _k in ("active_profile", "dead_zone_radius", "ring_radius",
+               "hold_threshold_ms", "sector_count", "gesture_paused"):
+        if _k not in settings:
+            settings[_k] = _defaults_settings.get(_k)
+            migrated = True
     # 为旧配置中的 profile 添加 target、outer_sectors 和 extension_sectors
     # 记录哪些 profile 原本缺少 extension_sectors 字段（区分"旧配置缺失"与"用户主动清空"）
     missing_ext = set()
@@ -376,10 +390,15 @@ def get_profile_for_window(config: Dict[str, Any], window_type: str) -> Optional
     # 2. 该 target 下第一个方案（向后兼容旧行为）
     for name, profile in config.get("profiles", {}).items():
         if profile.get("target", "") == window_type:
-            # 绑定字段为空时自动补全并落盘，避免内存态与磁盘态不一致
+            # 绑定字段为空时自动补全并落盘，避免内存态与磁盘态不一致。
+            # 手势事件可能高频触发（每次右键），同 target 5 秒内只写一次，
+            # 避免主线程反复"备份+写盘+原子替换"造成可感知卡顿
             if not settings.get(f"{window_type}_profile"):
                 settings[f"{window_type}_profile"] = name
-                save_config(config)
+                _now = time.monotonic()
+                if _now - _bind_save_ts.get(window_type, 0.0) >= _BIND_SAVE_INTERVAL:
+                    _bind_save_ts[window_type] = _now
+                    save_config(config)
             return profile
 
     # 3. 无匹配，返回当前 active
