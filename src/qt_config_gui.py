@@ -12,7 +12,7 @@ import math
 import os
 from datetime import datetime
 
-from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent,
+from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent, QMimeData,
                             QPoint, QPointF, QRect, QSettings, QSize, Qt, QTimer,
                             QVariantAnimation)
 from PySide6.QtGui import (QColor, QCursor, QDrag, QFont, QIcon, QPainter, QPen,
@@ -536,7 +536,7 @@ class _ProfileCard(QFrame):
             lambda _=False, n=name: on_click(n))
         btn.setContextMenuPolicy(Qt.CustomContextMenu)
         btn.customContextMenuRequested.connect(
-            lambda pos, n=name: on_menu(n, pos))
+            lambda pos, n=name, b=btn: on_menu(n, pos, b))
         self._body_lay.addWidget(btn)
         self._row_btns.append(btn)
         return btn
@@ -761,8 +761,12 @@ class QConfigGUI(QMainWindow):
         super().showEvent(e)
         # 记忆上次关闭时的窗口位置/大小（QSettings 存注册表，不污染配置文件）
         geo = QSettings("CADGesture", "CADGesture").value("config_win_geometry")
-        if geo is not None:
-            self.restoreGeometry(geo)
+        if geo is not None and not self.restoreGeometry(geo):
+            # 旧数据无效（跨 Qt 版本/分辨率变化遗留）：清掉，避免每次启动反复尝试恢复
+            try:
+                QSettings("CADGesture", "CADGesture").remove("config_win_geometry")
+            except Exception:
+                pass
         set_title_bar_theme(self, current_ui_mode() == "dark")
         # 窗口完全映射后再校验几何：showEvent 阶段 frameGeometry 可能未反映
         # 恢复后的位置（拔掉副屏/分辨率变化遗留的屏幕外位置）；
@@ -1057,13 +1061,20 @@ class QConfigGUI(QMainWindow):
         menu.addAction(T("导出方案"), self._export_profile)
         return menu
 
-    def _show_profile_row_menu(self, name: str, pos):
+    def _show_profile_row_menu(self, name: str, pos, btn=None):
         """方案行右键：先切到该方案再显示方案菜单"""
         self.current_profile = name
         target = self.config.get("profiles", {}).get(
             name, {}).get("target", "")
         menu = self._build_profile_menu(target)
-        btn = self.sender()
+        # customContextMenuRequested 的 sender() 在 PySide6 下可能返回 None，
+        # 按钮由 add_row 的 lambda 直接传入；拿不到时兜底从光标位置弹出
+        if btn is None:
+            btn = self.sender()
+        if btn is None:
+            from PySide6.QtGui import QCursor
+            menu.exec(QCursor.pos())
+            return
         menu.exec(btn.mapToGlobal(pos))
 
     def _set_profile_binding(self, target: str):
