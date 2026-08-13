@@ -23,11 +23,11 @@ src/
 ├── qt_radial_menu.py   # [核心] Qt 透明悬浮圆盘菜单（三层绘制 + 淡入/高亮动画）
 ├── menu_geometry.py    # 圆盘半径/缩放唯一来源（运行时菜单、手势引擎、两处预览共用）
 ├── qt_renderer.py      # 共享 Qt 圆盘绘制（qt_radial_menu 运行时 与 qt_config_gui/qt_settings_panel 预览共用）
-├── theme.py            # 界面配色 + 8 套圆盘外观主题（+ 自定义主色）
+├── theme.py            # 界面配色 + 5 套圆盘外观主题（+ 自定义主色）
 ├── command_executor.py # COM SendCommand + pyautogui 回退
 ├── config_manager.py   # JSON 配置读写 + Profile管理 + 自动迁移
 ├── config_presets.py   # 预设命令库 + 默认配置
-├── qt_config_gui.py    # Qt 配置界面（三栏 + 撤销重做 + 右键放置 + Delete 删除）
+├── qt_config_gui.py    # Qt 配置界面（导航式 + 撤销重做 + 方案拖放排序 + Delete 删除）
 ├── qt_popup.py         # 扇区编辑浮层控制器（定位/信号接线，定位算法可单测）
 ├── qt_profile_ops.py   # 方案增删改查/导入导出的纯函数（无 Qt，可单测）
 ├── updater.py          # 自动更新（版本比对/检查/下载/静默安装，纯逻辑无 Qt）
@@ -35,7 +35,7 @@ src/
 └── single_instance.py  # 命名互斥体单实例 + 覆盖更新
 ```
 
-事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 200ms）。
+事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 250ms）。
 每个事件包裹 `try-except`，防止单次错误崩溃整个队列循环。
 更新流程同模式：后台线程检查/下载 → 结果经 event_queue（`update_check_result` / `update_progress` / `update_download_done`）→ 主线程弹窗。
 启动流程：`run()` 先出托盘图标，QSS/圆盘/引擎/钩子在事件循环内由 `_init_late` 异步完成（`singleShot(0)` 排队）；配置界面、updater、pyautogui 均为延迟加载，启动只加载运行时必需模块。
@@ -71,7 +71,7 @@ qt_radial_menu hover、配置两处预览共用）：
 
 | 改动内容 | 必须同步的地方 |
 |---------|---------------|
-| 圆盘配色/主题 | `theme.py` 的 `MENU_THEMES`（8 套 + 自定义，配置界面主题下拉自动读取） |
+| 圆盘配色/主题 | `theme.py` 的 `MENU_THEMES`（5 套 + 自定义，配置界面主题下拉自动读取） |
 | 字体/标签位置/扇区绘制 | `qt_renderer.py`（`qt_radial_menu` 运行时、`qt_config_gui` 编辑预览、`qt_settings_panel` 尺寸预览共用，三处必须一致） |
 | 新增 `settings` 配置项 | `config_presets._default_config` + `config_manager._migrate_config`（迁移补字段） + 需要时 `qt_config_gui`/`qt_radial_menu`/`gesture_engine`/`app.py`；半径/缩放类同时改 `menu_geometry.py` |
 | 发版改版本号 | `version.txt` 4 处（filevers/prodvers/FileVersion/ProductVersion） + `src/version.py` 的 `__version__`（共 5 处，`.iss` 由 build.bat 自动注入） |
@@ -159,7 +159,7 @@ dist\CADGesture-x64\CADGesture-x64.exe
 - COM 发送前自动切换英文输入法：`PostMessage(WM_INPUTLANGCHANGEREQUEST)`
 - 钩子线程退出：`stop()` 发 `PostThreadMessageW(WM_QUIT)`
 - 事件队列格式：`("show", (x, y, window_type))` 元组嵌套
-- **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（8 套：azure/emerald/crimson/midnight/aurora/graphite/amber/mono + 自定义主色），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和两处预览共用，改动必须三处一致）。
+- **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（5 套：graphite/azure/emerald/crimson/midnight + 自定义主色），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和两处预览共用，改动必须三处一致）。
 - **圆盘几何**：半径/缩放统一从 `menu_geometry.py` 取（`DEFAULT_RADII` + `menu_scale`），不要在各模块里各自写死半径默认值。
 - **配置自动迁移**：`config_manager._migrate_config` 自动补旧配置字段；空的 `extension_sectors` 会从默认配置按 target+name 自动补全。
 - **自动更新**：检查/下载放后台线程，结果经 event_queue 回主线程（`update_check_result`/`update_progress`/`update_download_done`），Qt 控件只在主线程操作。下载到 `%TEMP%\CADGesture-Setup.exe` 后经 `run_installer` 静默安装（`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`），主进程随即退出，Inno 的 `CloseApplications` 兜底关进程。静默安装后新版自动启动已验证（[Run] 用 `nowait` 不带 `skipifsilent`）。
@@ -178,8 +178,8 @@ dist\CADGesture-x64\CADGesture-x64.exe
 ## 配置结构
 
 `%APPDATA%\CADGesture\config.json` — `settings` + `profiles`（与 exe 位置无关，用户可编辑；旧版 `config/config.json` 仅用于首次迁移）。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
-字段：`description` = COM 命令名，`key` = pyautogui 回退键，`target` = `autocad`|`zwcad`。
-`settings` 关键项：`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 true）、`update_source_url`（更新源，默认 GitHub API）、`last_update_check`（上次检查时间，24h 频率控制）。
+字段：`description` = COM 命令名，`key` = pyautogui 回退键（自定义应用只走按键模拟），`target` = `autocad`|`zwcad` 或自定义应用 id（`app_xxx`）。
+`settings` 关键项：`app_order`（卡片显示顺序，内置 autocad/zwcad 在前）、`custom_targets`（自定义应用列表：`id`/`name`/`match_exe`/`match_title`）、`autocad_profile`/`zwcad_profile`/`{target}_profile`（各应用当前方案绑定）、`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 false）、`update_source_url`（更新源，默认 GitHub Release 页面）、`last_update_check`（上次检查时间，24h 频率控制）。
 
 ## 提交规范
 
