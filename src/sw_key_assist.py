@@ -78,6 +78,10 @@ _TEXT_EDIT_HINTS = ("combobox", "editbox", "textbox", "inputbox",
 # 绘图区视口类名线索（来自 SW 2024 真机实录：AfxFrameOrView140u / GXWND）
 _VIEW_CLASS_HINTS = ("afxframeorview", "gxwnd", "sldworksview", "swview")
 
+# IME 组合窗口类名线索（各输入法实现略有差异，取交集）
+_IME_CLASS_HINTS = ("ime", "ctfime", "msctfime", "TextInputHost",
+                    "imm32")
+
 # MFC 自定义窗口需覆盖框架客户区多大比例才认定为「视口」而不是对话框里的控件
 VIEW_COVERAGE_MIN = 0.5
 
@@ -160,14 +164,30 @@ def build_key_lparam(vk: int, is_keyup: bool, use_scan: bool = True) -> int:
 
 def classify_focus(class_name: str, caret_present: bool = False,
                    focus_is_frame: bool = False, coverage: float = 0.0,
-                   extra_hints: Iterable[str] = ()) -> str:
+                   extra_hints: Iterable[str] = (),
+                   ime_focus: bool = False) -> str:
     """把当前焦点分类为 "text" / "view" / "unknown"。
 
     判定顺序即优先级：先认「文本输入」，再认「绘图区视口」，最后兜底 unknown。
     unknown 的语义是**放行**（保守），由调用方决定是否记录待补白名单。
+
+    `ime_focus=True` 表示焦点实际落在 IME 组合窗口上（中文输入法抢走了
+    hwndFocus）；此时不应因 caret 误判为文本输入，转入视口/兜底判定。
     """
-    if caret_present:
+    if caret_present and not ime_focus:
         return "text"
+    if ime_focus:
+        # 焦点在 IME 组合窗口上：跳过全部文本类判定（类名/词干可能巧合匹配），
+        # 直接走视口/兜底 —— 避免"快捷键变拼音"。
+        n_ime = (class_name or "").strip().lower()
+        for hint in _VIEW_CLASS_HINTS:
+            if hint in n_ime:
+                return "view"
+        for hint in extra_hints:
+            h = (hint or "").strip().lower()
+            if h and h in n_ime:
+                return "view"
+        return "unknown"
     n = (class_name or "").strip().lower()
     if not n:
         return "unknown"
@@ -203,6 +223,8 @@ class Snap(NamedTuple):
     focus_kind: str = "unknown"
     focus_class: str = ""
     composing: bool = False   # 正在拼音组合（best-effort：跨进程常读不到）
+    ime_focus: bool = False   # 焦点实际在 IME 组合窗口上（caret 被 IME 抢走）
+    pm_edit: bool = False     # 焦点在 PropertyManager 的参数输入框上
     elevated_blocked: bool = False
     delivery_broken: bool = False
     keyset: frozenset = frozenset()
@@ -231,7 +253,15 @@ def should_intercept(vk: int, is_keyup: bool, snap: Snap, fg_hwnd: int,
     if vk not in snap.keyset:
         return False
     if snap.focus_kind != "view":      # 文本控件与未知控件都放行（保守）
-        return False
+        # 例外：焦点在 PropertyManager 参数输入框上时，单字母键仍需拦截并转发到
+        # 绘图区视口 —— 否则快捷键（E/S/D...）会被输入框吃掉或被 IME 拼成拼音。
+        # 数字/空格放行给输入框（用户可能在输入尺寸值）。
+        if not (snap.pm_edit and ord("A") <= vk <= ord("Z")):
+            return False
+    if snap.ime_focus:
+        # 焦点在 IME 组合窗口上：composition 已在进行（跳过 composing 守卫），
+        # 但视口语境仍然成立 → 继续拦截（吞键 + 直投主窗口）。
+        return True
     if snap.composing:                 # 正在打拼音：绝不打断
         return False
     return True
@@ -359,6 +389,75 @@ def _class_name(hwnd: int) -> str:
     return buf.value
 
 
+def _is_pm_edit_control(focus_hwnd: int, depth: int = 2) -> bool:
+    """判断焦点是否在 PropertyManager 的输入框上。
+
+    SW 2024 真机实录：PropertyManager 参数输入框是标准 Edit 控件，
+    父窗口是 #32770（标准对话框），深度 2 以内可达。
+    用 parent 链而非递归 EnumChildWindows —— 每次 probe 只走 ≤2 步，开销极低。
+    """
+    if not focus_hwnd:
+        return False
+    p = user32.GetParent(focus_hwnd)
+    for _ in range(depth):
+        if not p:
+            return False
+        if _class_name(p) == "#32770":
+            return True
+        p = user32.GetParent(p)
+    return False
+
+
+def _find_viewport(frame_hwnd: int, max_depth: int = 6) -> int:
+    """在 SW 框架下找绘图区视口 hwnd。
+
+    SW 2024 真机实录：视口是 swMdiClient → 文档窗口 → AfxMDIFrame140u 链
+    末端最大的可见子窗口。取客户区面积最大的 AfxMDIFrame140u 作为视口。
+    """
+    best, best_area = 0, 0
+
+    def walk(parent, depth):
+        nonlocal best, best_area
+        if depth > max_depth:
+            return
+        child = user32.GetWindow(parent, 5)  # GW_CHILD
+        while child:
+            if user32.IsWindowVisible(child):
+                cls = _class_name(child).lower()
+                if "afxmdiframe" in cls:
+                    r = wintypes.RECT()
+                    user32.GetClientRect(child, ctypes.byref(r))
+                    area = max(0, r.right - r.left) * max(0, r.bottom - r.top)
+                    if area > best_area:
+                        best_area = area
+                        best = child
+                walk(child, depth + 1)
+            child = user32.GetWindow(child, 2)  # GW_HWNDNEXT
+
+    walk(frame_hwnd, 0)
+    return best
+
+
+def _is_ime_focus_window(focus_hwnd: int, frame_hwnd: int) -> bool:
+    """判断当前焦点是否落在 IME 组合窗口上（而非目标应用自己的控件）。
+
+    中文 IME 弹出拼音组合窗口时会抢走 hwndFocus；此时 classify_focus 会因
+    caret 判成 "text"，导致按键被放行给 IME —— 这正是"快捷键变拼音"的根因。
+    本函数在 probe 阶段调用（100ms 轮询，开销可接受），结果写入快照供钩子
+    回调读取。
+    """
+    if not focus_hwnd or focus_hwnd == frame_hwnd:
+        return False
+    # 焦点窗口与目标主窗口不同线程 → 多半是 IME 注入的组合窗口
+    ftid = _window_tid(focus_hwnd)
+    ptid = _window_tid(frame_hwnd)
+    if ftid and ptid and ftid != ptid:
+        return True
+    # 兜底：类名匹配 IME 线索（部分输入法与目标同线程）
+    n = (_class_name(focus_hwnd) or "").lower()
+    return any(h in n for h in _IME_CLASS_HINTS)
+
+
 def _client_coverage(focus_hwnd: int, frame_hwnd: int) -> float:
     """焦点控件客户区占框架客户区的面积比（识别"视口 vs 对话框小控件"）。"""
     if not focus_hwnd or not frame_hwnd:
@@ -452,13 +551,19 @@ def probe_context(settings: dict = None) -> Snap:
         caret = bool(gui.hwndCaret)
     cls = _class_name(focus) if focus else ""
     coverage = _client_coverage(focus, fg)
+    ime_focus = bool(focus) and focus != fg and _is_ime_focus_window(focus, fg)
+    # PropertyManager 输入框检测：只在焦点是 Edit 类控件时查 parent 链（省调用）
+    pm_edit = bool(focus) and cls.lower() == "edit" and _is_pm_edit_control(focus)
     kind = classify_focus(cls, caret, focus == fg, coverage,
-                          _extra_class_hints(settings))
+                          _extra_class_hints(settings),
+                          ime_focus=ime_focus)
     # 只有可能吞键（视口）时才去查组合态，省掉每 100ms 一次无用的跨进程调用
     composing = _ime_composing(fg) if kind == "view" else False
     return Snap(enabled=not blocked, sw_hwnd=fg, focus_hwnd=focus or fg,
                 focus_kind=kind, focus_class=cls, composing=composing,
-                elevated_blocked=blocked, delivery_broken=False, keyset=keyset)
+                ime_focus=ime_focus, pm_edit=pm_edit,
+                elevated_blocked=blocked, delivery_broken=False,
+                keyset=keyset)
 
 
 # ========== 投递 ==========
@@ -688,7 +793,12 @@ class Interceptor:
             if self._delivery_broken:
                 continue
             snap = self._snap
-            target = snap.focus_hwnd or snap.sw_hwnd
+            # PM 输入框 / IME 焦点：投给绘图区视口（SW 的命令循环在视口层处理）。
+            # 不能投给框架窗口 —— SW 不处理框架的 PostMessage 键。
+            if snap.ime_focus or snap.pm_edit:
+                target = _find_viewport(snap.sw_hwnd) or snap.sw_hwnd
+            else:
+                target = snap.focus_hwnd or snap.sw_hwnd
             ok = post_key_pair(target, item)
             if not ok and target != snap.sw_hwnd:
                 ok = post_key_pair(snap.sw_hwnd, item)
