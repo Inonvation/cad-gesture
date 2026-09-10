@@ -3,6 +3,15 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+- **安装版恢复应用内自动更新**（GitHub 主流做法）：点「检查更新」→
+  解析 Releases 有无新版 → 下载 `Setup-CADGesture-vX.exe` → 静默覆盖安装 →
+  新版启动后提示已更新。不再对 Inno 直装形态弹「暂不支持」。
+- 绿色版 / Velopack 布局仍走 Velopack 增量自更新；两条链路按
+  `is_velopack_layout()` 自动分流。
+
 ## [0.0.11] - 2026-09-10
 
 ### 重大变更

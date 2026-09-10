@@ -158,6 +158,10 @@ class CADGestureApp:
         self._update_info = None
         # 更新源 (url, token)：_check_update 记录，后台下载/主线程应用时重建 manager
         self._update_source = None
+        # github=安装版下载 Setup.exe；velopack=绿色版/Velopack 布局
+        self._update_mode = "github"
+        # 安装版下载目标路径（%TEMP%\CADGesture-Setup.exe）
+        self._update_dest = None
 
     def _init_late(self):
         """事件循环启动后的异步初始化：构建 QSS / 圆盘 / 引擎 / 钩子。
@@ -903,37 +907,45 @@ class CADGestureApp:
     def _check_update(self, manual: bool):
         """检查更新（后台线程执行网络请求，结果经事件队列回主线程）
 
-        仅 Velopack 布局（绿色版 portable）具备应用内自动更新；Inno 直装
-        版无该布局，手动检查时引导到 GitHub Releases 手动下载新版安装包，
-        启动自动检查则直接跳过，不产生网络请求。
+        按运行布局分流（与 GitHub 主流一致）：
+        - 安装版（Inno 直装，无 Velopack 布局）→ Releases 查新版 →
+          下载 Setup-CADGesture-vX.exe → 静默覆盖安装；
+        - 绿色版 / Velopack 布局 → Velopack feed 检查 + delta 更新。
         """
-        from src.updater import is_velopack_layout
-        if not is_velopack_layout():
-            if manual:
-                try:
-                    QMessageBox.information(
-                        None, T("软件更新"),
-                        T("当前为安装版，暂不支持应用内自动更新。\n\n"
-                          "请到 GitHub Releases 下载最新安装包（覆盖安装将保留配置）：\n")
-                        + "https://github.com/Inonvation/cad-gesture/releases/latest")
-                except Exception as e:
-                    self.log.error("提示弹窗失败: %s", e, exc_info=True)
-            return
         if manual is False and not self._should_auto_check():
             return
+        from src.updater import is_velopack_layout
         s = self.config.get("settings", {})
         url = s.get("update_source_url",
                     "https://github.com/Inonvation/cad-gesture")
         token = s.get("update_token") or None
         self._update_source = (url, token)
-        threading.Thread(target=self._check_worker, args=(url, token, manual),
-                         daemon=True).start()
+        self._update_mode = "velopack" if is_velopack_layout() else "github"
+        if self._update_mode == "github":
+            threading.Thread(target=self._check_worker_github,
+                             args=(url, manual), daemon=True).start()
+        else:
+            threading.Thread(target=self._check_worker,
+                             args=(url, token, manual), daemon=True).start()
 
     def _check_worker(self, url: str, token: str | None, manual: bool):
         from src.updater import build_manager, check_for_update, UpdateError
         try:
             manager = build_manager(url, token)
             info = check_for_update(manager)
+            result = {"ok": True, "info": info, "error": None, "manual": manual}
+        except UpdateError as e:
+            result = {"ok": False, "info": None, "error": str(e), "manual": manual}
+        except Exception as e:
+            result = {"ok": False, "info": None,
+                      "error": f"检查更新异常: {e}", "manual": manual}
+        self.event_queue.put(("update_check_result", result))
+
+    def _check_worker_github(self, url: str, manual: bool):
+        """安装版：解析 GitHub Releases HTML 页检查新版本（不限流）"""
+        from src.updater import check_for_update_github, UpdateError
+        try:
+            info = check_for_update_github(__version__, url)
             result = {"ok": True, "info": info, "error": None, "manual": manual}
         except UpdateError as e:
             result = {"ok": False, "info": None, "error": str(e), "manual": manual}
@@ -1006,11 +1018,7 @@ class CADGestureApp:
             pass
 
     def _show_update_dialog(self, info: dict):
-        """有新版本：自定义更新弹窗（说明 + 立即更新/稍后，非模态）
-
-        Velopack 时代安装版与绿色版(portable)均支持自更新，不再按运行形态
-        分流：下载完成后由 Update.exe 原子替换并重启应用。
-        """
+        """有新版本：自定义更新弹窗（说明 + 立即更新/稍后，非模态）"""
         from src.qt_update_dialog import UpdateDialog
         dialog = UpdateDialog()
         self._update_dialog = dialog
@@ -1024,11 +1032,20 @@ class CADGestureApp:
     def _start_update_download(self, info: dict, dialog=None):
         """开始后台下载，弹窗切换到下载进度模式
 
-        注：Velopack 下载的更新包落在其自管理的本地 packages 目录，无
-        "下载到哪个文件"概念；进度回调实参为 0-100 百分比（见 updater 模块）。
+        - github：下载 Setup-CADGesture-vX.exe 到 %TEMP%，字节进度转百分比
+        - velopack：Velopack 自管理 packages，百分比回调
         """
         self._update_cancel = False
         self._update_info = info
+        mode = info.get("mode") or getattr(self, "_update_mode", "github")
+        self._update_mode = mode
+        if mode == "github":
+            dest = os.path.join(tempfile.gettempdir(), "CADGesture-Setup.exe")
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            self._update_dest = dest
         if dialog is None:
             from src.qt_update_dialog import UpdateDialog
             dialog = UpdateDialog()
@@ -1041,13 +1058,28 @@ class CADGestureApp:
                          daemon=True).start()
 
     def _download_worker(self, info: dict):
-        """后台下载线程：构建 manager → Velopack 下载 → 结果事件回主线程"""
-        from src.updater import build_manager, download_update, UpdateError
-        url, token = self._update_source or (None, None)
+        """后台下载线程：按 mode 走 GitHub 直链或 Velopack"""
+        from src.updater import UpdateError
+        mode = info.get("mode") or getattr(self, "_update_mode", "github")
+        ok, reason = False, ""
         try:
-            manager = build_manager(url or "", token)
-            download_update(manager, info, progress_cb=self._download_progress)
-            ok, reason = True, ""
+            if mode == "github":
+                from src.updater import download_installer
+                dest = getattr(self, "_update_dest", None)
+                if not dest:
+                    raise UpdateError("缺少下载目标路径")
+                ok = download_installer(
+                    info.get("download_url", ""), dest,
+                    info.get("size") or 0,
+                    progress_cb=self._download_progress_bytes)
+                if not ok:
+                    reason = "下载失败"
+            else:
+                from src.updater import build_manager, download_update
+                url, token = self._update_source or (None, None)
+                manager = build_manager(url or "", token)
+                download_update(manager, info, progress_cb=self._download_progress)
+                ok, reason = True, ""
         except UpdateError as e:
             ok, reason = False, str(e)
         except Exception as e:
@@ -1055,13 +1087,21 @@ class CADGestureApp:
             ok, reason = False, str(e)
         self.event_queue.put(("update_download_done", (ok, reason)))
 
-    def _download_progress(self, pct: int):
-        """Velopack 下载进度回调（其内部线程调用，约每 5%，实参 0-100）。
+    def _download_progress_bytes(self, downloaded: int, total: int):
+        """安装版下载回调：取消则抛异常中断；字节进度转百分比推 UI"""
+        if self._update_cancel:
+            from src.updater import UpdateCancelled
+            raise UpdateCancelled("下载被取消")
+        if total > 0:
+            pct = int(downloaded * 100 / total)
+            self.event_queue.put(("update_progress_pct", min(pct, 100)))
+        else:
+            # 未知总大小：按已下载 MB 粗略推进（保持进度条在动）
+            self.event_queue.put(("update_progress_pct",
+                                  min(99, int(downloaded / (10 * 1024 * 1024)))))
 
-        注：Velopack 的 Rust 回调包装会吞掉 Python 回调抛出的异常，无法用
-        抛异常中断下载；取消时仅停止推送进度，下载完成事件由
-        _on_update_download_done 依据 _update_cancel 丢弃。
-        """
+    def _download_progress(self, pct: int):
+        """Velopack 下载进度回调（其内部线程调用，约每 5%，实参 0-100）。"""
         if self._update_cancel:
             return
         self.event_queue.put(("update_progress_pct", int(pct)))
@@ -1081,8 +1121,6 @@ class CADGestureApp:
         ok, reason = data
         dialog = getattr(self, "_update_dialog", None)
         if self._update_cancel:
-            # 用户已取消：关闭弹窗并提示；下载包残留在 Velopack packages 目录
-            # 无害，下次更新会由 Velopack 自行管理清理
             self._update_dialog = None
             try:
                 if dialog is not None:
@@ -1098,16 +1136,14 @@ class CADGestureApp:
                     dialog.close()
             except Exception:
                 pass
-            # 下载失败用弹窗（托盘气泡可能被系统屏蔽），确保用户看到
             try:
                 QMessageBox.warning(
                     None, T("更新失败"),
                     T("下载失败，请检查网络后重试") +
-                    (("\n" + reason) if reason else ""))
+                    (("\n" + reason) if reason and reason != "下载失败" else ""))
             except Exception:
                 pass
             return
-        # 复用弹窗切到"开始安装"确认；点按钮后才启动 Update.exe 并退出
         self._show_confirm_install(dialog)
         self.log.info("更新包已就绪，等待用户确认后应用")
 
@@ -1118,23 +1154,21 @@ class CADGestureApp:
                 on_done=self._start_and_finish)
         except Exception as e:
             self.log.error("切换安装确认模式失败: %s", e, exc_info=True)
-            # 兜底：仍尝试应用更新，不阻塞
             self._start_and_finish()
             return
         dialog.show()
 
     def _start_and_finish(self):
-        """用户点「开始安装」：启动 Velopack Update.exe 等待本进程退出，
-        由它原子替换文件并重启应用。
+        """用户点「开始安装」：按 mode 应用更新并退出主进程。
 
-        根因：Velopack 的文件替换必须在主进程完全退出后进行（exe 被占用），
-        apply_update 内部拉起 Update.exe(--wait-current-process, 最长 60s)
-        后返回；此处随即 _quit() 退出进程让更新接管。
+        - github：静默启动 Inno 安装包 → 写更新标记 → _quit()（安装器接管）
+        - velopack：拉起 Update.exe → _quit()（原子替换 + 重启）
         """
         info = self._update_info
         if not info:
             self.log.error("开始安装但缺少更新信息，中止")
             return
+        mode = info.get("mode") or getattr(self, "_update_mode", "github")
         dialog = getattr(self, "_update_dialog", None)
         self._update_dialog = None
         try:
@@ -1142,6 +1176,33 @@ class CADGestureApp:
                 dialog.close()
         except Exception:
             pass
+
+        if mode == "github":
+            installer_path = getattr(self, "_update_dest", None)
+            if not installer_path or not os.path.exists(installer_path):
+                self.log.error("开始安装但安装包不存在，中止: %s", installer_path)
+                return
+            from src.updater import run_installer
+            try:
+                ok, reason = run_installer(installer_path)
+            except Exception as e:
+                self.log.error("启动安装程序异常: %s", e, exc_info=True)
+                ok, reason = False, str(e)
+            if not ok:
+                try:
+                    QMessageBox.warning(
+                        None, T("更新失败"),
+                        T("启动安装程序失败，请手动运行更新包") +
+                        "\n\n" + installer_path +
+                        (("\n" + reason) if reason else ""))
+                except Exception:
+                    pass
+                return
+            self._write_update_success_marker(installer_path)
+            self.log.info("安装器已启动，退出当前实例以完成更新")
+            self._quit()
+            return
+
         from src.updater import build_manager, apply_update
         url, token = self._update_source or (None, None)
         try:
@@ -1159,6 +1220,16 @@ class CADGestureApp:
             return
         self.log.info("Update.exe 已接管，退出当前实例以完成更新")
         self._quit()
+
+    def _write_update_success_marker(self, installer_path: str):
+        """记录"本次退出是为安装更新"，供新版启动时弹成功确认。"""
+        try:
+            if not os.path.exists(installer_path):
+                return
+            with open(_UPDATE_SUCCESS_MARKER, "w", encoding="utf-8") as f:
+                f.write(__version__)
+        except Exception as e:
+            self.log.error("写入更新标记失败: %s", e, exc_info=True)
 
     def _show_update_success_if_any(self):
         """启动后检测"本次启动由更新而来"，有则弹窗确认已更新。

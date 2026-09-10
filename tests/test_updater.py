@@ -19,8 +19,10 @@ from contextlib import contextmanager
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.updater import (
-    compare_versions, normalize_source_url, build_manager,
-    check_for_update, download_update, apply_update,
+    compare_versions, normalize_source_url, to_releases_latest_url,
+    build_manager, check_for_update, download_update, apply_update,
+    check_for_update_github, download_installer, run_installer,
+    is_velopack_layout,
     UpdateError, UpdateCancelled,
 )
 
@@ -265,3 +267,72 @@ def test_apply_update_error_wrapped():
 
 def test_update_cancelled_is_update_error():
     assert issubclass(UpdateCancelled, UpdateError)
+
+
+# ========== 安装版：GitHub Releases 经典更新路径 ==========
+
+def test_to_releases_latest_from_repo_root():
+    assert to_releases_latest_url(
+        "https://github.com/Inonvation/cad-gesture") == (
+        "https://github.com/Inonvation/cad-gesture/releases/latest")
+
+
+def test_to_releases_latest_from_api():
+    assert to_releases_latest_url(
+        "https://api.github.com/repos/Inonvation/cad-gesture/releases/latest") == (
+        "https://github.com/Inonvation/cad-gesture/releases/latest")
+
+
+def test_to_releases_latest_idempotent():
+    url = "https://github.com/Inonvation/cad-gesture/releases/latest"
+    assert to_releases_latest_url(url) == url
+
+
+def test_check_for_update_github_newer(monkeypatch):
+    """有新版：返回 download_url 指向 Setup-CADGesture-vX.exe"""
+    monkeypatch.setattr(
+        "src.updater._fetch_latest_release",
+        lambda html_url: ("v0.0.12", '<div class="markdown-body">notes</div>'))
+    info = check_for_update_github(
+        "0.0.11", "https://github.com/Inonvation/cad-gesture")
+    assert info is not None
+    assert info["version"] == "0.0.12"
+    assert info["mode"] == "github"
+    assert info["download_url"].endswith(
+        "/releases/download/v0.0.12/Setup-CADGesture-v0.0.12.exe")
+
+
+def test_check_for_update_github_same_or_older(monkeypatch):
+    monkeypatch.setattr(
+        "src.updater._fetch_latest_release",
+        lambda html_url: ("v0.0.11", ""))
+    assert check_for_update_github(
+        "0.0.11", "https://github.com/Inonvation/cad-gesture") is None
+    assert check_for_update_github(
+        "0.0.12", "https://github.com/Inonvation/cad-gesture") is None
+
+
+def test_check_for_update_github_no_tag(monkeypatch):
+    monkeypatch.setattr(
+        "src.updater._fetch_latest_release", lambda html_url: ("", ""))
+    try:
+        check_for_update_github("0.0.11", "https://github.com/x/y")
+        assert False, "应抛 UpdateError"
+    except UpdateError:
+        pass
+
+
+def test_is_velopack_layout_false_for_flat(monkeypatch, tmp_path):
+    exe = tmp_path / "CADGesture-x64.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr("src.updater.sys.executable", str(exe))
+    assert is_velopack_layout() is False
+
+
+def test_is_velopack_layout_true_with_update_exe(monkeypatch, tmp_path):
+    (tmp_path / "Update.exe").write_bytes(b"")
+    exe = tmp_path / "current" / "CADGesture-x64.exe"
+    exe.parent.mkdir()
+    exe.write_bytes(b"")
+    monkeypatch.setattr("src.updater.sys.executable", str(exe))
+    assert is_velopack_layout() is True
