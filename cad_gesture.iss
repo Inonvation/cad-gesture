@@ -13,7 +13,7 @@
 
 ; 版本号由 build.bat 经 /DMyAppVersion 注入
 #ifndef MyAppVersion
-#define MyAppVersion "0.0.10"
+#define MyAppVersion "0.0.11"
 #endif
 #define MyAppName "CAD鼠标手势"
 #define MyAppExeName "CADGesture-x64.exe"
