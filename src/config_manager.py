@@ -1,4 +1,4 @@
-"""配置管理模块 - 处理配置文件的读写和Profile管理"""
+﻿"""配置管理模块 - 处理配置文件的读写和Profile管理"""
 
 import json
 import os
@@ -287,6 +287,31 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         migrated = True
     if "command_feedback" not in settings:
         settings["command_feedback"] = True
+        migrated = True
+    if "ime_assist_sw" not in settings:
+        # SolidWorks 输入法助手：SW 前台时自动管理输入法（画图区英文/
+        # 文本框中文），让快捷键在中文输入法下也可用且不影响中文输入
+        settings["ime_assist_sw"] = True
+        migrated = True
+    if "ime_assist_mode" not in settings:
+        # key = 按键直通（拦下被输入法吞掉的单键，直接投给 SW 窗口，输入法不受影响）
+        # layout = 按焦点自动切换键盘布局（旧的回退路径）
+        settings["ime_assist_mode"] = "key"
+        migrated = True
+    if "sw_key_list" not in settings:
+        # 需要直通的按键集合（会被输入法吞掉的单键）：字母 + 数字 + 空格
+        settings["sw_key_list"] = "A-Z,0-9,SPACE"
+        migrated = True
+    if "sw_key_extra_classes" not in settings:
+        # 额外视为「绘图区视口」的控件类名（留空 = 只用内置白名单，
+        # 认不出的控件一律放行，日志会记录类名便于补充）
+        settings["sw_key_extra_classes"] = ""
+        migrated = True
+    if "gesture_exclude_apps" not in settings:
+        # 不弹圆盘的应用（逗号分隔 exe 关键字）：这些程序自带右键拖拽手势，
+        # SolidWorks 主窗是 MFC（类名 Afx: 开头），不放行会被兜底启发式误判成
+        # AutoCAD 而误弹圆盘
+        settings["gesture_exclude_apps"] = "sldworks"
         migrated = True
     if "feedback_position" not in settings:
         settings["feedback_position"] = "bottom_center"

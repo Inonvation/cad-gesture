@@ -1,4 +1,4 @@
-"""主应用模块 - Qt6 版（PySide6）"""
+﻿"""主应用模块 - Qt6 版（PySide6）"""
 
 import os
 import sys
@@ -6,6 +6,7 @@ import math
 import queue
 import threading
 import tempfile
+import time
 from datetime import datetime
 
 from PySide6.QtCore import (Qt, QPointF, QTimer, QEvent, QObject,
@@ -193,6 +194,9 @@ class CADGestureApp:
             self._theme_poll_timer.setInterval(5000)
             if s.get("ui_mode", "light") == "system":
                 self._theme_poll_timer.start()
+
+            # SolidWorks 输入法助手：SW 前台时按焦点自动管输入法，与手势无关
+            self._sync_ime_assist_timer()
 
             self._init_late_done = True
 
@@ -494,6 +498,78 @@ class CADGestureApp:
         # 更新，无法反映用户改系统主题后的变化
         if system_ui_mode() != self._applied_mode:
             self._apply_ui_mode("system")
+
+    # ========== SolidWorks 输入法助手 ==========
+
+    def _sync_ime_assist_timer(self):
+        """按设置启停 SW 输入法助手（100ms 轮询 + 按键直通拦截器）
+
+        两种模式共用一个 100ms 定时器，按 settings.ime_assist_mode 分发：
+          key    —— 定时器只发布上下文快照；拦截器负责吞键 + 直投（默认）
+          layout —— 沿用原「按焦点切键盘布局」实现（回退路径）
+        """
+        try:
+            timer = getattr(self, "_ime_assist_timer", None)
+            if timer is None:
+                from PySide6.QtCore import QTimer
+                timer = QTimer()
+                timer.timeout.connect(self._ime_assist_tick)
+                timer.setInterval(100)
+                self._ime_assist_timer = timer
+            s = self.config.get("settings", {})
+            enabled = bool(s.get("ime_assist_sw", True))
+            mode = s.get("ime_assist_mode", "key") or "key"
+            if enabled:
+                timer.start()
+            else:
+                timer.stop()
+            self._sync_sw_interceptor(enabled and mode == "key")
+        except Exception as e:
+            self.log.error("同步输入法助手定时器失败: %s", e, exc_info=True)
+
+    def _sync_sw_interceptor(self, want: bool):
+        """按键直通拦截器的启停（负责装卸全局键盘钩子）"""
+        inter = getattr(self, "_sw_interceptor", None)
+        if want and inter is None:
+            try:
+                from src.sw_key_assist import get_interceptor
+                inter = get_interceptor(log=self.log)
+                if not inter.start():
+                    self.log.error("SolidWorks 按键直通：键盘钩子安装失败")
+                    return
+                self._sw_interceptor = inter
+            except Exception as e:
+                self.log.error("启动按键直通失败: %s", e, exc_info=True)
+        elif not want and inter is not None:
+            try:
+                inter.stop()
+            except Exception as e:
+                self.log.error("停止按键直通失败: %s", e, exc_info=True)
+            self._sw_interceptor = None
+
+    def _ime_assist_tick(self):
+        """每 100ms：key 模式发布上下文快照；layout 模式按焦点切键盘布局"""
+        s = self.config.get("settings", {})
+        if not bool(s.get("ime_assist_sw", True)):
+            return
+        try:
+            if (s.get("ime_assist_mode", "key") or "key") == "layout":
+                from src.sw_ime_assist import run_cycle
+                if run_cycle():
+                    # 只在确实发生翻转时记录（最多每 5 秒一条），方便确认助手在工作
+                    now = time.monotonic()
+                    if now - getattr(self, "_last_assist_log", 0.0) >= 5.0:
+                        self._last_assist_log = now
+                        self.log.info("SolidWorks 输入法助手: 已自动切换输入法状态")
+                return
+            inter = getattr(self, "_sw_interceptor", None)
+            if inter is None:
+                return
+            # 重活（进程识别/焦点控件/提权查询）都在这里做，钩子回调只读快照
+            from src.sw_key_assist import probe_context
+            inter.update(probe_context(s))
+        except Exception:
+            pass
 
     # ========== 托盘 ==========
 
@@ -805,6 +881,8 @@ class CADGestureApp:
             if (effective_ui_mode(mode) != current_ui_mode()
                     or font != self._applied_font_scale):
                 self._apply_ui_mode(mode)
+            # SW 输入法助手开关可能变了：启停轮询定时器
+            self._sync_ime_assist_timer()
         except Exception as e:
             self.log.error("重载配置失败: %s", e, exc_info=True)
 
@@ -1077,6 +1155,14 @@ class CADGestureApp:
                 engine.stop()
         except Exception as e:
             self.log.error("停止手势引擎失败: %s", e, exc_info=True)
+        try:
+            # 键盘钩子必须显式卸载：进程退出虽会回收，但先卸干净更稳妥
+            inter = getattr(self, "_sw_interceptor", None)
+            if inter is not None:
+                inter.stop()
+                self._sw_interceptor = None
+        except Exception as e:
+            self.log.error("停止 SolidWorks 按键直通失败: %s", e, exc_info=True)
         try:
             menu = getattr(self, "menu", None)
             if menu is not None:

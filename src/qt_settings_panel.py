@@ -1,4 +1,4 @@
-"""设置分类页面 — 每个分类独立一页（由侧边栏导航切换进入）
+﻿"""设置分类页面 — 每个分类独立一页（由侧边栏导航切换进入）
 
 页面（与侧边栏分类一一对应，qt_config_gui 将其加入 QStackedWidget）：
 - AppearancePage  外观与尺寸：界面模式、主题、自定义主色、不透明度、字号 + 圆盘大小/半径/屏幕内限制 + 实时预览
@@ -21,9 +21,9 @@ from PySide6.QtGui import (QColor, QFont, QIcon, QPainter, QPixmap,
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
                                QComboBox, QFileDialog, QFrame, QGridLayout,
-                               QHBoxLayout, QLabel, QPushButton, QScrollArea,
-                               QSlider, QSpinBox, QToolTip, QVBoxLayout, QWidget,
-                               QMessageBox)
+                               QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                               QScrollArea, QSlider, QSpinBox, QToolTip,
+                               QVBoxLayout, QWidget, QMessageBox)
 
 from src.config_manager import (save_config, get_auto_start, set_auto_start,
                                 get_config_path, set_config_dir,
@@ -788,6 +788,27 @@ class TriggerPage(_BasePage):
         btn_row.addStretch(1)
         self.body.addLayout(btn_row)
 
+        # 不弹圆盘的应用（自带右键拖拽手势的程序，如 SolidWorks 鼠标笔势）
+        excl_row = QHBoxLayout()
+        excl_row.setSpacing(10)
+        self._lb_exclude = QLabel(T("不弹圆盘的应用"))
+        self.register_text(self._lb_exclude, "不弹圆盘的应用")
+        excl_row.addWidget(self._lb_exclude)
+        excl_row.addWidget(self._help(
+            "这些程序里右键拖拽交给它们自己处理（逗号分隔 exe 关键字，"
+            "如 sldworks、acad）。SolidWorks 的「鼠标笔势」本身就是右键拖动，"
+            "默认已排除；不排除的话会弹出本工具圆盘，和它互相打架。"
+            "排除优先于自定义应用注册 —— 写在这里就一定是「不弹圆盘」。"))
+        self.exclude_edit = QLineEdit(
+            config.get("settings", {}).get("gesture_exclude_apps", "sldworks"))
+        self.exclude_edit.setMaximumWidth(180)
+        self.exclude_edit.editingFinished.connect(
+            lambda: self._set("gesture_exclude_apps",
+                              self.exclude_edit.text().strip()))
+        excl_row.addWidget(self.exclude_edit)
+        excl_row.addStretch(1)
+        self.body.addLayout(excl_row)
+
         self._hold_slider, self._hold_label = self._slider_row(
             "长按延迟", "hold_threshold_ms", 0, 200, "ms",
             help="按下后不动时，经过该时长且有小幅位移即弹出圆盘；数值越小响应越快。")
@@ -868,7 +889,89 @@ class TriggerPage(_BasePage):
         # 停留时长
         self._dur_slider, self._dur_label = self._slider_row(
             "提示时长", "feedback_duration_ms", 500, 3000, "ms")
+
+        # ===== SolidWorks 输入法助手（与手势无关） =====
+        self._section("SolidWorks 输入法")
+        self.chk_ime_assist = self._check_row(
+            "SolidWorks 画图时让单键快捷键直通", "ime_assist_sw", True,
+            help="仅在 SolidWorks 窗口在前台时生效。中文输入法处于中文态时，字母/空格"
+                 "会被输入法截走去打拼音，导致 SW 的单键快捷键失效；开启后本工具把这"
+                 "些键直接送进 SW 窗口，输入法本身完全不受影响（语言栏保持中文）。"
+                 "进入文本输入框（尺寸值/注释/重命名）时自动放行，照常打拼音。"
+                 "不影响其他软件，不改动 CAD 手势逻辑。")
+
+        # 处理方式：按键直通（默认） / 自动切换键盘布局（旧路径）
+        ime_mode_row = QHBoxLayout()
+        ime_mode_row.setSpacing(10)
+        self._lb_ime_mode = QLabel(T("处理方式"))
+        self.register_text(self._lb_ime_mode, "处理方式")
+        ime_mode_row.addWidget(self._lb_ime_mode)
+        ime_mode_row.addWidget(self._help(
+            "按键直通：不动输入法，只把被吞掉的单键直接投给 SW 窗口（推荐）。"
+            "自动切换键盘布局：SW 绘图区整体切到英文键盘（等同 Win+Space），"
+            "语言栏会显示 ENG —— 旧方案，作为兜底保留。"))
+        self.ime_mode_combo = QComboBox()
+        self.ime_mode_combo.addItem(T("按键直通（推荐）"), "key")
+        self.ime_mode_combo.addItem(T("自动切换键盘布局"), "layout")
+        cur_mode = config.get("settings", {}).get("ime_assist_mode", "key")
+        idx = self.ime_mode_combo.findData(cur_mode)
+        self.ime_mode_combo.setCurrentIndex(max(0, idx))
+        self.ime_mode_combo.currentIndexChanged.connect(self._on_ime_mode_changed)
+        ime_mode_row.addWidget(self.ime_mode_combo)
+        ime_mode_row.addStretch(1)
+        self.body.addLayout(ime_mode_row)
+
+        # 需要直通的按键集（会被输入法吞掉的单键）
+        key_row = QHBoxLayout()
+        key_row.setSpacing(10)
+        self._lb_key_list = QLabel(T("直通的按键"))
+        self.register_text(self._lb_key_list, "直通的按键")
+        key_row.addWidget(self._lb_key_list)
+        key_row.addWidget(self._help(
+            "只对 SolidWorks 绘图区生效。写法：A-Z 表示字母区间，0-9 表示数字，"
+            "SPACE 表示空格（SW 里是视图定向），用逗号分隔。组合键（Ctrl/Shift+键）"
+            "不受影响，始终原样放行。"))
+        self.key_list_edit = QLineEdit(
+            config.get("settings", {}).get("sw_key_list", "A-Z,0-9,SPACE"))
+        self.key_list_edit.setMaximumWidth(180)
+        self.key_list_edit.editingFinished.connect(
+            lambda: self._set("sw_key_list", self.key_list_edit.text().strip()))
+        key_row.addWidget(self.key_list_edit)
+        key_row.addStretch(1)
+        self.body.addLayout(key_row)
+
+        # 额外视口类名（认不出的绘图区控件类名，事后补充用）
+        cls_row = QHBoxLayout()
+        cls_row.setSpacing(10)
+        self._lb_extra_cls = QLabel(T("额外视口类名"))
+        self.register_text(self._lb_extra_cls, "额外视口类名")
+        cls_row.addWidget(self._lb_extra_cls)
+        cls_row.addWidget(self._help(
+            "留空即可。若日志出现「焦点控件未识别，已放行 class=xxx」且该处本该走"
+            "快捷键，把那个类名填进来（逗号分隔）。认不出的控件一律放行，"
+            "宁可快捷键不生效，也不会误吞中文输入。"))
+        self.extra_cls_edit = QLineEdit(
+            config.get("settings", {}).get("sw_key_extra_classes", ""))
+        self.extra_cls_edit.setMaximumWidth(180)
+        self.extra_cls_edit.editingFinished.connect(
+            lambda: self._set("sw_key_extra_classes",
+                              self.extra_cls_edit.text().strip()))
+        cls_row.addWidget(self.extra_cls_edit)
+        cls_row.addStretch(1)
+        self.body.addLayout(cls_row)
+
         self.body.addStretch(1)
+
+    def _on_ime_mode_changed(self, idx):
+        self._set("ime_assist_mode", self.ime_mode_combo.itemData(idx))
+        self._sync_ime_mode_rows()
+
+    def _sync_ime_mode_rows(self):
+        """布局切换模式用不到键集/类名，置灰避免误解（控件仍在，只是不可编辑）"""
+        is_key = self.ime_mode_combo.currentData() == "key"
+        for w in (self._lb_key_list, self.key_list_edit,
+                  self._lb_extra_cls, self.extra_cls_edit):
+            w.setEnabled(is_key)
 
     def _on_btn_changed(self, idx):
         self._set("trigger_button", self.btn_combo.itemData(idx))
@@ -904,6 +1007,26 @@ class TriggerPage(_BasePage):
         self.pos_combo.blockSignals(True)
         self.pos_combo.setCurrentIndex(max(0, idx))
         self.pos_combo.blockSignals(False)
+        self.exclude_edit.blockSignals(True)
+        self.exclude_edit.setText(
+            s.get("gesture_exclude_apps", "sldworks"))
+        self.exclude_edit.blockSignals(False)
+        # SolidWorks 输入法助手开关
+        self.chk_ime_assist.blockSignals(True)
+        self.chk_ime_assist.setChecked(s.get("ime_assist_sw", True))
+        self.chk_ime_assist.blockSignals(False)
+        # 处理方式 / 直通键集 / 额外视口类名
+        idx = self.ime_mode_combo.findData(s.get("ime_assist_mode", "key"))
+        self.ime_mode_combo.blockSignals(True)
+        self.ime_mode_combo.setCurrentIndex(max(0, idx))
+        self.ime_mode_combo.blockSignals(False)
+        self.key_list_edit.blockSignals(True)
+        self.key_list_edit.setText(s.get("sw_key_list", "A-Z,0-9,SPACE"))
+        self.key_list_edit.blockSignals(False)
+        self.extra_cls_edit.blockSignals(True)
+        self.extra_cls_edit.setText(s.get("sw_key_extra_classes", ""))
+        self.extra_cls_edit.blockSignals(False)
+        self._sync_ime_mode_rows()
 
 
 class AboutPage(_BasePage):

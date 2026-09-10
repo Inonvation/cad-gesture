@@ -1,4 +1,4 @@
-"""国际化（i18n）— 简体中文 / English 界面语言切换
+﻿"""国际化（i18n）— 简体中文 / English 界面语言切换
 
 - 语言存于配置 settings.language（"zh" / "en"），运行时通过 set_language 切换
 - 所有界面文本通过 T(key) 获取；中文模式下 key 即原文，英文模式查表
@@ -589,9 +589,22 @@ _EN: Dict[str, str] = {
     "提示时长": "Hint Duration",
     "水平偏移": "Horizontal Offset",
     "垂直偏移": "Vertical Offset",
+    "SolidWorks 输入法": "SolidWorks IME",
+    "SolidWorks 画图时让单键快捷键直通": "Pass single-key shortcuts through while modeling in SolidWorks",
+    "处理方式": "Handling mode",
+    "按键直通（推荐）": "Pass keys through (recommended)",
+    "自动切换键盘布局": "Switch keyboard layout automatically",
+    "直通的按键": "Keys to pass through",
+    "额外视口类名": "Extra viewport class names",
+    "不弹圆盘的应用": "Apps without the disc",
+    "仅在 SolidWorks 窗口在前台时生效。中文输入法处于中文态时，字母/空格会被输入法截走去打拼音，导致 SW 的单键快捷键失效；开启后本工具把这些键直接送进 SW 窗口，输入法本身完全不受影响（语言栏保持中文）。进入文本输入框（尺寸值/注释/重命名）时自动放行，照常打拼音。不影响其他软件，不改动 CAD 手势逻辑。": "Active only while a SolidWorks window is in the foreground. With a Chinese IME in Chinese mode, letters/space are captured by the IME for pinyin composition, so SolidWorks single-key shortcuts stop working. When enabled, these keys are delivered straight into the SolidWorks window while the IME itself is left untouched (the language bar stays Chinese). Text fields (dimension values, notes, rename boxes) are always passed through so pinyin input works normally. Other software is unaffected and the CAD gesture logic is untouched.",
+    "按键直通：不动输入法，只把被吞掉的单键直接投给 SW 窗口（推荐）。自动切换键盘布局：SW 绘图区整体切到英文键盘（等同 Win+Space），语言栏会显示 ENG —— 旧方案，作为兜底保留。": "Pass keys through: leave the IME alone and deliver the swallowed single keys straight to the SolidWorks window (recommended). Switch keyboard layout automatically: switch the whole SolidWorks graphics area to the English keyboard (same as Win+Space) so the language bar shows ENG — the older approach, kept as a fallback.",
+    "只对 SolidWorks 绘图区生效。写法：A-Z 表示字母区间，0-9 表示数字，SPACE 表示空格（SW 里是视图定向），用逗号分隔。组合键（Ctrl/Shift+键）不受影响，始终原样放行。": "Applies to the SolidWorks graphics area only. Syntax: A-Z for a letter range, 0-9 for digits, SPACE for the space bar (the orientation dialog in SolidWorks), separated by commas. Key combinations (Ctrl/Shift+key) are never touched and always pass through unchanged.",
+    "留空即可。若日志出现「焦点控件未识别，已放行 class=xxx」且该处本该走快捷键，把那个类名填进来（逗号分隔）。认不出的控件一律放行，宁可快捷键不生效，也不会误吞中文输入。": "Leave empty in most cases. If the log shows \"unknown focus control, passed through (class=xxx)\" at a place where a shortcut should work, add that class name here (comma separated). Unrecognised controls are always passed through: it is better for a shortcut not to work than to swallow Chinese input.",
 
     # ---- 设置项说明（helpIcon tooltip） ----
     "按下哪个键呼出圆盘。侧键需要鼠标带前进/后退按键。": "Which mouse button opens the disc. Side buttons require a mouse with back/forward buttons.",
+    "这些程序里右键拖拽交给它们自己处理（逗号分隔 exe 关键字，如 sldworks、acad）。SolidWorks 的「鼠标笔势」本身就是右键拖动，默认已排除；不排除的话会弹出本工具圆盘，和它互相打架。排除优先于自定义应用注册 —— 写在这里就一定是「不弹圆盘」。": "In these programs right-drag is left to the program itself (comma-separated exe keywords, e.g. sldworks, acad). The SolidWorks mouse gesture is itself a right-drag, so it is excluded by default; otherwise this tool's disc would pop up and fight with it. The exclude list takes precedence over custom app registrations — anything listed here never shows the disc.",
     "按下后不动时，经过该时长且有小幅位移即弹出圆盘；数值越小响应越快。": "Hold delay before the disc appears when you hold still with slight movement; smaller is more responsive.",
     "按下后滑动多少像素立即弹出圆盘。越小越灵敏，也越容易误触。": "Drag distance that pops up the disc immediately. Smaller is more sensitive but easier to trigger by accident.",
     "拖动时从圆心画一条跟随光标的线，帮你判断当前滑向哪个扇区。": "Draw a trail from the center following the cursor while dragging, to help aim at a sector.",

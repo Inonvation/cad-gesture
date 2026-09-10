@@ -46,6 +46,72 @@ def test_trigger_page_keeps_hold_and_distance():
     assert "trigger_distance" in page._slider_labels
 
 
+def test_trigger_page_has_sw_ime_assist_switch():
+    """SolidWorks 输入法助手开关在「触发与反馈」页，默认开启且能写回配置"""
+    _app()
+    from src.qt_settings_panel import TriggerPage
+    cfg = {"settings": {}}
+    page = TriggerPage(cfg)
+    assert page.chk_ime_assist.isChecked() is True  # 默认开启
+    page.chk_ime_assist.setChecked(False)
+    assert cfg["settings"]["ime_assist_sw"] is False
+
+
+def test_trigger_page_refresh_syncs_sw_ime_assist():
+    """进入页面时用配置值回写助手开关（切换方案/重载后不串状态）"""
+    _app()
+    from src.qt_settings_panel import TriggerPage
+    page = TriggerPage({"settings": {}})
+    page.refresh({"settings": {"ime_assist_sw": False}})
+    assert page.chk_ime_assist.isChecked() is False
+    page.refresh({"settings": {"ime_assist_sw": True}})
+    assert page.chk_ime_assist.isChecked() is True
+
+
+def test_trigger_page_has_sw_key_pass_through_controls():
+    """按键直通：处理方式下拉 + 键集 + 额外视口类名，默认「按键直通」"""
+    _app()
+    from src.qt_settings_panel import TriggerPage
+    cfg = {"settings": {}}
+    page = TriggerPage(cfg)
+    assert page.ime_mode_combo.currentData() == "key"
+    assert page.key_list_edit.text() == "A-Z,0-9,SPACE"
+    assert page.extra_cls_edit.text() == ""
+    # 切成布局切换 → 键集/类名对布局模式无意义，置灰
+    page.ime_mode_combo.setCurrentIndex(
+        page.ime_mode_combo.findData("layout"))
+    assert cfg["settings"]["ime_assist_mode"] == "layout"
+    assert page.key_list_edit.isEnabled() is False
+    assert page.extra_cls_edit.isEnabled() is False
+    page.ime_mode_combo.setCurrentIndex(page.ime_mode_combo.findData("key"))
+    assert page.key_list_edit.isEnabled() is True
+
+
+def test_trigger_page_refresh_syncs_sw_key_settings():
+    """进入页面时用配置值回写处理方式/键集/类名（切方案后不串状态）"""
+    _app()
+    from src.qt_settings_panel import TriggerPage
+    page = TriggerPage({"settings": {}})
+    page.refresh({"settings": {"ime_assist_mode": "layout",
+                               "sw_key_list": "E,F",
+                               "sw_key_extra_classes": "gxwnd"}})
+    assert page.ime_mode_combo.currentData() == "layout"
+    assert page.key_list_edit.text() == "E,F"
+    assert page.extra_cls_edit.text() == "gxwnd"
+    assert page.key_list_edit.isEnabled() is False
+
+
+def test_trigger_page_has_exclude_apps_field():
+    """不弹圆盘的应用名单（SolidWorks 自带右键笔势，默认排除）"""
+    _app()
+    from src.qt_settings_panel import TriggerPage
+    cfg = {"settings": {}}
+    page = TriggerPage(cfg)
+    assert page.exclude_edit.text() == "sldworks"
+    page.refresh({"settings": {"gesture_exclude_apps": "sldworks,acad"}})
+    assert page.exclude_edit.text() == "sldworks,acad"
+
+
 def test_help_icons_have_tooltips():
     """各设置页的说明图标存在且 tooltip 非空（中文模式）"""
     _app()

@@ -161,12 +161,14 @@ def _make_engine(monkeypatch, custom_targets):
 
 
 def test_detect_window_type_custom_exe(monkeypatch):
+    # 注意：这里刻意不用 sldworks.exe —— 它已进默认「不弹圆盘的应用」名单，
+    # 排除优先于自定义注册（该优先级由 test_exclude_list_beats_custom_target 覆盖）
     eng = _make_engine(monkeypatch, [
-        {"id": "app_sldworks", "name": "SolidWorks",
-         "match_exe": "sldworks.exe", "match_title": ""},
+        {"id": "app_custom", "name": "自定义CAD",
+         "match_exe": "customcad.exe", "match_title": ""},
     ])
-    eng._foreground_exe = lambda hwnd: "sldworks.exe"
-    assert eng._detect_window_type() == "app_sldworks"
+    eng._foreground_exe = lambda hwnd: "customcad.exe"
+    assert eng._detect_window_type() == "app_custom"
 
 
 def test_detect_window_type_custom_title(monkeypatch):

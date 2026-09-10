@@ -280,3 +280,66 @@ def test_trigger_values_normal():
     eng = _clamp_engine({"trigger_distance": 15, "sector_count": 8})
     assert eng.trigger_distance == 15
     assert eng.sector_count == 8
+
+
+# ========== 不弹圆盘的应用（自带右键手势，如 SolidWorks 鼠标笔势） ==========
+
+def test_parse_exclude_apps():
+    from src.gesture_engine import parse_exclude_apps
+    assert parse_exclude_apps("sldworks") == ("sldworks",)
+    assert parse_exclude_apps(" SLDWORKS , acad ") == ("sldworks", "acad")
+    assert parse_exclude_apps("sldworks；中望,zwcad") == ("sldworks", "中望",
+                                                          "zwcad")
+    assert parse_exclude_apps("") == ()
+    assert parse_exclude_apps(None) == ()
+
+
+def test_match_exclude_exe():
+    from src.gesture_engine import match_exclude_exe
+    hints = ("sldworks", "acad")
+    assert match_exclude_exe(r"D:\Program Files\SOLIDWORKS Corp\SLDWORKS.exe",
+                             hints) is True
+    assert match_exclude_exe(r"c:\x\acad.exe", hints) is True
+    assert match_exclude_exe(r"c:\x\zwcad.exe", hints) is False
+    assert match_exclude_exe("", hints) is False
+    assert match_exclude_exe(r"c:\x\sldworks.exe", ()) is False
+
+
+def test_default_exclude_covers_solidworks():
+    """默认必须排除 sldworks：SW 主窗是 MFC（类名 Afx: 开头），
+    不被排除就会被 _confirm_window_type_slow 的「afx → autocad」启发式
+    误判成 AutoCAD，右键拖动时弹出 CAD 圆盘并与 SW 鼠标笔势打架。"""
+    from src.gesture_engine import (DEFAULT_EXCLUDE_APPS, NO_TARGET,
+                                    match_exclude_exe, parse_exclude_apps)
+    assert NO_TARGET              # 哨兵必须为真值，否则会落到兜底确认
+    assert match_exclude_exe(
+        r"D:\Program Files\SOLIDWORKS Corp\SOLIDWORKS\SLDWORKS.exe",
+        parse_exclude_apps(DEFAULT_EXCLUDE_APPS)) is True
+
+
+def test_engine_loads_exclude_apps_from_config():
+    eng = _clamp_engine({})
+    assert eng._exclude_apps == ("sldworks",)   # 缺配置时用默认值
+    eng.update_config({"settings": {"gesture_exclude_apps": "sldworks,acad"}})
+    assert eng._exclude_apps == ("sldworks", "acad")
+    eng.update_config({"settings": {"gesture_exclude_apps": ""}})
+    assert eng._exclude_apps == ()              # 用户清空 = 所有应用都弹圆盘
+
+
+def test_exclude_list_beats_custom_target():
+    """排除名单优先于自定义应用注册。
+
+    旧文档曾让人把 SolidWorks 注册成自定义应用（match_exe=sldworks）来用圆盘；
+    若自定义注册优先，这些用户会继续在 SW 里弹出圆盘、与鼠标笔势打架。
+    """
+    from src.gesture_engine import NO_TARGET
+    eng = _clamp_engine({"custom_targets": [
+        {"id": "app_sldworks", "name": "SolidWorks",
+         "match_exe": "sldworks.exe", "match_title": ""}]})
+    eng._window_cache = ("", 0.0)
+    eng._foreground_exe = lambda hwnd: r"d:\x\sldworks.exe"
+    assert eng._detect_window_type() == NO_TARGET
+    # 排除名单里的目标也不会走标题兜底确认
+    assert eng._confirm_window_type_slow(0) == ""
+
+

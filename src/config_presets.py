@@ -1,4 +1,4 @@
-"""预设命令库和默认配置"""
+﻿"""预设命令库和默认配置"""
 
 import copy
 from typing import Dict, Any
@@ -453,12 +453,17 @@ def _default_config() -> Dict[str, Any]:
             "custom_trail": "#6fa3d8",
             "custom_outline": "#3a4757",
             "command_feedback": True,
+            "ime_assist_sw": True,
+            "ime_assist_mode": "key",
+            "sw_key_list": "A-Z,0-9,SPACE",
+            "sw_key_extra_classes": "",
             "feedback_position": "bottom_center",
             "feedback_show_name": True,
             "feedback_show_key": True,
             "feedback_duration_ms": 1500,
             "feedback_offset_x": 0,
             "feedback_offset_y": 0,
+            "gesture_exclude_apps": "sldworks",
             "gesture_paused": False
         },
         "profiles": {

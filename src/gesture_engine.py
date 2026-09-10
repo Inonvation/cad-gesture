@@ -1,6 +1,7 @@
 """手势引擎模块 - 窗口类型检测 + 双层圆盘支持"""
 
 import os
+import re
 import math
 import time
 import threading
@@ -52,6 +53,29 @@ def calc_sector(dx: int, dy: int, sector_count: int) -> int:
 
 # 长按触发所需的最小位移（px）：去手抖，按住不动不算长按
 _LONG_PRESS_MIN_DIST = 3
+
+# 「不弹圆盘的应用」默认名单：这些程序自带右键拖拽手势，抢它的右键只会互相打架。
+# SolidWorks 的「鼠标笔势」就是右键拖动，必须让位。
+DEFAULT_EXCLUDE_APPS = "sldworks"
+
+# _detect_window_type 的哨兵返回值：表示「明确不服务」而不是「未知」。
+# 必须是真值，否则会触发标题/类名兜底确认，而兜底里的
+# 「类名含 afx → autocad」启发式会把 SolidWorks（主窗就是 Afx: 开头）误判成 AutoCAD。
+NO_TARGET = "__none__"
+
+
+def parse_exclude_apps(text: str) -> tuple:
+    """解析「不弹圆盘的应用」列表 → 小写 exe 关键字元组（逗号/分号/空格分隔）"""
+    return tuple(x.strip().lower()
+                 for x in re.split(r"[,，;；\s]+", text or "") if x.strip())
+
+
+def match_exclude_exe(exe_path: str, hints) -> bool:
+    """exe 全路径是否命中排除名单（关键字包含匹配；空名单或空路径不命中）"""
+    e = (exe_path or "").lower()
+    if not e:
+        return False
+    return any(h in e for h in (hints or ()))
 
 
 def physical_to_logical(dist: float, dpr: float) -> float:
@@ -112,6 +136,8 @@ class GestureEngine(RadiiMixin):
 
         # 用户自定义应用（其他软件）匹配规则，update_config 时刷新
         self._custom_targets: list = []
+        # 不弹圆盘的应用（自带右键手势，如 SolidWorks 鼠标笔势）
+        self._exclude_apps: tuple = parse_exclude_apps(DEFAULT_EXCLUDE_APPS)
         self._load_custom_targets()
 
         self._press_pos: Tuple[int, int] = (0, 0)
@@ -251,12 +277,16 @@ class GestureEngine(RadiiMixin):
         self._custom_targets = [
             a for a in apps if isinstance(a, dict) and a.get("id")
         ] if isinstance(apps, list) else []
+        # 同步「不弹圆盘的应用」名单（未配置时用默认值，保证 SW 不被误判）
+        self._exclude_apps = parse_exclude_apps(
+            s.get("gesture_exclude_apps", DEFAULT_EXCLUDE_APPS))
 
     def _detect_window_type(self) -> str:
         """快路径：识别前台窗口属于哪个 target（仅进程名匹配）。
 
         内置规则：exe 含 zwcad → zwcad；exe 含 acad → autocad；
-        自定义应用按 settings.custom_targets 的 match_exe 匹配。
+        自定义应用按 settings.custom_targets 的 match_exe 匹配；
+        命中 settings.gesture_exclude_apps（默认 sldworks）→ 返回 NO_TARGET。
         只做进程名判断（不跨进程发消息），可在低级钩子回调内安全调用。
         未命中返回 ""，由触发轮询线程调用 _confirm_window_type_slow
         做标题/类名兜底——GetWindowTextW 是跨进程 WM_GETTEXT 同步调用，
@@ -269,6 +299,12 @@ class GestureEngine(RadiiMixin):
             hwnd = ctypes.windll.user32.GetForegroundWindow()
             exe = self._foreground_exe(hwnd)
             if exe:
+                if match_exclude_exe(exe, self._exclude_apps):
+                    # 自带右键手势的应用：明确「不服务」，且必须返回真值哨兵，
+                    # 否则会落到 _confirm_window_type_slow 的「afx 类名 → autocad」
+                    # 启发式上（SolidWorks 主窗类就是 Afx: 开头）
+                    self._window_cache = (NO_TARGET, now)
+                    return NO_TARGET
                 if "zwcad" in exe:
                     self._window_cache = ("zwcad", now)
                     return "zwcad"
@@ -290,6 +326,11 @@ class GestureEngine(RadiiMixin):
     def _confirm_window_type_slow(self, hwnd) -> str:
         """慢路径：标题/类名兜底（轮询线程调用，跨进程消息不阻塞钩子链）"""
         try:
+            # 排除名单优先于一切标题/类名启发式：否则诸如 SolidWorks 这类
+            # MFC 程序会被下面的「afx → autocad」规则误判（见 NO_TARGET 注释）
+            if match_exclude_exe(self._foreground_exe(hwnd), self._exclude_apps):
+                self._window_cache = (NO_TARGET, time.monotonic())
+                return ""
             user32 = ctypes.windll.user32
             class_name = ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, class_name, 256)
@@ -490,6 +531,15 @@ class GestureEngine(RadiiMixin):
             # 快路径：仅进程名匹配（不跨进程发消息，钩子回调安全）；
             # 未命中时由触发轮询线程做标题/类名兜底确认
             win_type = self._detect_window_type()
+            if win_type == NO_TARGET:
+                # 排除的应用（自带右键拖拽手势，如 SolidWorks 鼠标笔势）：
+                # 完全不进手势状态机——不启动触发线程、不改状态、也不吞事件，
+                # 右键拖动原样交给该应用自己处理
+                with self._lock:
+                    self._is_pressed = False
+                    self._menu_shown = False
+                return ctypes.windll.user32.CallNextHookEx(
+                    self._hook, nCode, wParam, lParam)
             # 锁外取按下点所在屏 DPI（Win32 调用）：触发判定、扩展区判定与松手
             # 结算统一用它换算距离，跨屏混合 DPI 不偏差
             press_dpr = self._dpr_at(x, y)
