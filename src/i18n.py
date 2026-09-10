@@ -1,4 +1,4 @@
-﻿"""国际化（i18n）— 简体中文 / English 界面语言切换
+"""国际化（i18n）— 简体中文 / English 界面语言切换
 
 - 语言存于配置 settings.language（"zh" / "en"），运行时通过 set_language 切换
 - 所有界面文本通过 T(key) 获取；中文模式下 key 即原文，英文模式查表
@@ -304,9 +304,15 @@ _EN: Dict[str, str] = {
     "正在安装更新，完成后自动启动": "Installing update, will restart automatically",
     "已更新到 v{ver}": "Updated to v{ver}",
     "软件更新": "Software Update",
+    "当前为安装版，暂不支持应用内自动更新。\n\n"
+    "请到 GitHub Releases 下载最新安装包（覆盖安装将保留配置）：\n":
+        "Installed edition does not support in-app auto-update.\n\n"
+        "Download the latest installer from GitHub Releases "
+        "(overwrite install keeps your settings):\n",
     "发现新版本 v{ver}": "New version v{ver} available",
     "当前版本 v{cur} → 新版本 v{new}": "Current v{cur} \u2192 New v{new}",
     "正在下载 v{ver} 更新包": "Downloading v{ver} update",
+    "{pct}%": "{pct}%",
     "{pct}%  ({got} MB / {all} MB)": "{pct}%  ({got} MB / {all} MB)",
     "已下载 {got} MB": "Downloaded {got} MB",
     "下载失败，请检查网络后重试": "Download failed, check network and retry",
@@ -327,6 +333,16 @@ _EN: Dict[str, str] = {
     "已取消更新": "Update cancelled",
     "启动安装程序失败，请手动运行更新包":
         "Failed to start installer, please run the update package manually",
+    "启动更新程序失败，请稍后重试或手动下载最新安装包。":
+        "Failed to start the updater. Retry later or download the latest installer manually.",
+    "当前为绿色版，不支持自动安装。请下载最新压缩包解压替换，原配置将保留。":
+        "Portable edition detected; auto-install is not supported. "
+        "Download the latest zip and replace the folder. Your settings will be kept.",
+    "打开下载页": "Open Download Page",
+    "上次自动更新未完成：目标 v{target}，当前仍为 v{cur}。"
+    "请重新检查更新，或手动下载安装包。":
+        "The last auto-update did not finish: target v{target}, "
+        "currently v{cur}. Check for updates again or install manually.",
     "暂停手势": "Pause Gestures",
     "暂停后 CAD 内长按右键恢复原生菜单，手势不触发":
         "Paused: right-click in CAD returns to native menu, gestures off",

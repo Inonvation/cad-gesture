@@ -1,4 +1,4 @@
-﻿"""设置分类页面 — 每个分类独立一页（由侧边栏导航切换进入）
+"""设置分类页面 — 每个分类独立一页（由侧边栏导航切换进入）
 
 页面（与侧边栏分类一一对应，qt_config_gui 将其加入 QStackedWidget）：
 - AppearancePage  外观与尺寸：界面模式、主题、自定义主色、不透明度、字号 + 圆盘大小/半径/屏幕内限制 + 实时预览
@@ -993,6 +993,10 @@ class TriggerPage(_BasePage):
         self.chk_trail.blockSignals(False)
         # 命令反馈
         s = config.get("settings", {})
+        self.exclude_edit.blockSignals(True)
+        self.exclude_edit.setText(
+            s.get("gesture_exclude_apps", "sldworks"))
+        self.exclude_edit.blockSignals(False)
         self.chk_feedback.blockSignals(True)
         self.chk_feedback.setChecked(s.get("command_feedback", True))
         self.chk_feedback.blockSignals(False)
@@ -1007,10 +1011,6 @@ class TriggerPage(_BasePage):
         self.pos_combo.blockSignals(True)
         self.pos_combo.setCurrentIndex(max(0, idx))
         self.pos_combo.blockSignals(False)
-        self.exclude_edit.blockSignals(True)
-        self.exclude_edit.setText(
-            s.get("gesture_exclude_apps", "sldworks"))
-        self.exclude_edit.blockSignals(False)
         # SolidWorks 输入法助手开关
         self.chk_ime_assist.blockSignals(True)
         self.chk_ime_assist.setChecked(s.get("ime_assist_sw", True))

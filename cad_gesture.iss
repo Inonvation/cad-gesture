@@ -1,14 +1,23 @@
-; CAD鼠标手势 - Inno Setup 安装脚本
-; 要求: Inno Setup 6.3+（x64compatible / CloseApplications 需要）
-; 用法: ISCC.exe /DMyAppVersion=0.0.8 cad_gesture.iss
-;       （scripts\build.bat 自动注入版本号）
+; CAD鼠标手势 - Inno Setup 安装脚本（纯直装向导）
+; ============================================================
+; 形态与 0.0.8 相同：Inno 原生中文向导直接把程序装到所选目录。
+; 自动更新（0.0.10 起）：本直装形态不支持 Velopack 增量更新，
+; 应用内"检查更新"改为提示到 GitHub Releases 手动下载新版安装包。
+; （绿色版 *-portable.zip 仍由 vpk 产出，保留 Velopack 自更新能力。）
+;
+; 用法：ISCC.exe /DMyAppVersion=X.Y.Z cad_gesture.iss  (build.bat 自动注入)
+; 产物：Releases\Setup-CADGesture-vX.Y.Z.exe
+;
+; 兼容：AppId 沿用 0.0.8 的固定 GUID → 老 Inno 安装版（含 0.0.8 自研 updater
+;       静默下载本包）可无缝覆盖升级，配置在 %APPDATA% 不受影响。
 
+; 版本号由 build.bat 经 /DMyAppVersion 注入
 #ifndef MyAppVersion
-#define MyAppVersion "0.0.8"
+#define MyAppVersion "0.0.10"
 #endif
 #define MyAppName "CAD鼠标手势"
 #define MyAppExeName "CADGesture-x64.exe"
-; AppId 固定不可更改，改了就变成"另一个软件"，覆盖安装失效
+; AppId 固定不可更改（0.0.8 起沿用）：改了就变成"另一个软件"，覆盖安装失效
 #define MyAppId "{{8E1F2A3B-4C5D-4E6F-8A7B-9C0D1E2F3A4B}}"
 
 [Setup]
@@ -18,18 +27,16 @@ AppVersion={#MyAppVersion}
 AppPublisher=CAD Gesture
 AppPublisherURL=https://github.com/Inonvation/cad-gesture
 DefaultDirName={localappdata}\Programs\CADGesture
-; 显示目录选择页，允许用户更改安装位置（默认位置是用户目录，免 UAC）
+; 显示目录选择页，允许用户更改安装位置（默认每用户目录，免 UAC）
 DisableDirPage=no
 DefaultGroupName={#MyAppName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupIconFile=assets\icon.ico
 Compression=lzma2/max
 SolidCompression=yes
-OutputDir=dist
+OutputDir=Releases
 OutputBaseFilename=Setup-CADGesture-v{#MyAppVersion}
 CloseApplications=yes
-; 注意：CloseApplicationFilter 是"检查哪些文件被占用"的通配符，默认 *.exe 已覆盖主程序，
-; 无需显式设置。旧版安装器不认识该指令，已移除。
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -58,22 +65,17 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "立即启动"; Flags: nowait postinstall
 
-; 卸载前终止运行中的主程序，否则 exe 被锁定删不掉（卸载残留）
+; 安装/卸载前终止运行中的主程序，否则 exe 被锁删不掉
 [Code]
-// 安装前自动结束运行中的主程序：解决 Restart Manager 关不掉托盘进程、
-// 导致"文件被占用"无法覆盖安装的问题（先请求正常退出，再强制兜底）
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
   Result := '';
-  // 第一遍：请求正常退出，给程序保存状态的机会
   Exec('taskkill.exe', '/IM {#MyAppExeName}', '', SW_HIDE,
        ewWaitUntilTerminated, ResultCode);
-  // 第二遍：强制结束（含子进程树），确保 exe 文件解锁可覆盖
   Exec('taskkill.exe', '/F /T /IM {#MyAppExeName}', '', SW_HIDE,
        ewWaitUntilTerminated, ResultCode);
-  // 0=已结束；128=本来就没有该进程；其他（如 1）=权限不足等原因
   if (ResultCode <> 0) and (ResultCode <> 128) then
     Result := '无法自动结束正在运行的 ' + '{#MyAppExeName}' + '（错误码 ' +
               IntToStr(ResultCode) + '）。请先手动关闭该程序后再安装。';

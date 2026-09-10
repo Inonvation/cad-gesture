@@ -34,6 +34,41 @@
   品牌判定之前**拦下并直接放弃手势 —— 不进状态机、不启动触发线程、不吞事件，右键拖动
   原样交给 SW 自己处理；该名单优先于自定义应用注册。AutoCAD/中望 的判定逻辑未改动。
 
+## [未发布] — Velopack 迁移
+
+### 重大变更
+- **安装与更新框架整体迁移到 Velopack 1.2.0**（替代自研 Inno Setup + urllib
+  下载 + 静默安装器）。安装版改为 vpk 生成的 one-click `Setup.exe`，绿色版
+  由 vpk 直接产出 portable bundle（自带自更新能力），不再区分"形态"。
+- **增量更新（delta）**：用户只下载版本间 diff（跨多版本自动回退全量）。
+- **构建链新增 .NET SDK 8.0 + vpk 工具**：首次需手动 `dotnet tool install
+  vpk`，后续 `scripts\build.bat` 自动化。
+
+### 变更（体验修正，2026-09-08）
+- **安装器回归纯 Inno 直装向导**（0.0.8 同款体验：中文向导 / 可选目录 /
+  覆盖升级 / 原生卸载入口），不再使用"向导壳套 Velopack 引擎"方案。
+- **应用内自动更新调整**：Inno 直装版无 Velopack 布局，手动"检查更新"
+  改为引导到 GitHub Releases 下载新版安装包；绿色版（vpk portable bundle）
+  仍保留 Velopack 增量自更新。
+- 移除安装器 splash（无开场动画）。
+
+### 新增
+- `docs/installer-welcome.txt` / `docs/installer-conclusion.txt`（供 vpk
+  portable 安装文案；Inno 直装走自身中文向导文案）。
+- `docs/velopack-migration-plan.md`：完整迁移方案文档（部分内容已被
+  "体验修正" 取代，仅存档）。
+- 配置 `update_token`：可选 GitHub token（未认证 60 次/h 限流）。
+
+### 移除
+- `src/updater.py` 中自研网络/安装器逻辑（HTML 解析、urllib 下载、子进程
+  静默安装器），替换为 velopack 薄封装（仅绿色版布局启用）。
+- "向导壳"方案相关脚本产物（内嵌 Velopack 引擎的 Inno 壳）。
+
+### 兼容
+- `update_source_url` 旧值（GitHub releases/latest 页 / api.github.com latest
+  接口）会被 `normalize_source_url()` 规范化，无需手工迁移。
+- Inno 直装版与 0.0.8 共用固定 AppId → 老用户覆盖升级保留配置。
+
 ## [0.0.8] - 2026-08-12
 
 ### 新增

@@ -1,4 +1,4 @@
-﻿"""配置管理模块 - 处理配置文件的读写和Profile管理"""
+"""配置管理模块 - 处理配置文件的读写和Profile管理"""
 
 import json
 import os
@@ -225,7 +225,11 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         settings["check_update_on_start"] = False
         migrated = True
     if "update_source_url" not in settings:
-        settings["update_source_url"] = "https://github.com/Inonvation/cad-gesture/releases/latest"
+        settings["update_source_url"] = "https://github.com/Inonvation/cad-gesture"
+        migrated = True
+    if "update_token" not in settings:
+        # 可选 GitHub token（Velopack GithubSource 用，空 = 未认证 60 次/h 限流）
+        settings["update_token"] = ""
         migrated = True
     if "last_update_check" not in settings:
         settings["last_update_check"] = ""

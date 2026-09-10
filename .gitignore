@@ -54,3 +54,6 @@ config/config.json
 config/config.json.bak
 # 调试截图（托盘区域临时截图不入库；README 展示图 docs/_preview_cards.png 正常提交）
 docs/_tray_area*.png
+
+# Velopack 打包产物（本地 Releases 目录；GitHub Release assets 由脚本上传）
+Releases/

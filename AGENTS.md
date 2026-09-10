@@ -14,9 +14,9 @@
 ## 架构
 
 ```
-main.py                 # 入口（含单实例检查）
+main.py                 # 入口（velopack.App().run() 最早 + 单实例 + run()）
 config/config.json      # 旧版配置位置（0.0.2-：仅迁移用，现配置在 %APPDATA%\CADGesture）
-cad_gesture.iss         # Inno Setup 安装包脚本（产出 Setup-CADGesture-vX.Y.Z.exe）
+scripts/build.bat       # 一键打包（PyInstaller → vpk pack）
 src/
 ├── app.py              # 主类（Qt）：事件队列、异步启动初始化(_init_late)、托盘(QSystemTrayIcon)、Profile切换、配置入口、更新流程
 ├── gesture_engine.py   # [核心] WH_MOUSE_LL 钩子 → 方向/圈层判定
@@ -30,14 +30,19 @@ src/
 ├── qt_config_gui.py    # Qt 配置界面（导航式 + 撤销重做 + 方案拖放排序 + Delete 删除）
 ├── qt_popup.py         # 扇区编辑浮层控制器（定位/信号接线，定位算法可单测）
 ├── qt_profile_ops.py   # 方案增删改查/导入导出的纯函数（无 Qt，可单测）
-├── updater.py          # 自动更新（版本比对/检查/下载/静默安装，纯逻辑无 Qt）
+├── sw_key_assist.py    # [SW] 按键直通（默认）：键盘钩子拦截被输入法吞掉的单键 → 直投 SW 窗口
+├── sw_ime_assist.py    # [SW] 输入法助手（可选回退）：按焦点自动切换键盘布局
+├── updater.py          # 自动更新（Velopack 薄封装：纯逻辑无 Qt）
 ├── version.py          # 运行时版本号常量（发版时与 version.txt 同步）
-└── single_instance.py  # 命名互斥体单实例 + 覆盖更新
+└── single_instance.py  # 命名互斥体单实例（覆盖更新由 Velopack Update.exe 负责）
 ```
 
 事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 250ms）。
 每个事件包裹 `try-except`，防止单次错误崩溃整个队列循环。
-更新流程同模式：后台线程检查/下载 → 结果经 event_queue（`update_check_result` / `update_progress` / `update_download_done`）→ 主线程弹窗。
+更新流程：后台线程检查/下载（velopack UpdateManager.check_for_updates / download_updates，
+进度回调 0-100 百分比） → 结果经 event_queue（`update_check_result` / `update_progress_pct` /
+`update_download_done`）→ 主线程弹窗。应用由 `wait_exit_then_apply_updates` 拉起 Update.exe
+接管，主进程退出后原子替换 + 重启。
 启动流程：`run()` 先出托盘图标，QSS/圆盘/引擎/钩子在事件循环内由 `_init_late` 异步完成（`singleShot(0)` 排队）；配置界面、updater、pyautogui 均为延迟加载，启动只加载运行时必需模块。
 
 **触发与圈层判定**：触发 = 右键按下后滑动超过 `trigger_distance` 立即弹出（对齐 Quicker，
@@ -50,8 +55,12 @@ qt_radial_menu hover、配置两处预览共用）：
 
 ## 环境关键坑（务必先读）
 
-- **Python 双解释器**：`python` 命令可能命中多个环境。hermes venv 的 `python.exe` 是 uv launcher，运行 `main.py` 时会 spawn 真解释器（uv cpython）——启动后看到"一对 python 进程"是**正常现象**。启动/验证统一用 hermes venv 的 python：
-  `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`
+- **Python 解释器现状（2026-09-10 复核）**：本机实际可用的是 **Python312**
+  （`%LOCALAPPDATA%\Programs\Python\Python312\python.exe`），依赖齐全（PySide6 / velopack /
+  pyautogui / pywin32 / pytest 9.0.2），`main.py`、`pytest`、`scripts\verify.py` 都用它。
+  历史上用的 hermes venv（`%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`）**本机已不存在**；
+  若又看到"一对 python 进程"属正常（uv launcher 会 spawn 真解释器）。受管 python 3.13 无 pytest /
+  PySide6 / tkinter，不要拿它跑测试或界面。
 - **绝不用 PowerShell 改中文文件**：PowerShell 的 `Get-Content`/`Set-Content` 按 GBK 读 UTF-8 会永久损坏中文（乱码不可逆）。改含中文的 .py/.json 必须用 edit/write 工具；批量替换用 python 脚本（`open(path, encoding='utf-8')`）。
 - **`scripts\build.bat` 必须保持 GBK 编码 + CRLF 行尾**：cmd 按系统代码页（GBK）解析 bat，UTF-8/LF 会让中文行被拆成碎片命令（曾经踩坑）。**绝不用 edit/write 工具改它**（会写成 UTF-8）；如需修改：先用 edit 改一个 UTF-8 副本，再跑 `python -c "d=open(p,'rb').read().decode('utf-8');d=d.replace('\r\n','\n').replace('\n','\r\n');open(p,'wb').write(d.encode('gbk'))"` 转回 GBK+CRLF。同理 `scripts\verify.bat`。
 - **Qt 单应用单线程**：主程序是 `QApplication`（`app.py` 创建）。Qt 控件只能在主线程操作（QObject 非线程安全）；托盘/菜单回调都运行在主线程，无需跨线程投递。配置界面 `qt_config_gui.open_config_gui(on_save=...)` 返回独立 `QMainWindow`（非模态），app 用 `self._config_win` 持有引用防 GC。
@@ -60,6 +69,22 @@ qt_radial_menu hover、配置两处预览共用）：
 
 - **PowerShell 管道会把中文弄坏（本次最大坑）**：`@'...'@ | python -` 的 here-string 传给 Python 时中文常损坏成 `?`/乱码，`$env:PYTHONUTF8='1'` 也不总是可靠。脚本/文件里出现中文时，一律改用 Node REPL（node_repl 的 js 工具）读写，或先让 Node 写 UTF-8 文件再让 Python 读取；PowerShell here-string 只适合纯 ASCII。
 - **git commit message 含中文**：绝不用 `git commit -m "中文"`（PowerShell 直传会乱码），也不要让中文经 PowerShell here-string 写进 message 文件。可靠流程：Node 写 UTF-8 message 文件 → `git commit -F <文件>`。提交后必须验证：`git cat-file commit HEAD` 看原始字节是否 UTF-8——终端显示正常不代表存对了（PowerShell 管道会把 git 输出的 UTF-8 显示成乱码假象）。验证文件内容用 Python subprocess capture 或直接读文件，别用 `git show | python` 经管道（会乱码+行尾转换）。
+- **低级键盘钩子回调禁止做重活（sw_key_assist）**：`WH_KEYBOARD_LL` 回调只做「读快照 +
+  廉价判定 + 入队」，绝不 `OpenProcess` / `SendMessage` / 任何 IPC。回调超时会拖慢全局输入，
+  且 Windows 会静默移除超时的钩子（`LowLevelHooksTimeout`，默认 300ms）。重活放两处：
+  主线程 100ms 轮询（`probe_context` 采集）+ 独立投递线程。
+- **钩子回调必须先判 `LLKHF_INJECTED` 并放行**：这是「不改动 CAD 逻辑」的技术保证 —— CAD 的
+  pyautogui 回退注入的正是注入键，吞掉会让手势命令失聪；同时避免自己的注入被自己再吞（回环）。
+- **SW 按键直通的作用域**：只在 `SLDWORKS.exe` 前台、且焦点被判定为「绘图区视口」时吞键。
+  文本控件与**未识别**控件一律放行（正向白名单，认不出就不吞 —— 宁可快捷键不生效，也不能
+  误吞中文输入）。认不出的类名会以 `[SWKey] 焦点控件未识别…class=xxx` 记进日志，需要时填进
+  `settings.sw_key_extra_classes`。SW 以管理员运行时（UIPI）自动不拦截。
+- **「afx 类名 → autocad」兜底会误伤 MFC 程序（踩过）**：`_confirm_window_type_slow` 里
+  `if "afx" in cs → autocad` 是给 AutoCAD 的 MFC 窗口兜底用的，但 SolidWorks 主窗也是
+  `Afx:0000…`（MFC），于是 SW 被认成 AutoCAD、右键拖动弹出 CAD 圆盘并与 SW 鼠标笔势打架。
+  修法是 `gesture_exclude_apps`（默认 `sldworks`）在**所有品牌判定之前**拦下并返回真值哨兵
+  `NO_TARGET`（必须为真值：返回 "" 会继续走标题/类名兜底，又会被同一启发式抓回去）。
+  该名单**优先于自定义应用注册**。新增类似"自带右键手势"的应用时加进这个名单。
 - **Qt 窗口“假可见”**：Qt `isVisible()` 对隐藏/残留窗口可能返回 True，但 Win32 `IsWindowVisible(hwnd)` 为 False。判断窗口是否真正显示必须查 Win32（ctypes）：`GetWindowThreadProcessId` + `IsWindowVisible` + `IsIconic` + `GetWindowRect`。`_config_win_usable` 加了 Win32 校验才修好“配置打不开”。
 - **启动方式影响窗口显示**：`Start-Process -WindowStyle Hidden` 启动的程序，所有顶层窗口初始 Win32 隐藏（无 WS_VISIBLE），表现为“窗口打不开”。排查窗口显示问题用正常方式启动。
 - **托盘双击不可靠**：Windows 上 QSystemTrayIcon 设置 contextMenu 后，单击会自动弹菜单抢焦点，双击信号（DoubleClick）常收不到。方案：不设 contextMenu，单击(Trigger)/双击(DoubleClick)都打开功能，右键(Context)手动 `menu.popup(QCursor.pos())`。
@@ -74,10 +99,12 @@ qt_radial_menu hover、配置两处预览共用）：
 | 圆盘配色/主题 | `theme.py` 的 `MENU_THEMES`（5 套 + 自定义，配置界面主题下拉自动读取） |
 | 字体/标签位置/扇区绘制 | `qt_renderer.py`（`qt_radial_menu` 运行时、`qt_config_gui` 编辑预览、`qt_settings_panel` 尺寸预览共用，三处必须一致） |
 | 新增 `settings` 配置项 | `config_presets._default_config` + `config_manager._migrate_config`（迁移补字段） + 需要时 `qt_config_gui`/`qt_radial_menu`/`gesture_engine`/`app.py`；半径/缩放类同时改 `menu_geometry.py` |
-| 发版改版本号 | `version.txt` 4 处（filevers/prodvers/FileVersion/ProductVersion） + `src/version.py` 的 `__version__`（共 5 处，`.iss` 由 build.bat 自动注入） |
+| 发版改版本号 | `version.txt` 4 处（filevers/prodvers/FileVersion/ProductVersion） + `src/version.py` 的 `__version__`（共 5 处；`build.bat` 注入 `vpk pack --packVersion`） |
 | 新增命令预设 | `config_presets` 默认 profile + `command_executor` 的 `COMBO_TO_COMMAND` 表 |
 | 新增界面文案 | `i18n.py` 翻译表 + 界面文本用 `T()` 包裹（中文模式 key 即原文） |
 | 新增 Python 依赖 | `requirements.txt` + `cad_gesture.spec`（PySide6 由 PyInstaller 内置 hook 自动收集） |
+| SW 按键直通（处理方式/键集/类名白名单） | `config_presets` 默认值 + `config_manager._migrate_config` + `qt_settings_panel`(TriggerPage) + `i18n.py` + `src/sw_key_assist.py` |
+| 不弹圆盘的应用名单（`gesture_exclude_apps`） | `config_presets` 默认值 + `config_manager._migrate_config` + `qt_settings_panel`(TriggerPage) + `i18n.py`；匹配逻辑在 `gesture_engine.parse_exclude_apps`/`match_exclude_exe` |
 | 改圈层/触发阈值 | 只改 `menu_geometry.py` 的 `DEFAULT_RADII`（gesture_engine 与 qt_radial_menu 都从它取） |
 
 ## 一键验证
@@ -102,30 +129,40 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ## 打包流程（仅发布时使用）
 
 **打包必须用 Python312**（`<USER>\AppData\Local\Programs\Python\Python312\python.exe`），其他 Python 环境可能缺 PyInstaller。
+**Velopack vpk 命令需要 .NET SDK + `dotnet tool install -g vpk`**（vpk shim 在 `%USERPROFILE%\.dotnet\tools\`，
+本项目脚本已设 PATH 自动找到）。首次安装参考 `docs/velopack-migration-plan.md` M0。
 
-**统一入口：双击 `scripts\build.bat`**，一次产出双形态：
-- 绿色版：`dist/CADGesture-vX.Y.Z.zip`（onedir 目录压缩，解压后运行 `CADGesture-x64.exe`）
-- 安装版：`dist/Setup-CADGesture-vX.Y.Z.exe`（需先安装 Inno Setup 6.3+，`C:\Program Files (x86)\Inno Setup 6\ISCC.exe`）
+**统一入口：双击 `scripts\build.bat`**，一次产出 Velopack 双形态：
+- 安装版：`Releases/Setup.exe`（vpk 生成的 one-click 安装器，参考 `assets/installer_splash.png`）
+- 绿色版：`Releases/*-portable.zip`（vpk 产出的 portable bundle，自带自更新）
+- 更新源：`Releases/releases.win.json`（feed；velopack UpdateManager 直接读）
+- 桥接：`Releases/Setup-CADGesture-vX.Y.Z.exe`（build.bat 复制一份同名资产，老 Inno
+  updater 经此路径无感迁移到 Velopack）
 
-build.bat 流程：清理 → PyInstaller（Python312，onedir）→ 复制配置 → `scripts\read_version.py` 提取版本号 → 绿色版压缩为 zip → `ISCC /DMyAppVersion=...` 编译安装包。
+build.bat 流程：清理 → PyInstaller（Python312，onedir）→ 复制配置 → `scripts\read_version.py`
+提取版本号 → `vpk pack`（Setup.exe + portable zip + nupkg + delta + feed）→ 桥接资产复制 → 完成。
 
 手动打包（等价）：
 ```powershell
 cd F:\cad-gesture
 Get-Process CADGesture-x64 -ErrorAction SilentlyContinue | Stop-Process -Force
 & "<USER>\AppData\Local\Programs\Python\Python312\python.exe" -m PyInstaller cad_gesture.spec --clean --noconfirm
-Copy-Item config\config.example.json dist\config\config.example.json -Force  # 发版用模板；本地自测可复制 config.json
-Compress-Archive -Path dist\CADGesture-x64 -DestinationPath dist\CADGesture-vX.Y.Z.zip -Force  # 绿色版 zip
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=0.0.2 cad_gesture.iss
-dist\CADGesture-x64\CADGesture-x64.exe
+Copy-Item config\config.example.json dist\config\config.example.json -Force
+vpk pack --packId CADGesture --packVersion <X.Y.Z> --packDir dist\CADGesture-x64 `
+      --mainExe CADGesture-x64.exe --icon assets\icon.ico `
+      --splashImage assets\installer_splash.png `
+      --instWelcome docs\installer-welcome.txt `
+      --instConclusion docs\installer-conclusion.txt `
+      --packTitle "CAD鼠标手势" --outputDir Releases
 ```
 
 ### 打包前检查清单
 
 1. 关闭所有 CADGesture-x64.exe 进程
-2. Python312 环境装依赖（`requirements.txt` 含 `PySide6`）
-3. `config/config.json` 存在
-4. `assets/icon.ico` 存在（`python scripts\generate_icon.py` 生成）
+2. Python312 环境装依赖（`requirements.txt` 含 `PySide6` + `velopack`）
+3. .NET SDK 8.0+ 已装 + `vpk` 命令可用（`where vpk` 有输出）
+4. `config/config.json` 存在（本地自测）或复制 `config.example.json`
+6. `assets/icon.ico` 与 `assets/installer_splash.png` 存在（splash 用 `python scripts\generate_splash.py` 生成）
 
 `cad_gesture.spec` 的 PySide6 由 PyInstaller 内置 hook 自动收集（Qt 插件/DLL），改依赖时同步检查 spec。
 
@@ -137,18 +174,20 @@ dist\CADGesture-x64\CADGesture-x64.exe
 | 打包成功但 exe 启动闪退 | 缺隐式导入/DLL/PySide6 插件 | 先 `python main.py` 确认源码没问题 |
 | `ModuleNotFoundError: PySide6` | 装到了别的 Python | 用 Python312 的 pip 装 `requirements.txt` |
 | `pywintypes` DLL not found | pywin32 DLL 路径错误 | 确认 spec 的 `pywin32_system32/` 路径 |
+| `where vpk` 无输出 | 未装 dotnet SDK 或 vpk 工具 | 见 docs/velopack-migration-plan.md M0 |
 
 ## 发版流程（打 tag 发布 GitHub Release）
 
 1. 更新 `version.txt` 版本号（4 处：`filevers`/`prodvers`/`FileVersion`/`ProductVersion`）+ `src/version.py` 的 `__version__`（共 5 处）
-2. 打包双产物：双击 `scripts\build.bat`（PyInstaller + ISCC，UPX 已在用户 PATH）
-   - 产物：`dist/CADGesture-vX.Y.Z.zip`（绿色版）+ `dist/Setup-CADGesture-vX.Y.Z.exe`（安装版）
+2. 打包：`scripts\build.bat` 产出 `Releases\` 全部资产（Setup.exe / portable zip / nupkg / delta / releases.win.json + 桥接名 `Setup-CADGesture-vX.Y.Z.exe`）
 3. 提交 version.txt + 本次改动，打 annotated tag：`git tag -a vX.Y.Z -m "vX.Y.Z"`
 4. `git push origin master --tags`
-5. **创建 Release 前，必须先向用户展示待发布内容（版本号、两个 exe 路径/体积、Release notes、附件清单）并等待用户确认**，确认后再执行下一步
-6. `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..." dist/CADGesture-vX.Y.Z.zip dist/Setup-CADGesture-vX.Y.Z.exe config/config.example.json`
-   - 附件 3 个：绿色版 zip + 安装版 + `config.example.json`（模板），**绝不打包用户私有 `config/config.json`**
-7. 发布后实测更新链路：托盘"检查更新" → 检测到新版 → 下载 → 静默安装 → 新版自动启动
+5. **创建 Release 前，必须先向用户展示待发布内容（版本号、产物清单、体积、Release notes、附件清单）并等待用户确认**，确认后再执行下一步
+6. `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..." Releases\* config\config.example.json`
+   - 附件：Releases 下全部产物（含 `releases.win.json`）+ `config/config.example.json`（模板）
+   - **绝不打包用户私有 `config/config.json`**
+   - 或 `vpk upload github --repoUrl https://github.com/Inonvation/cad-gesture --token ...` 一键上传
+7. 发布后实测更新链路：托盘"检查更新" → 检测到新版 → 下载 → 自动更新 → 新版自动启动
 
 ## 关键技术细节
 
@@ -162,9 +201,18 @@ dist\CADGesture-x64\CADGesture-x64.exe
 - **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（5 套：graphite/azure/emerald/crimson/midnight + 自定义主色），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和两处预览共用，改动必须三处一致）。
 - **圆盘几何**：半径/缩放统一从 `menu_geometry.py` 取（`DEFAULT_RADII` + `menu_scale`），不要在各模块里各自写死半径默认值。
 - **配置自动迁移**：`config_manager._migrate_config` 自动补旧配置字段；空的 `extension_sectors` 会从默认配置按 target+name 自动补全。
-- **自动更新**：检查/下载放后台线程，结果经 event_queue 回主线程（`update_check_result`/`update_progress`/`update_download_done`），Qt 控件只在主线程操作。下载到 `%TEMP%\CADGesture-Setup.exe` 后经 `run_installer` 静默安装（`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-`），主进程随即退出，Inno 的 `CloseApplications` 兜底关进程。静默安装后新版自动启动已验证（[Run] 用 `nowait` 不带 `skipifsilent`）。
-- **安装包卸载杀进程**：`cad_gesture.iss` 的 `[Code]` 节在卸载时 `taskkill /F` 终止主程序，否则运行中的 exe 被锁删不掉（卸载残留）。改 .iss 时别删这段。
-- **onedir 打包（启动免解压）**：不再经过 onefile 的 `%TEMP%\_MEIxxxx` 解压，`sys.executable` 指向真实 exe 路径；版本号仍统一用 `src/version.py` 内置常量。绿色版是 `dist/CADGesture-x64/` 整个目录压缩的 zip，运行 `CADGesture-x64.exe`（依赖同目录 `_internal/`，不能单独拷走 exe）。
+- **自动更新**：Velopack 1.2.0 薄封装（`src/updater.py`），后台线程检查/下载，
+  进度回调 0-100 百分比（约每 5%，Velopack Rust 包装会吞掉回调异常，故取消
+  仅停止推 UI 事件而非中断下载）。应用由 `wait_exit_then_apply_updates`
+  拉起 Update.exe 等当前进程退出后原子替换并重启；老 Inno 桥接期 `%TEMP%`
+  更新标记仍可兼容读取一次（首次升到 Velopack 启动时弹"已更新"）。
+- **Velopack 初始化时机**：`main.py` 必须最先调用 `velopack.App().run()`
+  （先于单实例与 GUI），否则 Update.exe 带 `--velopack-*` 参数启动时参数
+  未被消费，安装/更新流程会卡住。`on_restarted` 在 Qt 就绪前触发，仅
+  置 `_RESTART_FLAG` 环境变量，由 app 启动后读出弹"已更新"。
+- **onedir 打包（启动免解压）**：PyInstaller 用 `--onedir`，`sys.executable`
+  指向真实 exe 路径；版本号仍统一用 `src/version.py` 内置常量。Velopack
+  portable bundle 内部 `_internal/` 与 PyInstaller 一致，不要单独拷走 exe。
 
 ## 命令执行优先级
 
@@ -179,7 +227,7 @@ dist\CADGesture-x64\CADGesture-x64.exe
 
 `%APPDATA%\CADGesture\config.json` — `settings` + `profiles`（与 exe 位置无关，用户可编辑；旧版 `config/config.json` 仅用于首次迁移）。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 字段：`description` = COM 命令名，`key` = pyautogui 回退键（自定义应用只走按键模拟），`target` = `autocad`|`zwcad` 或自定义应用 id（`app_xxx`）。
-`settings` 关键项：`app_order`（卡片显示顺序，内置 autocad/zwcad 在前）、`custom_targets`（自定义应用列表：`id`/`name`/`match_exe`/`match_title`）、`autocad_profile`/`zwcad_profile`/`{target}_profile`（各应用当前方案绑定）、`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 false）、`update_source_url`（更新源，默认 GitHub Release 页面）、`last_update_check`（上次检查时间，24h 频率控制）。
+`settings` 关键项：`app_order`（卡片显示顺序，内置 autocad/zwcad 在前）、`custom_targets`（自定义应用列表：`id`/`name`/`match_exe`/`match_title`）、`gesture_exclude_apps`（不弹圆盘的应用，exe 关键字逗号分隔，默认 `sldworks` —— 自带右键笔势的程序；优先于自定义应用注册）、`autocad_profile`/`zwcad_profile`/`{target}_profile`（各应用当前方案绑定）、`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 false）、`update_source_url`（更新源，默认 GitHub Release 页面）、`last_update_check`（上次检查时间，24h 频率控制）、`ime_assist_sw`（SW 快捷键直通总开关，默认 true）、`ime_assist_mode`（`key`=按键直通 / `layout`=切键盘布局，默认 key）、`sw_key_list`（直通键集，默认 `A-Z,0-9,SPACE`）、`sw_key_extra_classes`（额外视口类名白名单，默认空）。
 
 ## 提交规范
 

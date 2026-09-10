@@ -121,13 +121,19 @@ class UpdateDialog(QDialog):
     # ========== 信息模式 ==========
 
     def show_update_info(self, version: str, current: str, notes: str,
-                         on_update, on_later) -> None:
-        """发现新版本：标题 + 版本 + 说明 + 立即更新/稍后"""
+                         on_update, on_later,
+                         primary_text: str | None = None) -> None:
+        """发现新版本：标题 + 版本 + 说明 + 立即更新/稍后
+
+        Args:
+            primary_text: 主按钮文案覆盖。绿色版不支持自动安装，由调用方
+                传入「打开下载页」；None 时用默认「立即更新」。
+        """
         self._title.setText(T("发现新版本 v{ver}").format(ver=version))
         self._subtitle.setText(T("当前版本 v{cur} → 新版本 v{new}")
                                .format(cur=current, new=version))
         self._notes.setText(notes or T("（无更新说明）"))
-        self._btn_primary.setText(T("立即更新"))
+        self._btn_primary.setText(primary_text or T("立即更新"))
         self._btn_secondary.setText(T("稍后再说"))
         self._on_update = on_update
         self._on_later = on_later
@@ -186,8 +192,15 @@ class UpdateDialog(QDialog):
         self._on_update = None
         self._on_later = None
 
+    def set_progress_percent(self, pct: int) -> None:
+        """按百分比更新下载进度（Velopack 进度回调实参为 0-100，无字节数）"""
+        pct = max(0, min(int(pct), 100))
+        self._progress.setRange(0, 100)
+        self._progress.setValue(pct)
+        self._progress_label.setText(T("{pct}%").format(pct=pct))
+
     def set_progress(self, downloaded: int, total: int) -> None:
-        """更新下载进度"""
+        """更新下载进度（旧接口，按字节；Velopack 时代改走 set_progress_percent）"""
         if total > 0:
             self._progress.setRange(0, 100)
             pct = int(downloaded * 100 / total)

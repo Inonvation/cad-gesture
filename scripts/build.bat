@@ -1,22 +1,23 @@
 @echo off
 echo ========================================
-echo   CAD鼠标手势工具 - 一键打包脚本
+echo   CAD鼠标手势工具 - 一键打包脚本（Velopack）
 echo ========================================
 echo.
 
-:: 切换到项目根目录（脚本在 scripts\ 子目录）
+:: 切换到项目根目录
 cd /d "%~dp0.."
 
 :: Python312 环境（打包必须用它，其他环境可能缺 PyInstaller）
 set "PY312=C:\Users\cy\AppData\Local\Programs\Python\Python312\python.exe"
-:: Inno Setup 6.3+（需要 x64compatible / CloseApplications 特性）
+:: Velopack 工具链：dotnet + vpk（用户目录安装，vpk.cmd 为 shim）。
+set "DOTNET=%USERPROFILE%\.dotnet\dotnet.exe"
+:: Inno Setup 6.3+ 编译器（向导壳编译用）
 set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if not exist "%ISCC%" (
-    if exist "D:\Inno Setup 6\ISCC.exe" set "ISCC=D:\Inno Setup 6\ISCC.exe"
-)
+if not exist "%ISCC%" if exist "D:\Inno Setup 6\ISCC.exe" set "ISCC=D:\Inno Setup 6\ISCC.exe"
+set "PATH=%USERPROFILE%\.dotnet\tools;%PATH%"
 
 :: 清理旧的构建文件
-echo [1/5] 清理旧的构建文件...
+echo [1/6] 清理旧的构建文件...
 if exist "build" (
     rmdir /s /q "build"
     echo       已删除 build 目录
@@ -25,10 +26,14 @@ if exist "dist" (
     rmdir /s /q "dist"
     echo       已删除 dist 目录
 )
+if exist "Releases" (
+    rmdir /s /q "Releases"
+    echo       已删除 Releases 目录
+)
 echo.
 
 :: 执行 PyInstaller 打包
-echo [2/5] 正在打包（首次可能需要 1-2 分钟）...
+echo [2/6] 正在打包（首次可能需要 1-2 分钟）...
 "%PY312%" -m PyInstaller cad_gesture.spec --clean --noconfirm
 if errorlevel 1 (
     echo.
@@ -40,7 +45,7 @@ echo       打包完成！
 echo.
 
 :: 复制配置文件到输出目录
-echo [3/5] 复制配置文件...
+echo [3/6] 复制配置文件...
 if not exist "dist\config" (
     mkdir "dist\config"
 )
@@ -52,8 +57,8 @@ if exist "config\config.example.json" (
 )
 echo.
 
-:: 编译安装包（版本号从 version.txt 自动提取注入）
-echo [4/5] 编译安装包...
+:: vpk 打包 Velopack release
+echo [4/6] vpk 打包 Velopack release...
 :: %PY312% 无空格，for /f 命令替换中不能带引号（会导致解析失败）
 for /f %%v in ('%PY312% scripts\read_version.py') do set VERSION=%%v
 if errorlevel 1 (
@@ -62,45 +67,64 @@ if errorlevel 1 (
     exit /b 1
 )
 echo       版本号: %VERSION%
-echo [4/5] 正在打包绿色版 zip...
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\CADGesture-x64' -DestinationPath 'dist\CADGesture-v%VERSION%.zip' -Force"
+:: 检查 vpk 命令（首次需手动装 dotnet SDK + dotnet tool install -g vpk）
+where vpk >nul 2>&1
 if errorlevel 1 (
-    echo [WARNING] 绿色版 zip 打包失败，请手动压缩 dist\CADGesture-x64
-) else (
-    echo       绿色版 zip: dist\CADGesture-v%VERSION%.zip
+    echo [ERROR] 未找到 vpk 命令，请先安装 dotnet SDK 与 vpk:
+    echo        1. dotnet-install.ps1 -Channel 8.0 -InstallDir "%USERPROFILE%\.dotnet"
+    echo        2. "%DOTNET%" tool install vpk --version %VERSION:~0,5% --tool-path "%USERPROFILE%\.dotnet\tools"
+    pause
+    exit /b 1
 )
-if exist "%ISCC%" (
-    "%ISCC%" /DMyAppVersion=%VERSION% cad_gesture.iss
-    if errorlevel 1 (
-        echo [ERROR] 安装包编译失败！
-        pause
-        exit /b 1
-    )
-    echo       安装包编译完成！
-) else (
-    echo [WARNING] 未找到 Inno Setup（%ISCC%），跳过安装包编译
+:: vpk pack：一次产出 Setup.exe + portable zip + nupkg + delta + releases.win.json
+vpk pack --packId CADGesture ^
+         --packVersion %VERSION% ^
+         --packDir dist\CADGesture-x64 ^
+         --mainExe CADGesture-x64.exe ^
+         --icon assets\icon.ico ^
+         --instWelcome docs\installer-welcome.txt ^
+         --instConclusion docs\installer-conclusion.txt ^
+         --packTitle "CAD鼠标手势" ^
+         --outputDir Releases
+if errorlevel 1 (
+    echo [ERROR] vpk 打包失败！
+    pause
+    exit /b 1
 )
+:: 编译 Inno 向导壳（内嵌 Velopack Setup）：产出 Setup-CADGesture-vX.exe
+:: —— 新用户得到传统中文向导（选目录/确认/完成）；老 Inno updater
+::     下载同名资产以 /VERYSILENT 运行时，Inno 自动静默执行，完成无感迁移。
+echo       [5/6] 编译安装向导壳...
+"%ISCC%" /DMyAppVersion=%VERSION% cad_gesture.iss
+if errorlevel 1 (
+    echo [ERROR] 安装向导壳编译失败！
+    pause
+    exit /b 1
+)
+echo       完成：Releases\Setup-CADGesture-v%VERSION%.exe
 echo.
 
 :: 完成
-echo [5/5] 打包完成！
+echo [6/6] 打包完成！
 echo.
 echo ========================================
-echo   输出目录: dist\
-echo   绿色版:   dist\CADGesture-v%VERSION%.zip
-echo   安装版:   dist\Setup-CADGesture-v%VERSION%.exe
-echo   配置文件: dist\config\config.example.json
+echo   输出目录:  Releases\
+echo   安装向导壳: Releases\Setup-CADGesture-v%VERSION%.exe  (中文向导 + 内嵌 Velopack 引擎)
+echo   安装引擎:   Releases\CADGesture-win-Setup.exe
+echo   绿色版:      Releases\CADGesture-win-Portable.zip
+echo   配置模板:  dist\config\config.example.json
+echo   更新源:    Releases\releases.win.json
 echo ========================================
 echo.
-echo   使用方法: 将 dist 文件夹整个复制到任意位置
-echo             解压绿色版 zip 后运行 CADGesture-x64.exe
+echo   发布到 GitHub Release：手动上传 Releases\ 下全部资产
+echo           或 vpk upload github --repoUrl ... --token ...
 echo ========================================
 echo.
 
 :: 询问是否打开输出目录
 set /p OPEN_DIR="是否打开输出目录？(Y/N): "
 if /i "%OPEN_DIR%"=="Y" (
-    explorer "dist"
+    explorer "Releases"
 )
 
 pause
