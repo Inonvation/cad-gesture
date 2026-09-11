@@ -692,6 +692,12 @@ class Interceptor:
         user32.SetWindowsHookExW.restype = wintypes.HHOOK
         user32.SetWindowsHookExW.argtypes = [
             ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+        try:
+            # THREAD_PRIORITY_ABOVE_NORMAL：减少与进程内其它线程争用
+            ctypes.windll.kernel32.SetThreadPriority(
+                ctypes.windll.kernel32.GetCurrentThread(), 1)
+        except Exception:
+            pass
         self._hook = user32.SetWindowsHookExW(
             WH_KEYBOARD_LL, self._callback, None, 0)
         if not self._hook:

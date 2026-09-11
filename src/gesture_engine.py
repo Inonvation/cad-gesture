@@ -687,6 +687,13 @@ class GestureEngine(RadiiMixin):
     def _run_hook(self):
         """运行钩子消息循环"""
         user32 = ctypes.windll.user32
+        # 低级钩子回调跑在本线程；提高优先级，避免进程内其它线程
+        # （导入/绘图）抢占导致系统鼠标输入链等待 → 拖动掉帧
+        try:
+            ctypes.windll.kernel32.SetThreadPriority(
+                ctypes.windll.kernel32.GetCurrentThread(), 2)
+        except Exception:
+            pass
         self._hook = user32.SetWindowsHookExW(
             WH_MOUSE_LL, self._callback, None, 0)
         if not self._hook:

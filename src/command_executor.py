@@ -4,14 +4,15 @@ import ctypes
 import ctypes.wintypes as wintypes
 import time
 import threading
-import pythoncom
-import win32com.client
 
-# pyautogui 延迟加载：仅在首次需要按键模拟（ESC 取消 /
-# COM 回退）时才 import，避免启动时加载 pyautogui+PIL。
-# 首次调用后缓存，全局只设置一次。
+# pyautogui / pywin32 延迟加载：仅在首次真正用到时才 import，
+# 避免启动时加载 pyautogui+PIL / pythoncom+win32com（实测各约 30~40ms，
+# 合计可再缩短启动约 0.1s）。首次调用后缓存，全局只设置一次。
 _pyautogui_mod = None
 _pyautogui_lock = threading.Lock()
+_pythoncom_mod = None
+_win32com_client_mod = None
+_com_import_lock = threading.Lock()
 
 
 def _get_pyautogui():
@@ -25,6 +26,20 @@ def _get_pyautogui():
                 pyautogui.PAUSE = 0  # 移除全局暂停，手动控制
                 _pyautogui_mod = pyautogui
     return _pyautogui_mod
+
+
+def _get_com_modules():
+    """首次调用时加载 pythoncom + win32com.client（线程安全）"""
+    global _pythoncom_mod, _win32com_client_mod
+    if _pythoncom_mod is None or _win32com_client_mod is None:
+        with _com_import_lock:
+            if _pythoncom_mod is None:
+                import pythoncom
+                _pythoncom_mod = pythoncom
+            if _win32com_client_mod is None:
+                import win32com.client
+                _win32com_client_mod = win32com.client
+    return _pythoncom_mod, _win32com_client_mod
 
 # COM 命令映射表
 COMBO_TO_COMMAND = {
@@ -160,6 +175,7 @@ def _get_com_app(target: str = "autocad"):
             return cache["app"]
 
     # 每个线程仅初始化一次 COM
+    pythoncom, win32com_client = _get_com_modules()
     if not getattr(_thread_local, 'com_initialized', False):
         try:
             pythoncom.CoInitialize()
@@ -168,7 +184,7 @@ def _get_com_app(target: str = "autocad"):
             pass
 
     try:
-        app = win32com.client.GetActiveObject(prog_id)
+        app = win32com_client.GetActiveObject(prog_id)
         with _cache_lock:
             _com_cache[target] = {"app": app, "last_try": now}
         return app

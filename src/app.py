@@ -143,9 +143,9 @@ class CADGestureApp:
         self._wake_receiver = _WakeReceiver(self._process_queue)
         self.event_queue = _WakeQueue(self._wake)
 
-        self._exit_poll_count = 0
         self._quitting = False
         self._init_late_done = False
+        self._hooks_installing = False
         # 界面字号生效值：_apply_ui_mode 中记录，__init__ 先置 None，
         # 避免配置窗口在 _init_late 完成前触发保存时 _reload_config 报
         # AttributeError（日志出现过）
@@ -198,10 +198,11 @@ class CADGestureApp:
             self._cmd_worker.start()
 
             # 主循环定时器：菜单可见时 16ms 高频跟踪光标；隐藏时 250ms 低频空转
-            # （事件入队由 _wake 即时唤醒，定时器仅作日志落盘与退出轮询的兜底）
+            # （事件入队由 _wake 即时唤醒，定时器仅作退出轮询兜底）。
+            # 启动先 250ms：16ms 空转会和导入/杀软抢 CPU，加重启动掉帧。
             self._timer = QTimer()
             self._timer.timeout.connect(self._process_queue)
-            self._timer.start(16)
+            self._timer.start(250)
 
             # 跟随系统：轮询系统主题变化（仅 system 模式运行，5 秒一次注册表读，
             # 非 system 模式不启动，避免后台空转）
@@ -211,31 +212,11 @@ class CADGestureApp:
             if s.get("ui_mode", "light") == "system":
                 self._theme_poll_timer.start()
 
-            # SolidWorks 输入法助手：SW 前台时按焦点自动管输入法，与手势无关
-            self._sync_ime_assist_timer()
-
             self._init_late_done = True
 
             # 更新成功反馈：走更新流程后新版启动，弹窗确认“已更新”（比气泡可靠）
             QTimer.singleShot(800, self._show_update_success_if_any)
 
-            # 预热 pyautogui：第一个手势的 ESC 取消/命令回退不卡顿
-            try:
-                threading.Thread(target=_preload_pyautogui,
-                                 daemon=True).start()
-            except Exception:
-                pass
-
-            # 钩子安装（失败仅提示，不阻塞托盘）
-            if not self.gesture_engine.start():
-                self.log.error("鼠标钩子安装失败，手势将不可用")
-                try:
-                    self.tray.showMessage(
-                        T("CAD Gesture"),
-                        T("鼠标钩子安装失败，手势将不可用"),
-                        QSystemTrayIcon.Warning, 3000)
-                except Exception:
-                    pass
             # 升级提示：版本变化时托盘提示一次（记录上次运行版本）
             s2 = self.config.get("settings", {})
             last_run = s2.get("last_run_version", "")
@@ -249,6 +230,13 @@ class CADGestureApp:
                     pass
             s2["last_run_version"] = __version__
             save_config(self.config)
+
+            # 钩子安装整体推迟：低级鼠标钩子会串在系统输入链上，启动阶段
+            # pyautogui/PIL 导入、杀软扫 DLL 都会抢 GIL/CPU，表现为拖动掉帧。
+            # 先预热依赖，再等一小段安静期，最后才装鼠标/键盘钩子。
+            threading.Thread(
+                target=self._preload_then_install_hooks,
+                daemon=True).start()
 
             # 首次运行或配置了"启动时打开此界面"则自动打开配置
             if self._is_first_run or self.config.get("settings", {}).get(
@@ -266,6 +254,64 @@ class CADGestureApp:
                     QSystemTrayIcon.Warning, 4000)
             except Exception:
                 pass
+
+    def _preload_then_install_hooks(self):
+        """后台：预热 pyautogui → 短暂静默 → 回主线程装钩子。
+
+        低级钩子回调跑在本进程；钩子挂上后，系统每次移动鼠标都要等本进程
+        回调返回。启动瞬间若还在 import PIL / 被杀软扫描，拖动会明显掉帧。
+        因此必须等重活结束后再 SetWindowsHookEx。
+        """
+        try:
+            _preload_pyautogui()
+        except Exception:
+            pass
+        # 给杀软扫新进程/DLL、文件系统缓存一点时间（可按需调大）
+        time.sleep(0.45)
+        if self._quitting:
+            return
+        # 经事件队列回主线程：QTimer.singleShot 从非 GUI 线程调用不可靠
+        # （定时器建在调用线程，而该线程没有事件循环，回调可能永不执行）
+        self.event_queue.put(("install_hooks", None))
+
+    def _install_hooks_after_warmup(self):
+        if self._quitting:
+            return
+        try:
+            self._sync_ime_assist_timer()
+        except Exception as e:
+            self.log.error("启动输入法助手失败: %s", e, exc_info=True)
+        self._start_gesture_hook_async()
+        # 预热一次前台窗口识别，避免第一次右键按下时在钩子里做 OpenProcess
+        try:
+            if getattr(self, "gesture_engine", None) is not None:
+                self.gesture_engine._detect_window_type()
+        except Exception:
+            pass
+
+    def _start_gesture_hook_async(self):
+        """后台线程安装鼠标钩子（start() 内部最多 wait 2s，不能占主线程）"""
+        if self._hooks_installing:
+            return
+        self._hooks_installing = True
+
+        def _run():
+            try:
+                ok = self.gesture_engine.start()
+            except Exception as e:
+                self.log.error("启动手势引擎异常: %s", e, exc_info=True)
+                ok = False
+            self._hooks_installing = False
+            if ok:
+                return
+            self.log.error("鼠标钩子安装失败，手势将不可用")
+            try:
+                # 经事件队列回主线程弹托盘气泡（tray 只能在主线程碰）
+                self.event_queue.put(("hook_install_failed", None))
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True).start()
 
     # ========== 事件入队 ==========
 
@@ -396,6 +442,16 @@ class CADGestureApp:
                             menu = getattr(self, "menu", None)
                             if menu is not None:
                                 menu.set_extension_hint(data)
+                        elif event_type == "install_hooks":
+                            self._install_hooks_after_warmup()
+                        elif event_type == "hook_install_failed":
+                            try:
+                                self.tray.showMessage(
+                                    T("CAD Gesture"),
+                                    T("鼠标钩子安装失败，手势将不可用"),
+                                    QSystemTrayIcon.Warning, 3000)
+                            except Exception:
+                                pass
                         elif event_type == "gesture":
                             try:
                                 sector, ring_type, window_type = data
@@ -450,16 +506,16 @@ class CADGestureApp:
             except Exception as e:
                 self.log.error("日志落盘失败: %s", e)
 
-            # 低频检查：被新实例请求覆盖退出时优雅退出
-            self._exit_poll_count += 1
-            if self._exit_poll_count % 8 == 0:
-                try:
-                    if is_exit_requested():
-                        self.log.info("收到新实例覆盖请求，正在退出当前实例")
-                        self._quit()
-                        return
-                except Exception as e:
-                    self.log.error("退出请求检查异常: %s", e, exc_info=True)
+            # 退出请求：idle 时定时器约 250ms 一拍，直接每拍都查
+            # （WaitForSingleObject 超时 0，开销可忽略）。原先每 8 拍查一次
+            # 要 ~2s，覆盖启动时新实例会明显卡住等旧实例退出。
+            try:
+                if is_exit_requested():
+                    self.log.info("收到新实例覆盖请求，正在退出当前实例")
+                    self._quit()
+                    return
+            except Exception as e:
+                self.log.error("退出请求检查异常: %s", e, exc_info=True)
         except Exception as e:
             self.log.error("主循环异常: %s", e, exc_info=True)
         finally:
@@ -545,18 +601,41 @@ class CADGestureApp:
             self.log.error("同步输入法助手定时器失败: %s", e, exc_info=True)
 
     def _sync_sw_interceptor(self, want: bool):
-        """按键直通拦截器的启停（负责装卸全局键盘钩子）"""
+        """按键直通拦截器的启停（负责装卸全局键盘钩子）
+
+        安装在后台线程等待就绪：start() 内部最多 wait 2s，放主线程会在
+        杀软扫描时拖慢启动/托盘响应。停止仍同步（通常很快）。
+        """
         inter = getattr(self, "_sw_interceptor", None)
         if want and inter is None:
-            try:
-                from src.sw_key_assist import get_interceptor
-                inter = get_interceptor(log=self.log)
-                if not inter.start():
-                    self.log.error("SolidWorks 按键直通：键盘钩子安装失败")
-                    return
-                self._sw_interceptor = inter
-            except Exception as e:
-                self.log.error("启动按键直通失败: %s", e, exc_info=True)
+            if getattr(self, "_sw_interceptor_starting", False):
+                return
+            self._sw_interceptor_starting = True
+
+            def _install():
+                try:
+                    from src.sw_key_assist import get_interceptor
+                    new_inter = get_interceptor(log=self.log)
+                    if not new_inter.start():
+                        self.log.error("SolidWorks 按键直通：键盘钩子安装失败")
+                        return
+                    # 启动期间用户可能已关闭开关
+                    s = self.config.get("settings", {})
+                    enabled = bool(s.get("ime_assist_sw", True))
+                    mode = s.get("ime_assist_mode", "key") or "key"
+                    if not (enabled and mode == "key"):
+                        try:
+                            new_inter.stop()
+                        except Exception:
+                            pass
+                        return
+                    self._sw_interceptor = new_inter
+                except Exception as e:
+                    self.log.error("启动按键直通失败: %s", e, exc_info=True)
+                finally:
+                    self._sw_interceptor_starting = False
+
+            threading.Thread(target=_install, daemon=True).start()
         elif not want and inter is not None:
             try:
                 inter.stop()
