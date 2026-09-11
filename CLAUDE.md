@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-CAD 鼠标手势工具：长按鼠标右键拖动呼出 8 扇区三层径向圆盘菜单（内层 `sectors` / 外层 `outer_sectors` / 扩展圈 `extension_sectors`），释放触发 CAD 命令。服务 AutoCAD 2025+ 和中望CAD，Python 3.11+ / Win32 API / PySide6(Qt6)。
+CAD Gesture：长按鼠标右键拖动呼出 8 扇区三层径向圆盘菜单（内层 `sectors` / 外层 `outer_sectors` / 扩展圈 `extension_sectors`），释放触发 CAD 命令。服务 AutoCAD 2025+ 和中望CAD，Python 3.11+ / Win32 API / PySide6(Qt6)。
 
 **核心设计（方案B）**：低级鼠标钩子 `WH_MOUSE_LL` 只监听不拦截 → CAD 收到右键释放可能弹上下文菜单 → 工具随后发 ESC 取消 → 命令优先走 COM `SendCommand`，不影响十字光标。
 

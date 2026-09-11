@@ -1,4 +1,4 @@
-# CAD 鼠标手势工具 (CAD Gesture)
+# CAD Gesture
 
 一款为 **AutoCAD** 和 **中望CAD** 设计的鼠标手势 + 径向圆盘菜单工具。
 在 CAD 中**长按鼠标右键拖动**，即可从圆盘菜单快速选择并执行命令，无需记忆快捷键。
@@ -20,7 +20,7 @@
 - **现代深/浅色配置界面**（PySide6/Qt，可跟随系统主题）：导航式布局、圆盘预览 + 点击扇区就地编辑浮层、命令库搜索 / 拖放 / 放置模式、撤销/重做（Ctrl+Z / Ctrl+Y）
 - **不影响十字光标**：命令优先通过 COM `SendCommand` 发送，钩子只监听不拦截
 - **单实例运行**：重复启动自动替换旧实例，不产生多余托盘图标
-- **一键更新**：托盘"检查更新"或启动时自动检查，下载新版自动静默覆盖安装
+- **一键更新**：托盘"检查更新"或启动时自动检查，下载新版安装包并静默覆盖安装
 
 ## 支持环境
 
@@ -36,8 +36,8 @@
 
 | 形态 | 文件 | 说明 |
 |------|------|------|
-| 安装版（推荐） | `Setup-CADGesture-vX.Y.Z.exe` | 标准安装向导，开始菜单 / 卸载入口，支持程序内一键更新 |
-| 绿色版 | `CADGesture-vX.Y.Z.zip` | 免安装，解压后运行 `CADGesture-x64.exe` |
+| 安装版（推荐） | `Setup-CADGesture-vX.Y.Z.exe` | 标准安装向导，可选安装目录，开始菜单 / 桌面 / 卸载入口，支持程序内一键更新 |
+| 绿色版 | `CADGesture-vX.Y.Z-portable.zip` | 免安装，解压后运行 `CADGesture-x64.exe` |
 
 1. 下载最新 [Release](https://github.com/Inonvation/cad-gesture/releases) 中的安装包或绿色版
 2. 安装版直接双击运行；绿色版先解压 zip，再运行其中的 `CADGesture-x64.exe`，右下角出现托盘图标即开始使用
@@ -109,16 +109,18 @@ python main.py
 ## 打包发布
 
 ```powershell
-# 用 Python312 打包（或直接双击 scripts\build.bat，自动执行 PyInstaller + Inno Setup）
+# 双击 scripts\build.bat 一键打包（PyInstaller + Inno Setup + 绿色版 zip）
+# 或手动分步：
 python -m PyInstaller cad_gesture.spec --clean --noconfirm
+# 然后用 Inno Setup 6 编译 cad_gesture.iss，并把 dist\CADGesture-x64 压成 zip
 
 # 发版前先同步版本号（5 处：version.txt 4 处 + src/version.py）：
-python scriptsset_version.py 0.0.9
+python scripts\set_version.py 0.0.12
 
 # 产物（发布物为三件，私有 config/config.json 绝不打包）：
-#   dist/CADGesture-vX.Y.Z.zip            绿色版（onedir 目录压缩）
-#   dist/Setup-CADGesture-vX.Y.Z.exe       安装版（Inno Setup，需先安装 Inno Setup 6.3+）
-#   config/config.example.json             配置模板（Release 附件）
+#   Releases/Setup-CADGesture-vX.Y.Z.exe       安装版（Inno Setup，需先装 Inno Setup 6+）
+#   Releases/CADGesture-vX.Y.Z-portable.zip    绿色版
+#   config/config.example.json                 配置模板（Release 附件）
 ```
 
 ## 技术栈

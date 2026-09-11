@@ -67,7 +67,7 @@ def main():
     f_title = _font(FONT_TITLE, 46)
     f_sub = _font(FONT_BODY, 22)
     f_note = _font(FONT_BODY, 15)
-    draw.text((250, 108), "CAD鼠标手势", font=f_title, fill=INK)
+    draw.text((250, 108), "CAD Gesture", font=f_title, fill=INK)
     draw.text((252, 172), "长按右键 · 呼出八方向命令圆盘",
               font=f_sub, fill=INK_SOFT)
     draw.text((252, 236), "支持 AutoCAD 2025+ / 中望CAD",

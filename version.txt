@@ -16,12 +16,12 @@ VSVersionInfo(
         '040904B0',
         [
           StringStruct('CompanyName', 'CAD Gesture'),
-          StringStruct('FileDescription', 'CAD Mouse Gesture Tool'),
+          StringStruct('FileDescription', 'CAD Gesture'),
           StringStruct('FileVersion', '0.0.11'),
           StringStruct('InternalName', 'CADGesture-x64'),
           StringStruct('LegalCopyright', ''),
           StringStruct('OriginalFilename', 'CADGesture-x64.exe'),
-          StringStruct('ProductName', 'CAD Mouse Gesture'),
+          StringStruct('ProductName', 'CAD Gesture'),
           StringStruct('ProductVersion', '0.0.11'),
         ]
       )
