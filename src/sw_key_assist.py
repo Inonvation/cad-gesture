@@ -224,7 +224,6 @@ class Snap(NamedTuple):
     focus_class: str = ""
     composing: bool = False   # 正在拼音组合（best-effort：跨进程常读不到）
     ime_focus: bool = False   # 焦点实际在 IME 组合窗口上（caret 被 IME 抢走）
-    pm_edit: bool = False     # 焦点在 PropertyManager 的参数输入框上
     elevated_blocked: bool = False
     delivery_broken: bool = False
     keyset: frozenset = frozenset()
@@ -252,12 +251,8 @@ def should_intercept(vk: int, is_keyup: bool, snap: Snap, fg_hwnd: int,
         return False
     if vk not in snap.keyset:
         return False
-    if snap.focus_kind != "view":      # 文本控件与未知控件都放行（保守）
-        # 例外：焦点在 PropertyManager 参数输入框上时，单字母键仍需拦截并转发到
-        # 绘图区视口 —— 否则快捷键（E/S/D...）会被输入框吃掉或被 IME 拼成拼音。
-        # 数字/空格放行给输入框（用户可能在输入尺寸值）。
-        if not (snap.pm_edit and ord("A") <= vk <= ord("Z")):
-            return False
+    if snap.focus_kind != "view":      # 文本/未知一律放行（中文优先于快捷键）
+        return False
     if snap.ime_focus:
         # 焦点在 IME 组合窗口上：composition 已在进行（跳过 composing 守卫），
         # 但视口语境仍然成立 → 继续拦截（吞键 + 直投主窗口）。
@@ -387,25 +382,6 @@ def _class_name(hwnd: int) -> str:
                                      ctypes.c_int]
     user32.GetClassNameW(hwnd, buf, 256)
     return buf.value
-
-
-def _is_pm_edit_control(focus_hwnd: int, depth: int = 2) -> bool:
-    """判断焦点是否在 PropertyManager 的输入框上。
-
-    SW 2024 真机实录：PropertyManager 参数输入框是标准 Edit 控件，
-    父窗口是 #32770（标准对话框），深度 2 以内可达。
-    用 parent 链而非递归 EnumChildWindows —— 每次 probe 只走 ≤2 步，开销极低。
-    """
-    if not focus_hwnd:
-        return False
-    p = user32.GetParent(focus_hwnd)
-    for _ in range(depth):
-        if not p:
-            return False
-        if _class_name(p) == "#32770":
-            return True
-        p = user32.GetParent(p)
-    return False
 
 
 def _find_viewport(frame_hwnd: int, max_depth: int = 6) -> int:
@@ -552,8 +528,6 @@ def probe_context(settings: dict = None) -> Snap:
     cls = _class_name(focus) if focus else ""
     coverage = _client_coverage(focus, fg)
     ime_focus = bool(focus) and focus != fg and _is_ime_focus_window(focus, fg)
-    # PropertyManager 输入框检测：只在焦点是 Edit 类控件时查 parent 链（省调用）
-    pm_edit = bool(focus) and cls.lower() == "edit" and _is_pm_edit_control(focus)
     kind = classify_focus(cls, caret, focus == fg, coverage,
                           _extra_class_hints(settings),
                           ime_focus=ime_focus)
@@ -561,7 +535,7 @@ def probe_context(settings: dict = None) -> Snap:
     composing = _ime_composing(fg) if kind == "view" else False
     return Snap(enabled=not blocked, sw_hwnd=fg, focus_hwnd=focus or fg,
                 focus_kind=kind, focus_class=cls, composing=composing,
-                ime_focus=ime_focus, pm_edit=pm_edit,
+                ime_focus=ime_focus,
                 elevated_blocked=blocked, delivery_broken=False,
                 keyset=keyset)
 
@@ -799,9 +773,9 @@ class Interceptor:
             if self._delivery_broken:
                 continue
             snap = self._snap
-            # PM 输入框 / IME 焦点：投给绘图区视口（SW 的命令循环在视口层处理）。
+            # IME 焦点：投给绘图区视口（SW 的命令循环在视口层处理）。
             # 不能投给框架窗口 —— SW 不处理框架的 PostMessage 键。
-            if snap.ime_focus or snap.pm_edit:
+            if snap.ime_focus:
                 target = _find_viewport(snap.sw_hwnd) or snap.sw_hwnd
             else:
                 target = snap.focus_hwnd or snap.sw_hwnd

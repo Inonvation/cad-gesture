@@ -115,7 +115,7 @@ def test_classify_ime_focus_overrides_caret():
 def _snap(**kw):
     base = dict(enabled=True, sw_hwnd=0x1000, focus_hwnd=0x2000,
                 focus_kind="view", focus_class="AfxFrameOrView140u",
-                composing=False, ime_focus=False, pm_edit=False,
+                composing=False, ime_focus=False,
                 elevated_blocked=False,
                 delivery_broken=False, keyset=frozenset({ord("E")}))
     base.update(kw)
@@ -175,21 +175,18 @@ def test_should_intercept_ime_focus_bypasses_composing():
                                    0x1000, False, False)
 
 
-def test_should_intercept_pm_edit_single_letters():
-    """PropertyManager 输入框：单字母键拦截转发到框架，数字/空格放行。"""
-    base = _snap(pm_edit=True, focus_kind="text", focus_class="Edit",
-                 keyset=frozenset({ord("E"), ord("S"), ord("0"), 0x20}))
-    # 单字母 → 拦截（转发到框架命令循环）
-    assert sk.should_intercept(ord("E"), False, base, 0x1000, False, False)
-    assert sk.should_intercept(ord("S"), False, base, 0x1000, False, False)
-    # 数字 → 放行（用户可能在输入尺寸值）
-    assert not sk.should_intercept(ord("0"), False, base, 0x1000, False, False)
-    # 空格 → 放行
-    assert not sk.should_intercept(0x20, False, base, 0x1000, False, False)
-    # 非 PM 输入框的文本控件 → 全部放行（原有行为不变）
-    assert not sk.should_intercept(ord("E"), False,
-                                   _snap(focus_kind="text"),
-                                   0x1000, False, False)
+def test_should_intercept_text_field_always_pass():
+    """文本输入（含 PropertyManager 改名/尺寸框）一律放行：中文优先于快捷键。
+
+    曾有 pm_edit 单字母例外（焦点在 PM 输入框时仍吞字母投视口），会打断
+    拼音组合首字母；已删除。
+    """
+    s = _snap(focus_kind="text", focus_class="Edit",
+              keyset=frozenset({ord("E"), ord("S"), ord("0"), 0x20}))
+    assert not sk.should_intercept(ord("E"), False, s, 0x1000, False, False)
+    assert not sk.should_intercept(ord("S"), False, s, 0x1000, False, False)
+    assert not sk.should_intercept(ord("0"), False, s, 0x1000, False, False)
+    assert not sk.should_intercept(0x20, False, s, 0x1000, False, False)
 
 
 def test_snap_is_immutable_and_replaceable():
