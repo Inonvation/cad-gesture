@@ -57,3 +57,15 @@ docs/_tray_area*.png
 
 # Velopack 打包产物（本地 Releases 目录；GitHub Release assets 由脚本上传）
 Releases/
+/.workbuddy
+
+# 一次性 UI 审计截图 / 脚本
+audit_shots/
+scripts/capture_ui_audit*.py
+
+# 图标设计过程稿与调试图（定稿产物只有 assets/icon.ico）
+assets/icon-proposals/
+assets/icon_c6c.svg
+assets/icon_contact.png
+assets/icon_preview.png
+assets/icon_zoom_check.png

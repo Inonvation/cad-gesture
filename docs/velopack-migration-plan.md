@@ -1,9 +1,10 @@
 # CADGesture 安装/更新架构迁移方案:Inno Setup → Velopack
 
-> 版本:v1.0(方案稿,待评审)
+> 版本:v1.0(方案稿,已实施后于同日回退)
 > 日期:2026-09-08
 > 关联:`docs/installer-update-plan.md`(Inno 时代规划,已实施,存档)
-> 状态:⏳ 已定方向(迁移 Velopack),待评审后按 M0–M4 里程碑实施
+> 状态:**已废弃**（2026-09-11）：项目已回退为 Inno Setup 单一形态，去掉
+> Velopack / .NET / vpk。本文仅作历史存档，不代表现状。
 
 ---
 
@@ -162,7 +163,7 @@ vpk pack --packId CADGesture ^
          --packDir dist\CADGesture-x64 ^
          --mainExe CADGesture-x64.exe ^
          --icon assets\icon.ico ^
-         --packTitle "CAD鼠标手势" ^
+         --packTitle "CAD Gesture" ^
          --releaseNotes %TEMP%\release-notes-%VERSION%.md ^
          --outputDir Releases
 :: [5/6] 桥接资产:旧 Inno updater 硬编码下载 Setup-CADGesture-vX.exe

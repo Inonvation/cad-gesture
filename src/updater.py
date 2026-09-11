@@ -1,25 +1,16 @@
 # -*- coding: utf-8 -*-
 """自动更新模块（纯逻辑无 Qt 依赖）
 
-按运行布局分两条链路：
+安装版 / 绿色版统一走 GitHub Releases：
+检查 Releases 是否有新版 → 下载 `Setup-CADGesture-vX.exe` 安装包 →
+`/VERYSILENT` 静默覆盖安装 → 主进程退出。检查走 releases HTML 页面
+（不受未认证 API 60 次/小时/IP 限流），下载用资产直链。
 
-1. **安装版（Inno 直装，非 Velopack 布局）** —— GitHub 主流做法：
-   检查 Releases 是否有新版 → 下载 `Setup-CADGesture-vX.exe` 安装包 →
-   `/VERYSILENT` 覆盖安装 → 主进程退出。检查走 releases HTML 页面
-   （不受未认证 API 60 次/小时/IP 限流），下载用资产直链。
-
-2. **绿色版 / Velopack 布局** —— Velopack 1.2.0：
-   GithubSource/HttpSource 查 feed → delta/全量下载 → Update.exe 原子替换并重启。
-
-应用侧用 `is_velopack_layout()` 分流。配置 `update_source_url` 两种布局通用：
-GitHub 仓库页或 releases/latest 均可（安装版路径会规范化到 releases/latest）。
-
-线程模型：检查/下载应在后台线程；进度回调由下载线程触发。安装版的
+线程模型：检查/下载应在后台线程；进度回调由下载线程触发。
 `run_installer` 应在主线程调用并随后尽快 `_quit()`。
 
-UpdateInfo(dict) 结构（app.py）：
-    安装版: {"version", "notes", "download_url", "size", "mode": "github"}
-    Velopack: {"version", "notes", "size", "mode": "velopack", "_info": ...}
+UpdateInfo(dict) 结构：
+    {"version", "notes", "download_url", "size", "mode": "github"}
 """
 
 import html
@@ -44,11 +35,7 @@ class UpdateError(Exception):
 
 
 class UpdateCancelled(UpdateError):
-    """下载被用户取消（仅安装版 urllib 下载路径可用抛异常中断）。
-
-    Velopack 下载无取消 API，且其 Rust 包装会吞掉 Python 回调异常；
-    Velopack 路径的取消由 app.py 在 UI 层丢弃后续事件实现。
-    """
+    """下载被用户取消（progress_cb 抛此异常中断下载）"""
 
 
 # ========== 纯函数 ==========
@@ -91,37 +78,8 @@ def compare_versions(a: str, b: str) -> int:
     return 0
 
 
-def is_velopack_layout() -> bool:
-    """判断当前是否运行于 Velopack 布局（具备 Velopack 自更新能力）。
-
-    安装版（Inno 直装）没有该布局，走 GitHub Releases 下载安装包路径；
-    portable bundle / vpk 安装器装出的布局带 Update.exe + current/。
-    """
-    exe_dir = os.path.dirname(sys.executable)
-    if os.path.basename(exe_dir).lower() == "current":
-        return os.path.exists(os.path.join(os.path.dirname(exe_dir),
-                                           "Update.exe"))
-    return os.path.exists(os.path.join(exe_dir, "Update.exe"))
-
-
-def normalize_source_url(url: str) -> str:
-    """把历史配置的更新地址规范化为 Velopack 可直接使用的仓库根地址。"""
-    m = re.match(
-        r"https?://api\.github\.com/repos/([^/]+)/([^/]+)/releases/latest", url)
-    if m:
-        return f"https://github.com/{m.group(1)}/{m.group(2)}"
-    m = re.match(
-        r"https?://github\.com/([^/]+)/([^/]+)/releases/latest", url)
-    if m:
-        return f"https://github.com/{m.group(1)}/{m.group(2)}"
-    m = re.match(r"https?://github\.com/([^/]+)/([^/]+)", url)
-    if m:
-        return f"https://github.com/{m.group(1)}/{m.group(2)}"
-    return url
-
-
 def to_releases_latest_url(url: str) -> str:
-    """规范化为 GitHub releases/latest 页面地址（安装版 HTML 检查用）。
+    """规范化为 GitHub releases/latest 页面地址（HTML 检查用）。
 
     接受仓库根、releases/latest、api.github.com latest 等写法。
     """
@@ -129,8 +87,9 @@ def to_releases_latest_url(url: str) -> str:
         r"https?://api\.github\.com/repos/([^/]+)/([^/]+)(?:/.*)?$", url)
     if m:
         return f"https://github.com/{m.group(1)}/{m.group(2)}/releases/latest"
-    m = re.match(r"https?://github\.com/([^/]+)/([^/]+)/releases(?:/latest)?/?$",
-                 url)
+    m = re.match(
+        r"https?://github\.com/([^/]+)/([^/]+)/releases(?:/latest)?/?$",
+        url)
     if m:
         return f"https://github.com/{m.group(1)}/{m.group(2)}/releases/latest"
     m = re.match(r"https?://github\.com/([^/]+)/([^/]+)/releases/latest", url)
@@ -142,23 +101,11 @@ def to_releases_latest_url(url: str) -> str:
     return url
 
 
-def build_manager(source_url: str, token: str | None = None):
-    """构建 Velopack UpdateManager（仅 Velopack 布局使用）。"""
-    import velopack
-
-    url = normalize_source_url(source_url)
-    if url.startswith("https://github.com/") or url.startswith("http://github.com/"):
-        source = velopack.GithubSource(url, access_token=token or None)
-    else:
-        source = velopack.HttpSource(url)
-    return velopack.UpdateManager(source)
+# ========== GitHub Releases HTML 检查 / 下载 / Inno 静默安装 ==========
 
 
-# ========== 安装版：GitHub Releases HTML 检查 / 下载 / Inno 静默安装 ==========
-
-
-def check_for_update_github(current_version: str, update_url: str) -> dict | None:
-    """检查 GitHub Release 是否有新版本（安装版；走 HTML 页面，不限流）。
+def check_for_update(current_version: str, update_url: str) -> dict | None:
+    """检查 GitHub Release 是否有新版本（走 HTML 页面，不限流）。
 
     Returns:
         有新版本: {"version", "notes", "download_url", "size", "mode": "github"}
@@ -178,7 +125,7 @@ def check_for_update_github(current_version: str, update_url: str) -> dict | Non
         return None
 
     base = html_url.rsplit("/releases/latest", 1)[0]
-    # 安装版更新包固定命名（build.bat / 发版流程保证）
+    # 安装包固定命名（build.bat / 发版流程保证）
     download_url = (f"{base}/releases/download/{tag}/"
                     f"Setup-CADGesture-v{version}.exe")
     return {
@@ -291,51 +238,3 @@ def _safe_remove(path: str):
         os.remove(path)
     except OSError:
         pass
-
-
-# ========== Velopack：检查 / 下载 / 应用 ==========
-
-
-def check_for_update(manager) -> dict | None:
-    """Velopack：检查是否有可用更新。
-
-    Returns:
-        有新版本: {"version", "notes", "size", "mode": "velopack", "_info"}
-        无新版本: None
-    """
-    try:
-        info = manager.check_for_updates()
-    except Exception as e:
-        raise UpdateError(
-            "检查更新失败（网络连接异常，请检查网络后重试）") from e
-    if info is None:
-        return None
-    target = info.TargetFullRelease
-    return {
-        "version": target.Version,
-        "notes": (target.NotesMarkdown or target.NotesHtml or "").strip(),
-        "size": target.Size,
-        "mode": "velopack",
-        "_info": info,
-    }
-
-
-def download_update(manager, info: dict, progress_cb=None) -> None:
-    """Velopack：下载更新包（含 delta 组装/校验）。
-
-    progress_cb(pct): 0-100 百分比整数（约每 5%）。
-    """
-    try:
-        manager.download_updates(info["_info"], progress_cb)
-    except Exception as e:
-        raise UpdateError(f"下载更新失败：{e}") from e
-
-
-def apply_update(manager, info: dict, silent: bool = True,
-                 restart: bool = True) -> None:
-    """Velopack：启动 Update.exe 等待本进程退出后完成替换（可选重启）。"""
-    try:
-        manager.wait_exit_then_apply_updates(
-            info["_info"], silent=silent, restart=restart)
-    except Exception as e:
-        raise UpdateError(f"启动更新程序失败：{e}") from e

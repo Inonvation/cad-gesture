@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-CAD鼠标手势工具 - PyInstaller 打包配置 (onedir 目录版)
+CAD Gesture - PyInstaller 打包配置 (onedir 目录版)
 打包命令：pyinstaller cad_gesture.spec
 """
 

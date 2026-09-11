@@ -433,8 +433,7 @@ def _default_config() -> Dict[str, Any]:
             "open_config_on_start": False,
             "menu_theme": "graphite",
             "check_update_on_start": False,
-            # Velopack 更新源：GitHub 仓库根地址（GithubSource）；兼容旧值
-            # releases/latest 或 api.github.com 地址（updater 会规范化）
+            # 更新源：GitHub 仓库根或 releases/latest 地址（updater 会规范化）
             "update_source_url": "https://github.com/Inonvation/cad-gesture",
             "update_token": "",
             "last_update_check": "",

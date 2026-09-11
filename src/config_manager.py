@@ -228,7 +228,7 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         settings["update_source_url"] = "https://github.com/Inonvation/cad-gesture"
         migrated = True
     if "update_token" not in settings:
-        # 可选 GitHub token（Velopack GithubSource 用，空 = 未认证 60 次/h 限流）
+        # 可选 GitHub token（当前更新走 HTML 页检查，预留字段）
         settings["update_token"] = ""
         migrated = True
     if "last_update_check" not in settings:

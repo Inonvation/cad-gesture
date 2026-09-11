@@ -5,12 +5,17 @@
 
 ## [未发布]
 
+### 变更
+- **安装与更新回退为 Inno Setup 单一形态**（去掉 Velopack / .NET / vpk 依赖）：
+  - 安装版：`Setup-CADGesture-vX.Y.Z.exe`（中文向导，可选安装目录，免 UAC）
+  - 绿色版：`CADGesture-vX.Y.Z-portable.zip`（解压即用）
+  - 程序内一键更新统一走 Releases → 下载 Setup → 静默覆盖安装
+  - 安装向导增加品牌侧边图（`assets/installer_wizard.bmp`）
+
 ### 修复
 - **安装版恢复应用内自动更新**（GitHub 主流做法）：点「检查更新」→
   解析 Releases 有无新版 → 下载 `Setup-CADGesture-vX.exe` → 静默覆盖安装 →
-  新版启动后提示已更新。不再对 Inno 直装形态弹「暂不支持」。
-- 绿色版 / Velopack 布局仍走 Velopack 增量自更新；两条链路按
-  `is_velopack_layout()` 自动分流。
+  新版启动后提示已更新。
 
 ## [0.0.11] - 2026-09-10
 

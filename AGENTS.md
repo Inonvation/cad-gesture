@@ -1,4 +1,4 @@
-# CAD 鼠标手势工具 — Agent 指南
+# CAD Gesture — Agent 指南
 
 ## 项目概述
 
@@ -14,9 +14,9 @@
 ## 架构
 
 ```
-main.py                 # 入口（velopack.App().run() 最早 + 单实例 + run()）
+main.py                 # 入口（单实例 + run()）
 config/config.json      # 旧版配置位置（0.0.2-：仅迁移用，现配置在 %APPDATA%\CADGesture）
-scripts/build.bat       # 一键打包（PyInstaller → vpk pack）
+scripts/build.bat       # 一键打包（PyInstaller → Inno Setup → 绿色版 zip）
 src/
 ├── app.py              # 主类（Qt）：事件队列、异步启动初始化(_init_late)、托盘(QSystemTrayIcon)、Profile切换、配置入口、更新流程
 ├── gesture_engine.py   # [核心] WH_MOUSE_LL 钩子 → 方向/圈层判定
@@ -32,17 +32,16 @@ src/
 ├── qt_profile_ops.py   # 方案增删改查/导入导出的纯函数（无 Qt，可单测）
 ├── sw_key_assist.py    # [SW] 按键直通（默认）：键盘钩子拦截被输入法吞掉的单键 → 直投 SW 窗口
 ├── sw_ime_assist.py    # [SW] 输入法助手（可选回退）：按焦点自动切换键盘布局
-├── updater.py          # 自动更新（Velopack 薄封装：纯逻辑无 Qt）
+├── updater.py          # 自动更新（GitHub Releases → 下载 Setup → Inno 静默安装）
 ├── version.py          # 运行时版本号常量（发版时与 version.txt 同步）
-└── single_instance.py  # 命名互斥体单实例（覆盖更新由 Velopack Update.exe 负责）
+└── single_instance.py  # 命名互斥体单实例
 ```
 
 事件流：钩子线程 → `queue.Queue` → 主线程 `_process_queue()`（QTimer 驱动，菜单可见 16ms / 隐藏 250ms）。
 每个事件包裹 `try-except`，防止单次错误崩溃整个队列循环。
-更新流程：后台线程检查/下载（velopack UpdateManager.check_for_updates / download_updates，
-进度回调 0-100 百分比） → 结果经 event_queue（`update_check_result` / `update_progress_pct` /
-`update_download_done`）→ 主线程弹窗。应用由 `wait_exit_then_apply_updates` 拉起 Update.exe
-接管，主进程退出后原子替换 + 重启。
+更新流程：后台线程检查（解析 Releases HTML）/下载（`Setup-CADGesture-vX.exe` 到 %TEMP%，
+字节进度转百分比） → 结果经 event_queue（`update_check_result` / `update_progress_pct` /
+`update_download_done`）→ 主线程弹窗。确认后静默启动 Inno 安装器并退出主进程。
 启动流程：`run()` 先出托盘图标，QSS/圆盘/引擎/钩子在事件循环内由 `_init_late` 异步完成（`singleShot(0)` 排队）；配置界面、updater、pyautogui 均为延迟加载，启动只加载运行时必需模块。
 
 **触发与圈层判定**：触发 = 右键按下后滑动超过 `trigger_distance` 立即弹出（对齐 Quicker，
@@ -56,7 +55,7 @@ qt_radial_menu hover、配置两处预览共用）：
 ## 环境关键坑（务必先读）
 
 - **Python 解释器现状（2026-09-10 复核）**：本机实际可用的是 **Python312**
-  （`%LOCALAPPDATA%\Programs\Python\Python312\python.exe`），依赖齐全（PySide6 / velopack /
+  （`%LOCALAPPDATA%\Programs\Python\Python312\python.exe`），依赖齐全（PySide6 /
   pyautogui / pywin32 / pytest 9.0.2），`main.py`、`pytest`、`scripts\verify.py` 都用它。
   历史上用的 hermes venv（`%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`）**本机已不存在**；
   若又看到"一对 python 进程"属正常（uv launcher 会 spawn 真解释器）。受管 python 3.13 无 pytest /
@@ -77,8 +76,10 @@ qt_radial_menu hover、配置两处预览共用）：
   pyautogui 回退注入的正是注入键，吞掉会让手势命令失聪；同时避免自己的注入被自己再吞（回环）。
 - **SW 按键直通的作用域**：只在 `SLDWORKS.exe` 前台、且焦点被判定为「绘图区视口」时吞键。
   文本控件与**未识别**控件一律放行（正向白名单，认不出就不吞 —— 宁可快捷键不生效，也不能
-  误吞中文输入）。认不出的类名会以 `[SWKey] 焦点控件未识别…class=xxx` 记进日志，需要时填进
-  `settings.sw_key_extra_classes`。SW 以管理员运行时（UIPI）自动不拦截。
+  误吞中文输入）。曾有 PropertyManager 输入框「单字母仍直投视口」例外，会打断拼音首字母，**已删除**：
+  文本框（含 PM 改名/尺寸框）永远优先打字。认不出的类名会以 `[SWKey] 焦点控件未识别…class=xxx`
+  记进日志，需要时填进 `settings.sw_key_extra_classes`。SW 以管理员运行时（UIPI）自动不拦截。
+  设置页主路径只有一个开关；处理方式/键集/类名在「高级选项」折叠组内。
 - **「afx 类名 → autocad」兜底会误伤 MFC 程序（踩过）**：`_confirm_window_type_slow` 里
   `if "afx" in cs → autocad` 是给 AutoCAD 的 MFC 窗口兜底用的，但 SolidWorks 主窗也是
   `Afx:0000…`（MFC），于是 SW 被认成 AutoCAD、右键拖动弹出 CAD 圆盘并与 SW 鼠标笔势打架。
@@ -129,18 +130,15 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ## 打包流程（仅发布时使用）
 
 **打包必须用 Python312**（`<USER>\AppData\Local\Programs\Python\Python312\python.exe`），其他 Python 环境可能缺 PyInstaller。
-**Velopack vpk 命令需要 .NET SDK + `dotnet tool install -g vpk`**（vpk shim 在 `%USERPROFILE%\.dotnet\tools\`，
-本项目脚本已设 PATH 自动找到）。首次安装参考 `docs/velopack-migration-plan.md` M0。
+**Inno Setup 6** 安装在 `C:\Program Files (x86)\Inno Setup 6\`（或 `D:\Inno Setup 6\`），`build.bat` 会自动探测。
 
-**统一入口：双击 `scripts\build.bat`**，一次产出 Velopack 双形态：
-- 安装版：`Releases/Setup.exe`（vpk 生成的 one-click 安装器，参考 `assets/installer_splash.png`）
-- 绿色版：`Releases/*-portable.zip`（vpk 产出的 portable bundle，自带自更新）
-- 更新源：`Releases/releases.win.json`（feed；velopack UpdateManager 直接读）
-- 桥接：`Releases/Setup-CADGesture-vX.Y.Z.exe`（build.bat 复制一份同名资产，老 Inno
-  updater 经此路径无感迁移到 Velopack）
+**统一入口：双击 `scripts\build.bat`**，一次产出：
+- 安装版：`Releases/Setup-CADGesture-vX.Y.Z.exe`（Inno Setup 中文向导，品牌图 `assets/installer_wizard.bmp`）
+- 绿色版：`Releases/CADGesture-vX.Y.Z-portable.zip`（解压运行 `CADGesture-x64\`）
+- Release 附件：`config/config.example.json`（模板）
 
 build.bat 流程：清理 → PyInstaller（Python312，onedir）→ 复制配置 → `scripts\read_version.py`
-提取版本号 → `vpk pack`（Setup.exe + portable zip + nupkg + delta + feed）→ 桥接资产复制 → 完成。
+提取版本号 → ISCC 编译 Inno 向导 → PowerShell `Compress-Archive` 压绿色版 zip → 完成。
 
 手动打包（等价）：
 ```powershell
@@ -148,21 +146,18 @@ cd F:\cad-gesture
 Get-Process CADGesture-x64 -ErrorAction SilentlyContinue | Stop-Process -Force
 & "<USER>\AppData\Local\Programs\Python\Python312\python.exe" -m PyInstaller cad_gesture.spec --clean --noconfirm
 Copy-Item config\config.example.json dist\config\config.example.json -Force
-vpk pack --packId CADGesture --packVersion <X.Y.Z> --packDir dist\CADGesture-x64 `
-      --mainExe CADGesture-x64.exe --icon assets\icon.ico `
-      --splashImage assets\installer_splash.png `
-      --instWelcome docs\installer-welcome.txt `
-      --instConclusion docs\installer-conclusion.txt `
-      --packTitle "CAD鼠标手势" --outputDir Releases
+# 版本号从 scripts\read_version.py 取
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=<X.Y.Z> cad_gesture.iss
+Compress-Archive -Path dist\CADGesture-x64 -DestinationPath "Releases\CADGesture-v<X.Y.Z>-portable.zip" -Force
 ```
 
 ### 打包前检查清单
 
 1. 关闭所有 CADGesture-x64.exe 进程
-2. Python312 环境装依赖（`requirements.txt` 含 `PySide6` + `velopack`）
-3. .NET SDK 8.0+ 已装 + `vpk` 命令可用（`where vpk` 有输出）
-4. `config/config.json` 存在（本地自测）或复制 `config.example.json`
-6. `assets/icon.ico` 与 `assets/installer_splash.png` 存在（splash 用 `python scripts\generate_splash.py` 生成）
+2. Python312 环境装依赖（`requirements.txt` 含 `PySide6`）
+3. Inno Setup 6 已安装（`ISCC.exe` 存在）
+4. `config/config.example.json` 存在
+5. `assets/icon.ico` 与 `assets/installer_wizard.bmp` 存在（向导图用 `python scripts\generate_wizard_image.py` 生成）
 
 `cad_gesture.spec` 的 PySide6 由 PyInstaller 内置 hook 自动收集（Qt 插件/DLL），改依赖时同步检查 spec。
 
@@ -174,19 +169,18 @@ vpk pack --packId CADGesture --packVersion <X.Y.Z> --packDir dist\CADGesture-x64
 | 打包成功但 exe 启动闪退 | 缺隐式导入/DLL/PySide6 插件 | 先 `python main.py` 确认源码没问题 |
 | `ModuleNotFoundError: PySide6` | 装到了别的 Python | 用 Python312 的 pip 装 `requirements.txt` |
 | `pywintypes` DLL not found | pywin32 DLL 路径错误 | 确认 spec 的 `pywin32_system32/` 路径 |
-| `where vpk` 无输出 | 未装 dotnet SDK 或 vpk 工具 | 见 docs/velopack-migration-plan.md M0 |
+| ISCC 找不到 | 未装 Inno Setup 6 | 安装 Inno Setup 6 后重试 |
 
 ## 发版流程（打 tag 发布 GitHub Release）
 
 1. 更新 `version.txt` 版本号（4 处：`filevers`/`prodvers`/`FileVersion`/`ProductVersion`）+ `src/version.py` 的 `__version__`（共 5 处）
-2. 打包：`scripts\build.bat` 产出 `Releases\` 全部资产（Setup.exe / portable zip / nupkg / delta / releases.win.json + 桥接名 `Setup-CADGesture-vX.Y.Z.exe`）
+2. 打包：`scripts\build.bat` 产出 `Releases\Setup-CADGesture-vX.Y.Z.exe` + `Releases\CADGesture-vX.Y.Z-portable.zip`
 3. 提交 version.txt + 本次改动，打 annotated tag：`git tag -a vX.Y.Z -m "vX.Y.Z"`
 4. `git push origin master --tags`
 5. **创建 Release 前，必须先向用户展示待发布内容（版本号、产物清单、体积、Release notes、附件清单）并等待用户确认**，确认后再执行下一步
 6. `gh release create vX.Y.Z --title "vX.Y.Z" --notes "..." Releases\* config\config.example.json`
-   - 附件：Releases 下全部产物（含 `releases.win.json`）+ `config/config.example.json`（模板）
+   - 附件：安装版 + 绿色版 + `config/config.example.json`（模板）
    - **绝不打包用户私有 `config/config.json`**
-   - 或 `vpk upload github --repoUrl https://github.com/Inonvation/cad-gesture --token ...` 一键上传
 7. 发布后实测更新链路：托盘"检查更新" → 检测到新版 → 下载 → 自动更新 → 新版自动启动
 
 ## 关键技术细节
@@ -201,18 +195,13 @@ vpk pack --packId CADGesture --packVersion <X.Y.Z> --packDir dist\CADGesture-x64
 - **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（5 套：graphite/azure/emerald/crimson/midnight + 自定义主色），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和两处预览共用，改动必须三处一致）。
 - **圆盘几何**：半径/缩放统一从 `menu_geometry.py` 取（`DEFAULT_RADII` + `menu_scale`），不要在各模块里各自写死半径默认值。
 - **配置自动迁移**：`config_manager._migrate_config` 自动补旧配置字段；空的 `extension_sectors` 会从默认配置按 target+name 自动补全。
-- **自动更新**：Velopack 1.2.0 薄封装（`src/updater.py`），后台线程检查/下载，
-  进度回调 0-100 百分比（约每 5%，Velopack Rust 包装会吞掉回调异常，故取消
-  仅停止推 UI 事件而非中断下载）。应用由 `wait_exit_then_apply_updates`
-  拉起 Update.exe 等当前进程退出后原子替换并重启；老 Inno 桥接期 `%TEMP%`
-  更新标记仍可兼容读取一次（首次升到 Velopack 启动时弹"已更新"）。
-- **Velopack 初始化时机**：`main.py` 必须最先调用 `velopack.App().run()`
-  （先于单实例与 GUI），否则 Update.exe 带 `--velopack-*` 参数启动时参数
-  未被消费，安装/更新流程会卡住。`on_restarted` 在 Qt 就绪前触发，仅
-  置 `_RESTART_FLAG` 环境变量，由 app 启动后读出弹"已更新"。
+- **自动更新**：统一走 GitHub Releases HTML 检查（`src/updater.py`）：下载
+  `Setup-CADGesture-vX.exe` 到 %TEMP% → 静默 `/VERYSILENT` 启动 Inno 安装器 →
+  写 %TEMP% 更新标记 → 退出主进程；新版启动时消费标记弹"已更新"。
+  检查/下载在后台线程，进度与结果经 event_queue 回主线程。
 - **onedir 打包（启动免解压）**：PyInstaller 用 `--onedir`，`sys.executable`
-  指向真实 exe 路径；版本号仍统一用 `src/version.py` 内置常量。Velopack
-  portable bundle 内部 `_internal/` 与 PyInstaller 一致，不要单独拷走 exe。
+  指向真实 exe 路径；版本号统一用 `src/version.py` 内置常量。绿色版 zip
+  整包压缩 `dist\CADGesture-x64\`，解压后运行其中的 exe。
 
 ## 命令执行优先级
 
@@ -257,7 +246,7 @@ vpk pack --packId CADGesture --packVersion <X.Y.Z> --packDir dist\CADGesture-x64
    python -m py_compile src\修改的文件.py
    python -m pytest tests/ -q
    # 后台启动主程序让用户看效果
-   Start-Process "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe" -ArgumentList "main.py" -WorkingDirectory "F:\cad-gesture"
+   Start-Process "C:\Users\cy\AppData\Local\Programs\Python\Python312\python.exe" -ArgumentList "main.py" -WorkingDirectory "F:\cad-gesture"
    ```
    告诉用户"程序已启动，请查看改动效果"，然后继续下一步
 5. 检查未使用的 import
