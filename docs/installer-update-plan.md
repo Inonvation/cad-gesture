@@ -49,7 +49,7 @@ PyInstaller onedir ──> dist\CADGesture-x64\（绿色版目录压缩为 zip�
 |------|------|------|
 | 安装目录 | `{localappdata}\Programs\CADGesture` | 免 UAC 弹窗，对小白友好 |
 | 装入内容 | 仅 `CADGesture-x64.exe` + `config.example.json`（装到 `config\` 子目录） | 用户配置在 `%APPDATA%`，安装器不碰 |
-| 快捷方式 | 开始菜单（"CAD鼠标手势"文件夹）；不做桌面快捷方式 | 托盘程序无需桌面图标 |
+| 快捷方式 | 开始菜单（"CAD Gesture"文件夹）；不做桌面快捷方式 | 托盘程序无需桌面图标 |
 | 自动关闭程序 | `CloseApplications=yes`（Inno 6.2+） | 更新时旧版在运行也能覆盖 |
 | 版本号 | `#define MyAppVersion` 从 `version.txt` 预处理读取 | 单一版本来源 |
 | 向导语言 | 简体中文 | `Languages\ChineseSimplified.isl` |
@@ -59,7 +59,7 @@ PyInstaller onedir ──> dist\CADGesture-x64\（绿色版目录压缩为 zip�
 
 ```ini
 ; cad_gesture.iss
-#define MyAppName "CAD鼠标手势"
+#define MyAppName "CAD Gesture"
 #define MyAppExeName "CADGesture-x64.exe"
 ; 版本号从 version.txt 中读取（PyInstaller VSVersionInfo 格式的 FileVersion 行）
 #define MyAppVersion "0.0.2"   ; 构建时可用脚本/预处理器自动替换
@@ -272,7 +272,7 @@ def run_installer(installer_path: str)
 - [ ] 安装后 `%APPDATA%\CADGesture` 无残留垃圾、程序正常启动、托盘正常
 - [ ] **配置保留**：安装前手动改配置（如主题改 crimson）→ 卸载 → 重装 → 配置仍在
 - [ ] 旧版绿色版 exe 在运行时 → 静默安装 Setup（模拟更新）→ 自动关进程、覆盖成功
-- [ ] "程序和功能"里能看到"CAD鼠标手势"，卸载只删程序文件
+- [ ] "程序和功能"里能看到"CAD Gesture"，卸载只删程序文件
 
 ### 8.2 自动更新
 - [ ] 版本比对函数单测：0.0.9 < 0.0.10、v 前缀处理、非法版本容错
