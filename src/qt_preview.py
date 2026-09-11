@@ -317,8 +317,8 @@ class QRadialPreview(QWidget):
         e.acceptProposedAction()
 
     def mousePressEvent(self, e):
-        if e.button() in (Qt.LeftButton, Qt.RightButton):
-            s = self._sector_at(e.position().x(), e.position().y())
+        s = self._sector_at(e.position().x(), e.position().y())
+        if e.button() == Qt.LeftButton:
             if s:
                 if self.pending is not None:
                     # 放置模式：点击扇区放置命令
@@ -334,17 +334,19 @@ class QRadialPreview(QWidget):
                 self.selected = s
                 self.update()
             else:
-                # 点击圆盘外：取消放置模式或清除选中
+                # 左键点圆盘外：取消放置模式 + 清除选中
                 if self.pending is not None:
                     self.pending = None
                     self.setCursor(Qt.ArrowCursor)
-                if e.button() == Qt.LeftButton:
-                    self._clear_selection()
+                self._clear_selection()
         elif e.button() == Qt.RightButton:
+            # 右键：取消放置模式；在扇区上则不改选中，在空白处清除选中
             if self.pending is not None:
                 self.pending = None
                 self.setCursor(Qt.ArrowCursor)
                 self.update()
+            elif not s:
+                self._clear_selection()
 
     def _clear_selection(self):
         """清除选中高亮（点击圆盘外触发）"""

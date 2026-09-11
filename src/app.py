@@ -231,7 +231,7 @@ class CADGestureApp:
                 self.log.error("鼠标钩子安装失败，手势将不可用")
                 try:
                     self.tray.showMessage(
-                        "CAD鼠标手势",
+                        T("CAD Gesture"),
                         T("鼠标钩子安装失败，手势将不可用"),
                         QSystemTrayIcon.Warning, 3000)
                 except Exception:
@@ -242,7 +242,7 @@ class CADGestureApp:
             if last_run and last_run != __version__:
                 try:
                     self.tray.showMessage(
-                        "CAD鼠标手势",
+                        T("CAD Gesture"),
                         T("已更新到 v{ver}").format(ver=__version__),
                         QSystemTrayIcon.Information, 4000)
                 except Exception:
@@ -261,7 +261,7 @@ class CADGestureApp:
             self._init_late_done = True
             try:
                 self.tray.showMessage(
-                    "CAD鼠标手势",
+                    T("CAD Gesture"),
                     T("初始化失败，部分功能不可用"),
                     QSystemTrayIcon.Warning, 4000)
             except Exception:
@@ -423,7 +423,8 @@ class CADGestureApp:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)
                         elif event_type == "update_check_result":
                             self._on_update_check_result(data)
-                        elif event_type == "update_progress_pct":
+                        elif event_type in ("update_progress_pct",
+                                            "update_progress_bytes"):
                             self._on_update_progress(data)
                         elif event_type == "update_download_done":
                             self._on_update_download_done(data)
@@ -589,13 +590,54 @@ class CADGestureApp:
 
     # ========== 托盘 ==========
 
-    def _create_tray_icon(self) -> QIcon:
-        """创建托盘图标（优先加载 assets/icon.ico，失败则代码绘制）"""
+    def _create_tray_icon(self, paused: bool = False) -> QIcon:
+        """创建托盘图标（优先加载 assets/icon.ico，失败则代码绘制）。
+
+        paused=True 时叠加灰色遮罩与斜杠，让「暂停手势」状态一眼可见。
+        """
         icon_path = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "assets", "icon.ico")
         if os.path.exists(icon_path):
-            return QIcon(icon_path)
-        return self._draw_tray_icon()
+            base = QPixmap(icon_path)
+        else:
+            base = self._draw_tray_icon().pixmap(64, 64)
+        if not paused:
+            return QIcon(base)
+        return QIcon(self._paused_icon_overlay(base))
+
+    @staticmethod
+    def _paused_icon_overlay(pm: QPixmap) -> QPixmap:
+        """在原图标上叠加半透明灰罩 + 对角斜杠，表示手势已暂停"""
+        size = max(pm.width(), pm.height())
+        out = pm.scaled(size, size, Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation).copy()
+        p = QPainter(out)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        p.setBrush(QColor(40, 40, 40, 140))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(0, 0, out.width(), out.height())
+        w, h = out.width(), out.height()
+        pen = QPen(QColor(220, 70, 70, 230))
+        pen.setWidthF(max(2.0, w * 0.12))
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.drawLine(int(w * 0.22), int(h * 0.22),
+                   int(w * 0.78), int(h * 0.78))
+        p.end()
+        return out
+
+    def _refresh_tray_icon(self):
+        """按暂停状态刷新托盘图标与 tooltip（扫一眼可知是否在出手势）"""
+        if not hasattr(self, "tray") or self.tray is None:
+            return
+        paused = bool(self.config.get("settings", {}).get(
+            "gesture_paused", False))
+        self.tray.setIcon(self._create_tray_icon(paused=paused))
+        if paused:
+            self.tray.setToolTip(T("CAD Gesture — 手势已暂停"))
+        else:
+            self.tray.setToolTip(T("CAD Gesture"))
 
     def _draw_tray_icon(self) -> QIcon:
         """代码绘制托盘图标（兜底，8 方向径向圆盘）"""
@@ -631,10 +673,10 @@ class CADGestureApp:
         """设置系统托盘"""
         self._tray_menu = self._build_tray_menu()  # 保持引用防 GC
         if hasattr(self, "tray"):
-            self.tray.setToolTip(T("CAD鼠标手势"))
+            self._refresh_tray_icon()
             return
         self.tray = QSystemTrayIcon(self._create_tray_icon())
-        self.tray.setToolTip(T("CAD鼠标手势"))
+        self._refresh_tray_icon()
         # 不设置 contextMenu：Qt 在 Windows 上对设置了 contextMenu 的托盘，
         # 单击也会自动弹出菜单，还会干扰双击信号的送达（第一次单击弹菜单
         # 抢焦点，第二次单击不再触发 DoubleClick）。改为右键手动弹菜单。
@@ -673,16 +715,22 @@ class CADGestureApp:
         try:
             self._tray_menu = self._build_tray_menu()
             if hasattr(self, "tray"):
-                self.tray.setToolTip(T("CAD鼠标手势"))
+                self._refresh_tray_icon()
         except Exception as e:
             self.log.error("重建托盘菜单失败: %s", e, exc_info=True)
 
     def _build_tray_menu(self) -> QMenu:
-        """构建托盘菜单（当前语言）"""
+        """构建托盘菜单（当前语言 + 明确悬停高亮）"""
         profile_names = get_profile_names(self.config)
         profiles = self.config.get("profiles", {})
 
         menu = QMenu()
+        # Windows 原生菜单对全局 QSS 支持不全：单独再贴一层，保证悬停反馈
+        try:
+            menu.setStyleSheet(build_app_qss(
+                self.config.get("settings", {}).get("ui_mode", "light")))
+        except Exception:
+            pass
 
         # 当前各 target 生效方案（勾选标记用），与运行时规则一致
         targets = get_target_order(self.config)
@@ -734,7 +782,7 @@ class CADGestureApp:
         act_update.triggered.connect(lambda _=False: self._check_update(manual=True))
         menu.addAction(act_update)
         act_exit = QAction(T("退出"), menu)
-        act_exit.triggered.connect(lambda _=False: self._quit())
+        act_exit.triggered.connect(lambda _=False: self._request_quit())
         menu.addAction(act_exit)
         return menu
 
@@ -752,7 +800,7 @@ class CADGestureApp:
             self.menu.update_config(self.config)
             display = self.config["profiles"].get(profile_name, {}).get("name", profile_name)
             try:
-                self.tray.showMessage("CAD鼠标手势",
+                self.tray.showMessage(T("CAD Gesture"),
                                       T("已切换到: {name}").format(name=display),
                                       QSystemTrayIcon.Information, 2000)
             except Exception:
@@ -761,7 +809,7 @@ class CADGestureApp:
             self.log.error("切换方案失败: %s", e, exc_info=True)
 
     def _toggle_pause(self, checked: bool):
-        """托盘切换"暂停手势"：同步引擎与配置（状态持久化，重启仍生效）"""
+        """托盘切换"暂停手势"：同步引擎、图标与配置（状态持久化，重启仍生效）"""
         try:
             s = self.config.setdefault("settings", {})
             s["gesture_paused"] = bool(checked)
@@ -770,11 +818,12 @@ class CADGestureApp:
                 engine.set_paused(bool(checked))
             save_config(self.config)
             self._tray_message(
-                "CAD鼠标手势",
+                T("CAD Gesture"),
                 T("手势已暂停，长按右键恢复原生菜单") if checked
                 else T("手势已恢复"))
             # 语言/状态变化后重建菜单，保证勾选状态与引擎一致
             self._rebuild_tray()
+            self._refresh_tray_icon()
         except Exception as e:
             self.log.error("切换暂停手势失败: %s", e, exc_info=True)
 
@@ -1088,17 +1137,11 @@ class CADGestureApp:
         self.event_queue.put(("update_download_done", (ok, reason)))
 
     def _download_progress_bytes(self, downloaded: int, total: int):
-        """安装版下载回调：取消则抛异常中断；字节进度转百分比推 UI"""
+        """安装版下载回调：取消则抛异常中断；推字节进度给 UI（显示 MB/MB）"""
         if self._update_cancel:
             from src.updater import UpdateCancelled
             raise UpdateCancelled("下载被取消")
-        if total > 0:
-            pct = int(downloaded * 100 / total)
-            self.event_queue.put(("update_progress_pct", min(pct, 100)))
-        else:
-            # 未知总大小：按已下载 MB 粗略推进（保持进度条在动）
-            self.event_queue.put(("update_progress_pct",
-                                  min(99, int(downloaded / (10 * 1024 * 1024)))))
+        self.event_queue.put(("update_progress_bytes", (downloaded, total)))
 
     def _download_progress(self, pct: int):
         """Velopack 下载进度回调（其内部线程调用，约每 5%，实参 0-100）。"""
@@ -1108,11 +1151,14 @@ class CADGestureApp:
 
     def _on_update_progress(self, data):
         try:
-            pct = int(data)
             dialog = getattr(self, "_update_dialog", None)
             if dialog is None:
                 return
-            dialog.set_progress_percent(pct)
+            # 兼容旧事件：int=pct；新事件：(downloaded, total)
+            if isinstance(data, (tuple, list)) and len(data) >= 2:
+                dialog.set_progress(int(data[0]), int(data[1]))
+            else:
+                dialog.set_progress_percent(int(data))
         except Exception as e:
             self.log.error("更新进度更新失败: %s", e, exc_info=True)
 
@@ -1127,7 +1173,7 @@ class CADGestureApp:
                     dialog.close()
             except Exception:
                 pass
-            self._tray_message("CAD鼠标手势", T("更新已取消"))
+            self._tray_message(T("CAD Gesture"), T("更新已取消"))
             return
         if not ok:
             self._update_dialog = None
@@ -1281,6 +1327,19 @@ class CADGestureApp:
             self.log.error("更新成功提示失败: %s", e, exc_info=True)
 
     # ========== 退出 ==========
+
+    def _request_quit(self):
+        """托盘退出入口：先确认，避免误点关掉常驻手势工具"""
+        try:
+            ret = QMessageBox.question(
+                None, T("退出 CAD Gesture"),
+                T("确定退出吗？\n\n退出后 CAD 内长按右键将恢复系统原生菜单，手势不再触发。"),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if ret != QMessageBox.Yes:
+                return
+        except Exception as e:
+            self.log.error("退出确认框失败: %s", e, exc_info=True)
+        self._quit()
 
     def _quit(self):
         if self._quitting:

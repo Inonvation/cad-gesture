@@ -416,8 +416,13 @@ QFrame#cardHeader:hover {{ background: {t.bg_hover}; }}
 QLabel#cardArrow {{ color: {t.text_secondary}; font-size: 12px; }}
 QLabel#cardTitle {{ color: {t.text}; font-weight: 600; font-size: 12px; }}
 QLabel#cardCurrent {{ color: {t.text_secondary}; font-size: 11px; }}
-QLabel#cardHandle {{ color: {t.text_muted}; font-size: 13px; padding-right: 2px; }}
-QLabel#cardHandle:hover {{ color: {t.accent}; }}
+QLabel#cardHandle {{ color: {t.text_muted}; font-size: 14px;
+    padding: 4px 6px; border-radius: 5px; background: transparent; }}
+QLabel#cardHandle:hover {{ color: {t.accent}; background: {t.bg_hover}; }}
+QFrame#profileCard[dragging="true"] {{
+    background: {t.bg_selected};
+    border: 1px solid {t.border_strong};
+}}
 QPushButton#profileRow {{
     background: transparent; border: none; color: {t.text_secondary};
     text-align: left; padding: 4px 0; border-radius: 5px;
@@ -507,6 +512,48 @@ QPushButton.themeTile QLabel {{
 }}
 QPushButton.themeTile:hover QLabel {{ color: {t.text}; }}
 QPushButton.themeTile:checked QLabel {{ color: {t.text}; }}
+
+/* ---- 弹出菜单（托盘右键 / 方案菜单）：明确悬停反馈 ---- */
+QMenu {{
+    background: {t.bg_raised};
+    border: 1px solid {t.border_strong};
+    border-radius: 8px;
+    padding: 6px 4px;
+    font-size: {font_px(12)}px;
+}}
+QMenu::item {{
+    background: transparent;
+    border-radius: 5px;
+    padding: 7px 28px 7px 14px;
+    margin: 1px 4px;
+    color: {t.text};
+}}
+QMenu::item:selected {{
+    background: {t.accent};
+    color: {t.accent_text};
+}}
+QMenu::item:disabled {{
+    color: {t.text_muted};
+}}
+QMenu::separator {{
+    height: 1px;
+    background: {t.border};
+    margin: 5px 10px;
+}}
+QMenu::indicator {{
+    width: 12px;
+    height: 12px;
+    margin-left: 6px;
+}}
+QMenu::indicator:checked {{
+    background: {t.accent};
+    border-radius: 3px;
+}}
+QMenu::indicator:unchecked {{
+    background: transparent;
+    border: 1px solid {t.border_strong};
+    border-radius: 3px;
+}}
 """
 
 

@@ -69,11 +69,15 @@ def test_trigger_page_refresh_syncs_sw_ime_assist():
 
 
 def test_trigger_page_has_sw_key_pass_through_controls():
-    """按键直通：处理方式下拉 + 键集 + 额外视口类名，默认「按键直通」"""
+    """高级区：处理方式下拉 + 键集 + 额外视口类名，默认「按键直通」且默认真折叠"""
     _app()
     from src.qt_settings_panel import TriggerPage
     cfg = {"settings": {}}
     page = TriggerPage(cfg)
+    assert page._adv_toggle.isChecked() is False  # 默认折叠，不干扰小白
+    assert page._ime_adv.isHidden() is True
+    page._adv_toggle.setChecked(True)
+    assert page._ime_adv.isHidden() is False
     assert page.ime_mode_combo.currentData() == "key"
     assert page.key_list_edit.text() == "A-Z,0-9,SPACE"
     assert page.extra_cls_edit.text() == ""
@@ -92,6 +96,7 @@ def test_trigger_page_refresh_syncs_sw_key_settings():
     _app()
     from src.qt_settings_panel import TriggerPage
     page = TriggerPage({"settings": {}})
+    page._adv_toggle.setChecked(True)
     page.refresh({"settings": {"ime_assist_mode": "layout",
                                "sw_key_list": "E,F",
                                "sw_key_extra_classes": "gxwnd"}})

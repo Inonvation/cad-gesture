@@ -15,7 +15,7 @@ _listeners: List[Callable[[], None]] = []
 
 _EN: Dict[str, str] = {
     # ---- 主窗口 / 侧边栏 ----
-    "CAD鼠标手势 - 配置": "CAD Gesture - Settings",
+    "CAD Gesture - 配置": "CAD Gesture - Settings",
     "圆盘编辑": "Disc Editor",
     "设置": "Settings",
     "配置方案": "Profiles",
@@ -90,6 +90,57 @@ _EN: Dict[str, str] = {
     "清空当前方案的全部命令": "Clear all commands of current profile",
     "恢复默认": "Reset Defaults",
     "把当前方案恢复为默认命令": "Restore current profile to default commands",
+    "重置当前方案": "Reset Current Profile",
+    "仅把当前方案的三圈命令恢复为默认内容，不影响其他方案和设置":
+        "Restore only the current profile's three rings to defaults; "
+        "other profiles and settings are unchanged",
+    "确定把方案「{name}」的三圈命令\n恢复为默认内容吗？\n\n仅影响当前方案，其他方案与全局设置不变。（可用 Ctrl+Z 撤销）":
+        "Restore profile \"{name}\" rings to default commands?\n\n"
+        "Only this profile is affected. Other profiles and global settings stay. "
+        "(Ctrl+Z can undo)",
+    "重置全部配置": "Reset All Settings",
+    "通用": "General",
+    "启动与更新": "Startup & Updates",
+    "方案与维护": "Profiles & Maintenance",
+    "按住此处拖动排序": "Hold to drag and reorder",
+    "按住 ⠿ 拖动排序": "Hold ⠿ to drag and reorder",
+    "▸ 仅当快捷键失效时，展开高级选项": "▸ Expand advanced options (only if shortcuts fail)",
+    "▾ 收起高级选项": "▾ Collapse advanced options",
+    "日常无需修改。仅当 SolidWorks 里单键快捷键仍不生效时再打开":
+        "Usually leave closed. Open only if single-key shortcuts still fail in SolidWorks",
+    "当前窗口": "This window",
+    "读取当前前台窗口的 exe 名，追加到排除列表（需先切到目标程序再点）":
+        "Append the foreground window's exe name to the exclude list "
+        "(switch to the target app first)",
+    "读取当前窗口失败": "Failed to read the foreground window",
+    "「{exe}」已在排除列表中": "\"{exe}\" is already excluded",
+    "已添加": "Added",
+    "已把「{exe}」加入不弹圆盘列表": "Added \"{exe}\" to the no-disc list",
+    "打开日志文件（%TEMP%\\cad-gesture.log）": "Open log file (%TEMP%\\cad-gesture.log)",
+    "把全部方案命令和全局设置恢复为出厂默认（不可按方案撤销）":
+        "Restore all profile commands and global settings to factory defaults "
+        "(cannot undo per profile)",
+    "把全部方案命令和全局设置恢复为出厂默认（不可按方案撤销）":
+        "Restore all profile commands and global settings to factory defaults "
+        "(cannot undo per profile)",
+    "确定重置全部配置吗？\n\n将清空：\n· 所有应用的方案命令\n· 外观/触发等全局设置\n· 自定义应用列表\n\n建议先「备份配置」。此操作不可用 Ctrl+Z 撤销。":
+        "Reset ALL settings?\n\nThis clears:\n· Commands for every app profile\n"
+        "· Appearance / trigger global settings\n· Custom app list\n\n"
+        "Consider \"Backup Config\" first. Ctrl+Z cannot undo this.",
+    "已读取方案「{name}」，如何导入？": "Profile \"{name}\" loaded. How to import?",
+    "另存为新方案：不动当前方案，推荐。\n覆盖当前方案：替换「{name}」的三圈命令（可用 Ctrl+Z 撤销）。":
+        "Save as new profile: leaves the current one alone (recommended).\n"
+        "Overwrite current: replaces \"{name}\" rings (Ctrl+Z can undo).",
+    "另存为新方案": "Save as New Profile",
+    "覆盖当前方案": "Overwrite Current Profile",
+    "未命名方案": "Untitled Profile",
+    "已导入为新方案「{name}」": "Imported as new profile \"{name}\"",
+    "已覆盖当前方案「{name}」": "Overwrote current profile \"{name}\"",
+    "CAD Gesture — 手势已暂停": "CAD Gesture — Gestures paused",
+    "退出 CAD Gesture": "Quit CAD Gesture",
+    "确定退出吗？\n\n退出后 CAD 内长按右键将恢复系统原生菜单，手势不再触发。":
+        "Quit now?\n\nAfter quitting, long-press right-click in CAD returns to "
+        "the native context menu and gestures stop working.",
 
     # ---- 命令库 ----
     "命令库": "Command Library",
@@ -288,15 +339,15 @@ _EN: Dict[str, str] = {
     "配置": "Settings",
     "退出": "Exit",
     "已切换到: {name}": "Switched to: {name}",
-    "CAD鼠标手势": "CAD Gesture",
+    "CAD Gesture": "CAD Gesture",
     "发现新版本": "New Version Available",
-    "CAD鼠标手势 v{new} 已发布（当前 v{cur}）":
+    "CAD Gesture v{new} 已发布（当前 v{cur}）":
         "CAD Gesture v{new} released (current v{cur})",
     "（无更新说明）": "(no release notes)",
     "立即更新": "Update Now",
     "稍后再说": "Later",
     "正在下载 v{ver} 更新包...": "Downloading v{ver} update...",
-    "CAD鼠标手势 - 更新": "CAD Gesture - Update",
+    "CAD Gesture - 更新": "CAD Gesture - Update",
     "正在下载更新包... {got} KB / {total} KB":
         "Downloading update... {got} KB / {total} KB",
     "更新已取消": "Update cancelled",
@@ -356,6 +407,7 @@ _EN: Dict[str, str] = {
     "检查更新失败（网络连接异常，请检查网络后重试）":
         "Update check failed (network error, please check connection and retry)",
     "检查更新": "Check for Updates",
+    "正在检查更新，请稍候…": "Checking for updates, please wait…",
     "项目主页": "Project Homepage",
     "打开项目主页": "Open Project Homepage",
     "打开项目主页失败": "Failed to open project homepage",
@@ -606,14 +658,15 @@ _EN: Dict[str, str] = {
     "水平偏移": "Horizontal Offset",
     "垂直偏移": "Vertical Offset",
     "SolidWorks 输入法": "SolidWorks IME",
-    "SolidWorks 画图时让单键快捷键直通": "Pass single-key shortcuts through while modeling in SolidWorks",
+    "中文输入法下快捷键直通": "Pass through single-key shortcuts under Chinese IME",
     "处理方式": "Handling mode",
     "按键直通（推荐）": "Pass keys through (recommended)",
     "自动切换键盘布局": "Switch keyboard layout automatically",
     "直通的按键": "Keys to pass through",
     "额外视口类名": "Extra viewport class names",
+    "高级选项": "Advanced",
     "不弹圆盘的应用": "Apps without the disc",
-    "仅在 SolidWorks 窗口在前台时生效。中文输入法处于中文态时，字母/空格会被输入法截走去打拼音，导致 SW 的单键快捷键失效；开启后本工具把这些键直接送进 SW 窗口，输入法本身完全不受影响（语言栏保持中文）。进入文本输入框（尺寸值/注释/重命名）时自动放行，照常打拼音。不影响其他软件，不改动 CAD 手势逻辑。": "Active only while a SolidWorks window is in the foreground. With a Chinese IME in Chinese mode, letters/space are captured by the IME for pinyin composition, so SolidWorks single-key shortcuts stop working. When enabled, these keys are delivered straight into the SolidWorks window while the IME itself is left untouched (the language bar stays Chinese). Text fields (dimension values, notes, rename boxes) are always passed through so pinyin input works normally. Other software is unaffected and the CAD gesture logic is untouched.",
+    "开启后支持 SolidWorks 在中文输入法下也能调用快捷键（如 E/S/空格），可能不稳定。仅在 SolidWorks 窗口在前台时生效：绘图区单键会直接送进 SW，语言栏保持中文；进入文本输入框（尺寸值/注释/重命名）时自动放行，照常打拼音。不影响其他软件，不改动 CAD 手势逻辑。": "When on, SolidWorks single-key shortcuts (E/S/Space, etc.) keep working under a Chinese IME; this may be unstable. Active only while a SolidWorks window is in the foreground: graphics-area keys go straight into SW while the language bar stays Chinese. Text fields (dimensions, notes, rename) are always passed through so pinyin works. Other software and CAD gesture logic are untouched.",
     "按键直通：不动输入法，只把被吞掉的单键直接投给 SW 窗口（推荐）。自动切换键盘布局：SW 绘图区整体切到英文键盘（等同 Win+Space），语言栏会显示 ENG —— 旧方案，作为兜底保留。": "Pass keys through: leave the IME alone and deliver the swallowed single keys straight to the SolidWorks window (recommended). Switch keyboard layout automatically: switch the whole SolidWorks graphics area to the English keyboard (same as Win+Space) so the language bar shows ENG — the older approach, kept as a fallback.",
     "只对 SolidWorks 绘图区生效。写法：A-Z 表示字母区间，0-9 表示数字，SPACE 表示空格（SW 里是视图定向），用逗号分隔。组合键（Ctrl/Shift+键）不受影响，始终原样放行。": "Applies to the SolidWorks graphics area only. Syntax: A-Z for a letter range, 0-9 for digits, SPACE for the space bar (the orientation dialog in SolidWorks), separated by commas. Key combinations (Ctrl/Shift+key) are never touched and always pass through unchanged.",
     "留空即可。若日志出现「焦点控件未识别，已放行 class=xxx」且该处本该走快捷键，把那个类名填进来（逗号分隔）。认不出的控件一律放行，宁可快捷键不生效，也不会误吞中文输入。": "Leave empty in most cases. If the log shows \"unknown focus control, passed through (class=xxx)\" at a place where a shortcut should work, add that class name here (comma separated). Unrecognised controls are always passed through: it is better for a shortcut not to work than to swallow Chinese input.",

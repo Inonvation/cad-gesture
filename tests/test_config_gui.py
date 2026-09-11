@@ -269,8 +269,8 @@ def test_card_list_drop_reorder(app):
 
 
 def test_card_header_drag_vs_click(app):
-    """卡片头：按下移动超阈值触发拖动，原地松开触发折叠（拖动与点击分离）"""
-    from PySide6.QtCore import QEvent, QPointF, Qt
+    """卡片头：手柄区启动就地拖动；标题区点击折叠（拖动与点击分离）"""
+    from PySide6.QtCore import QEvent, QPointF, QPoint, Qt
     from PySide6.QtGui import QMouseEvent, QPointingDevice
     _pdev = QPointingDevice.primaryPointingDevice()
     from src.qt_config_gui import _CardListWidget, _ProfileCard
@@ -278,31 +278,82 @@ def test_card_header_drag_vs_click(app):
     lst = _CardListWidget()
     card = _ProfileCard("a", "A", on_toggle=None)
     lst.add_card(card)
-    started, toggled = [], []
-    card.header._on_toggle = lambda: toggled.append(1)
-    lst.start_drag = lambda c: started.append(c)
+    lst.resize(320, 200)
+    # 布局两张卡，便于测实时重排
+    card2 = _ProfileCard("b", "B", on_toggle=None)
+    lst.add_card(card2)
+    card.resize(300, 30)
+    card2.resize(300, 30)
+    card.setGeometry(0, 0, 300, 30)
+    card2.setGeometry(0, 40, 300, 30)
+    if card.header.layout() is not None:
+        card.header.layout().activate()
+    if lst.layout() is not None:
+        lst.layout().activate()
+
+    started = []
+    card.header._on_toggle = lambda: started.append("toggle")
+    # begin_live_drag 真实执行会 grabMouse；用 mock 验证调用链
+    lst.begin_live_drag = lambda c, gp: started.append(("drag", c))
+    lst.live_drag_to = lambda pos: None
+    lst.end_live_drag = lambda: started.append("end")
 
     h = card.header
-    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(20, 15), QPointF(20, 15),
+    hr = h._handle_rect()
+    if hr is not None and hr.width() > 0:
+        hx, hy = float(hr.center().x()), float(hr.center().y())
+    else:
+        hx, hy = float(h.width() - 12), 15.0
+    press = QMouseEvent(QEvent.MouseButtonPress, QPointF(hx, hy), QPointF(hx, hy),
                         Qt.LeftButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     h.mousePressEvent(press)
-    move = QMouseEvent(QEvent.MouseMove, QPointF(60, 15), QPointF(60, 15),
+    move = QMouseEvent(QEvent.MouseMove, QPointF(hx - 40, hy), QPointF(hx - 40, hy),
                        Qt.NoButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     h.mouseMoveEvent(move)
-    assert len(started) == 1 and started[0] is card
-    assert not toggled
+    assert any(x[0] == "drag" for x in started if isinstance(x, tuple))
+    rel = QMouseEvent(QEvent.MouseButtonRelease, QPointF(hx - 40, hy), QPointF(hx - 40, hy),
+                      Qt.LeftButton, Qt.LeftButton, Qt.NoModifier, _pdev)
+    h.mouseReleaseEvent(rel)
+    assert "end" in started
+    assert "toggle" not in started
 
-    # 原地点击：press + release -> toggle，不触发拖动
-    card2 = _ProfileCard("b", "B", on_toggle=None)
-    toggled2 = []
-    card2.header._on_toggle = lambda: toggled2.append(1)
+    # 原地点击标题区：press + release -> toggle，不触发拖动
+    started2 = []
+    card2.header._on_toggle = lambda: started2.append(1)
+    if card2.header.layout() is not None:
+        card2.header.layout().activate()
     press2 = QMouseEvent(QEvent.MouseButtonPress, QPointF(20, 15), QPointF(20, 15),
                          Qt.LeftButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     card2.header.mousePressEvent(press2)
     rel2 = QMouseEvent(QEvent.MouseButtonRelease, QPointF(20, 15), QPointF(20, 15),
                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier, _pdev)
     card2.header.mouseReleaseEvent(rel2)
-    assert toggled2 == [1]
+    assert started2 == [1]
+
+
+def test_live_drag_reorders_cards(app):
+    """就地拖动：拖过插入点让位；松手后 order 定格"""
+    from PySide6.QtCore import QPoint
+    from src.qt_config_gui import _CardListWidget, _ProfileCard
+
+    lst = _CardListWidget()
+    a = _ProfileCard("a", "A", on_toggle=None)
+    b = _ProfileCard("b", "B", on_toggle=None)
+    lst.add_card(a)
+    b_fixed = _ProfileCard("c", "C", on_toggle=None)
+    lst.add_card(b_fixed)
+    lst.resize(300, 200)
+    lst.show()
+    # 手动摆好几何（脱离布局后 begin 会 snapshot）
+    a.setGeometry(0, 0, 300, 30)
+    b_fixed.setGeometry(0, 40, 300, 30)
+    assert lst.order() == ["a", "c"]
+
+    lst.begin_live_drag(a, lst.mapToGlobal(QPoint(150, 10)))
+    # 拖过 c 中部阈值（top+45%≈54）→ 插入点在 c 之后
+    lst.live_drag_to(QPoint(150, 60))
+    lst.end_live_drag()
+    assert lst.order() == ["c", "a"]
 
 
 

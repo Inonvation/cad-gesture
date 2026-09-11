@@ -21,9 +21,9 @@ from PySide6.QtGui import (QColor, QFont, QIcon, QPainter, QPixmap,
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
                                QComboBox, QFileDialog, QFrame, QGridLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QScrollArea, QSlider, QSpinBox, QToolTip,
-                               QVBoxLayout, QWidget, QMessageBox)
+                               QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+                               QPushButton, QScrollArea, QSlider, QSpinBox,
+                               QToolTip, QVBoxLayout, QWidget, QMessageBox)
 
 from src.config_manager import (save_config, get_auto_start, set_auto_start,
                                 get_config_path, set_config_dir,
@@ -806,6 +806,11 @@ class TriggerPage(_BasePage):
             lambda: self._set("gesture_exclude_apps",
                               self.exclude_edit.text().strip()))
         excl_row.addWidget(self.exclude_edit)
+        self.btn_exclude_capture = QPushButton(T("当前窗口"))
+        self.btn_exclude_capture.setToolTip(
+            T("读取当前前台窗口的 exe 名，追加到排除列表（需先切到目标程序再点）"))
+        self.btn_exclude_capture.clicked.connect(self._capture_exclude_window)
+        excl_row.addWidget(self.btn_exclude_capture)
         excl_row.addStretch(1)
         self.body.addLayout(excl_row)
 
@@ -893,12 +898,30 @@ class TriggerPage(_BasePage):
         # ===== SolidWorks 输入法助手（与手势无关） =====
         self._section("SolidWorks 输入法")
         self.chk_ime_assist = self._check_row(
-            "SolidWorks 画图时让单键快捷键直通", "ime_assist_sw", True,
-            help="仅在 SolidWorks 窗口在前台时生效。中文输入法处于中文态时，字母/空格"
-                 "会被输入法截走去打拼音，导致 SW 的单键快捷键失效；开启后本工具把这"
-                 "些键直接送进 SW 窗口，输入法本身完全不受影响（语言栏保持中文）。"
-                 "进入文本输入框（尺寸值/注释/重命名）时自动放行，照常打拼音。"
+            "中文输入法下快捷键直通", "ime_assist_sw", True,
+            help="开启后支持 SolidWorks 在中文输入法下也能调用快捷键"
+                 "（如 E/S/空格），可能不稳定。仅在 SolidWorks 窗口在前台"
+                 "时生效：绘图区单键会直接送进 SW，语言栏保持中文；进入"
+                 "文本输入框（尺寸值/注释/重命名）时自动放行，照常打拼音。"
                  "不影响其他软件，不改动 CAD 手势逻辑。")
+
+        # 高级（默认真折叠隐藏）：处理方式 / 键集 / 额外类名 —— 仅快捷键失效时用
+        self._adv_toggle = QPushButton(T("▸ 仅当快捷键失效时，展开高级选项"))
+        self._adv_toggle.setCheckable(True)
+        self._adv_toggle.setProperty("class", "ghost")
+        self._adv_toggle.setCursor(Qt.PointingHandCursor)
+        self._adv_toggle.setToolTip(
+            T("日常无需修改。仅当 SolidWorks 里单键快捷键仍不生效时再打开"))
+        self.register_text(self._adv_toggle, "▸ 仅当快捷键失效时，展开高级选项")
+        self._adv_toggle.toggled.connect(self._toggle_ime_adv)
+        self.body.addWidget(self._adv_toggle)
+
+        self._ime_adv = QWidget()
+        self._ime_adv.setVisible(False)
+        adv_layout = QVBoxLayout()
+        adv_layout.setContentsMargins(12, 4, 8, 4)
+        adv_layout.setSpacing(8)
+        self._ime_adv.setLayout(adv_layout)
 
         # 处理方式：按键直通（默认） / 自动切换键盘布局（旧路径）
         ime_mode_row = QHBoxLayout()
@@ -919,7 +942,7 @@ class TriggerPage(_BasePage):
         self.ime_mode_combo.currentIndexChanged.connect(self._on_ime_mode_changed)
         ime_mode_row.addWidget(self.ime_mode_combo)
         ime_mode_row.addStretch(1)
-        self.body.addLayout(ime_mode_row)
+        adv_layout.addLayout(ime_mode_row)
 
         # 需要直通的按键集（会被输入法吞掉的单键）
         key_row = QHBoxLayout()
@@ -938,7 +961,7 @@ class TriggerPage(_BasePage):
             lambda: self._set("sw_key_list", self.key_list_edit.text().strip()))
         key_row.addWidget(self.key_list_edit)
         key_row.addStretch(1)
-        self.body.addLayout(key_row)
+        adv_layout.addLayout(key_row)
 
         # 额外视口类名（认不出的绘图区控件类名，事后补充用）
         cls_row = QHBoxLayout()
@@ -958,9 +981,64 @@ class TriggerPage(_BasePage):
                               self.extra_cls_edit.text().strip()))
         cls_row.addWidget(self.extra_cls_edit)
         cls_row.addStretch(1)
-        self.body.addLayout(cls_row)
+        adv_layout.addLayout(cls_row)
+
+        self.body.addWidget(self._ime_adv)
 
         self.body.addStretch(1)
+
+    def _toggle_ime_adv(self, checked: bool):
+        """高级选项：真折叠/展开（不是只置灰子控件）"""
+        self._ime_adv.setVisible(bool(checked))
+        self._adv_toggle.setText(
+            (T("▾ 收起高级选项") if checked
+             else T("▸ 仅当快捷键失效时，展开高级选项")))
+
+    def _capture_exclude_window(self):
+        """把当前前台窗口的 exe 名追加到排除列表（避免手填记不住 exe）"""
+        try:
+            import ctypes
+            import ctypes.wintypes as wintypes
+            user32 = ctypes.windll.user32
+            user32.GetForegroundWindow.restype = wintypes.HWND
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            kernel32 = ctypes.windll.kernel32
+            h = kernel32.OpenProcess(
+                0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+            exe = ""
+            if h:
+                try:
+                    buf = ctypes.create_unicode_buffer(1024)
+                    size = wintypes.DWORD(1024)
+                    if kernel32.QueryFullProcessImageNameW(
+                            h, 0, buf, ctypes.byref(size)):
+                        exe = os.path.basename(buf.value)
+                finally:
+                    kernel32.CloseHandle(h)
+            if not exe:
+                QMessageBox.warning(self, T("提示"), T("读取当前窗口失败"))
+                return
+            key = os.path.splitext(exe)[0].lower()
+            cur = self.exclude_edit.text().strip()
+            parts = [p.strip().lower() for p in cur.split(",") if p.strip()]
+            if key in parts:
+                QMessageBox.information(
+                    self, T("提示"),
+                    T("「{exe}」已在排除列表中").format(exe=key))
+                return
+            parts.append(key)
+            text = ",".join(parts)
+            self.exclude_edit.setText(text)
+            self._set("gesture_exclude_apps", text)
+            QMessageBox.information(
+                self, T("已添加"),
+                T("已把「{exe}」加入不弹圆盘列表").format(exe=key))
+        except Exception as e:
+            QMessageBox.warning(self, T("错误"), str(e))
 
     def _on_ime_mode_changed(self, idx):
         self._set("ime_assist_mode", self.ime_mode_combo.itemData(idx))
@@ -1028,16 +1106,21 @@ class TriggerPage(_BasePage):
         self.extra_cls_edit.blockSignals(False)
         self._sync_ime_mode_rows()
 
+    def retranslate(self):
+        super().retranslate()
+        # 高级折叠按钮文案随展开态切换，不能被 register_text 固定成折叠文案
+        self._toggle_ime_adv(self._adv_toggle.isChecked())
+
 
 class AboutPage(_BasePage):
-    """关于：版本、语言、启动、检查更新、配置目录、方案操作、备份与恢复、项目主页"""
+    """关于：通用 / 启动与更新 / 方案与维护 / 项目主页"""
     def __init__(self, config, parent=None):
         self.title_zh = "关于"
         super().__init__(config, parent)
         self.title.setText(T(self.title_zh))
 
-        # 版本
-        self._section("版本")
+        # ---- 通用：版本 + 语言 ----
+        self._section("通用")
         ver_row = QHBoxLayout()
         ver_row.setSpacing(10)
         self._lb_version = QLabel(T("版本"))
@@ -1045,26 +1128,20 @@ class AboutPage(_BasePage):
         ver_row.addWidget(self._lb_version)
         from src.version import __version__
         ver_row.addWidget(QLabel(__version__))
-        ver_row.addStretch(1)
-        self.body.addLayout(ver_row)
-
-        # 语言
-        self._section("语言")
-        lang_row = QHBoxLayout()
-        lang_row.setSpacing(10)
+        ver_row.addSpacing(16)
         self._lb_lang = QLabel(T("语言"))
         self.register_text(self._lb_lang, "语言")
-        lang_row.addWidget(self._lb_lang)
+        ver_row.addWidget(self._lb_lang)
         self.lang_combo = QComboBox()
         self.lang_combo.addItem("简体中文", "zh")
         self.lang_combo.addItem("English", "en")
         self.lang_combo.currentIndexChanged.connect(self._on_lang_changed)
-        lang_row.addWidget(self.lang_combo)
-        lang_row.addStretch(1)
-        self.body.addLayout(lang_row)
+        ver_row.addWidget(self.lang_combo)
+        ver_row.addStretch(1)
+        self.body.addLayout(ver_row)
 
-        # 启动
-        self._section("启动")
+        # ---- 启动与更新 ----
+        self._section("启动与更新")
         self.chk_open = self._check_row(
             "启动时打开此界面", "open_config_on_start", False,
             help="程序启动后自动打开设置窗口，适合第一次配置时使用。")
@@ -1074,9 +1151,6 @@ class AboutPage(_BasePage):
         self.chk_startup = self._check_row(
             "开机自启", "auto_start", False, toggled=self._on_startup,
             help="登录 Windows 后自动在后台启动本工具，无需手动打开。")
-
-        # 更新
-        self._section("更新")
         self.chk_update = self._check_row(
             "启动时检查更新", "check_update_on_start", False,
             help="每次启动自动联网检查新版本，发现更新会提示你。")
@@ -1096,9 +1170,8 @@ class AboutPage(_BasePage):
         last_row.addStretch(1)
         self.body.addLayout(last_row)
 
-
-        # 配置目录
-        self._section("配置目录")
+        # ---- 方案与维护：目录 / 导入导出 / 测试 ----
+        self._section("方案与维护")
         # 配置目录行：标题 + 当前路径 + 更改/重置（同一行）
         dir_head = QHBoxLayout()
         dir_head.setSpacing(8)
@@ -1122,8 +1195,6 @@ class AboutPage(_BasePage):
         dir_head.addWidget(btn_reset_dir, 0, Qt.AlignVCenter)
         self.body.addLayout(dir_head)
 
-        # 方案操作
-        self._section("方案操作")
         row = QHBoxLayout()
         row.setSpacing(8)
         btn_import = QPushButton(T("导入方案"))
@@ -1140,20 +1211,14 @@ class AboutPage(_BasePage):
         btn_test.clicked.connect(
             lambda: self.on_open_test() if self.on_open_test else None)
         self.register_text(btn_test, "打开手势测试")
-        btn_reset = QPushButton(T("恢复默认"))
-        btn_reset.setProperty("class", "danger")
-        btn_reset.setToolTip(T("把当前方案的三圈命令恢复为默认内容"))
-        btn_reset.clicked.connect(self._reset_defaults)
-        self.register_text(btn_reset, "恢复默认")
         row.addWidget(btn_import)
         row.addWidget(btn_export)
         row.addWidget(btn_dir)
         row.addWidget(btn_test)
         row.addStretch(1)
-        row.addWidget(btn_reset)
         self.body.addLayout(row)
 
-        # 整包配置备份 / 恢复
+        # 整包配置备份 / 恢复 / 全部重置（危险操作与备份放一起）
         self._section("备份与恢复")
         row2 = QHBoxLayout()
         row2.setSpacing(8)
@@ -1167,9 +1232,16 @@ class AboutPage(_BasePage):
         btn_restore.clicked.connect(
             lambda: self.on_restore() if self.on_restore else None)
         self.register_text(btn_restore, "恢复配置")
+        btn_reset = QPushButton(T("重置全部配置"))
+        btn_reset.setProperty("class", "danger")
+        btn_reset.setToolTip(
+            T("把全部方案命令和全局设置恢复为出厂默认（不可按方案撤销）"))
+        btn_reset.clicked.connect(self._reset_defaults)
+        self.register_text(btn_reset, "重置全部配置")
         row2.addWidget(btn_backup)
         row2.addWidget(btn_restore)
         row2.addStretch(1)
+        row2.addWidget(btn_reset)
         self.body.addLayout(row2)
 
         # 项目主页
@@ -1196,7 +1268,7 @@ class AboutPage(_BasePage):
         btn_home.clicked.connect(self._open_project_home)
         home_row.addWidget(btn_home)
         btn_log = QPushButton(T("打开日志文件"))
-        btn_log.setToolTip(T("日志文件"))
+        btn_log.setToolTip(T("打开日志文件（%TEMP%\\cad-gesture.log）"))
         btn_log.clicked.connect(self._open_log_file)
         self.register_text(btn_log, "打开日志文件")
         home_row.addWidget(btn_log)
@@ -1312,8 +1384,10 @@ class AboutPage(_BasePage):
             T("配置目录已恢复为：\n{path}").format(path=get_config_path()))
 
     def _reset_defaults(self):
-        if QMessageBox.question(self, T("确认"),
-                                T("确定要重置所有配置为默认值吗?")) != QMessageBox.Yes:
+        if QMessageBox.question(
+                self, T("重置全部配置"),
+                T("确定重置全部配置吗？\n\n将清空：\n· 所有应用的方案命令\n· 外观/触发等全局设置\n· 自定义应用列表\n\n建议先「备份配置」。此操作不可用 Ctrl+Z 撤销。")
+        ) != QMessageBox.Yes:
             return
         self.config = _default_config()
         self.refresh(self.config)

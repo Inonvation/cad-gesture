@@ -14,8 +14,8 @@ from datetime import datetime
 
 from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent, QMimeData,
                             QPoint, QPointF, QRect, QSettings, QSize, Qt, QTimer,
-                            QVariantAnimation)
-from PySide6.QtGui import (QColor, QCursor, QDrag, QFont, QIcon, QPainter, QPen,
+                            QPropertyAnimation, QVariantAnimation)
+from PySide6.QtGui import (QColor, QCursor, QFont, QIcon, QPainter, QPen,
                            QPixmap, QKeySequence, QMouseEvent, QShortcut)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog,
                                QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
@@ -276,9 +276,11 @@ _CARD_MIME = "application/x-cadgesture-card"
 
 
 class _CardHeader(QWidget):
-    """卡片头部：点击折叠/展开，按住拖动排序（整个头部都是拖拽区）。
-    按下后移动超过阈值视为拖动，原地松开视为点击。
-    子控件（箭头/标题/当前方案/手柄）全部鼠标穿透，统一由头部处理。"""
+    """卡片头部：标题区点击折叠/展开；仅 ⠿ 手柄区启动就地拖动排序。
+
+    子控件鼠标穿透，统一由头部处理。拖拽起点限制在手柄矩形内，
+    避免「点一下就误拖卡片」；按下后由容器接管 mouseMove 做实时重排。
+    """
 
     def __init__(self, on_toggle):
         super().__init__()
@@ -292,6 +294,7 @@ class _CardHeader(QWidget):
         self._pressed = False
         self._press_pos = QPoint()
         self._dragged = False
+        self._on_handle = False
         lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 6, 6, 6)
         lay.setSpacing(6)
@@ -308,10 +311,10 @@ class _CardHeader(QWidget):
         lay.addWidget(self.current)
         self.handle = QLabel("⠿")
         self.handle.setObjectName("cardHandle")
-        self.handle.setToolTip(T("拖动卡片排序"))
-        self.handle.setFixedWidth(22)
+        self.handle.setToolTip(T("按住 ⠿ 拖动排序"))
+        self.handle.setFixedSize(28, 22)
         self.handle.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self.handle)
+        lay.addWidget(self.handle, 0, Qt.AlignVCenter)
         # 子控件鼠标穿透：整个头部统一处理点击/拖动
         for w in (self.arrow, self.title, self.current, self.handle):
             w.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -321,38 +324,74 @@ class _CardHeader(QWidget):
         self._container = container
         self._card = card
 
+    def _handle_rect(self):
+        """手柄在头部内的局部坐标矩形（拖拽热区）"""
+        if self.handle is None:
+            return None
+        return self.handle.geometry()
+
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
             self._pressed = True
             self._dragged = False
             self._press_pos = e.position().toPoint()
+            hr = self._handle_rect()
+            self._on_handle = (
+                hr is not None and hr.contains(self._press_pos))
             e.accept()
         else:
             super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
-        if (self._pressed and not self._dragged and (
-                e.position().toPoint() - self._press_pos).manhattanLength() > 6):
+        if not (self._pressed and self._on_handle):
+            return
+        if self._dragged:
+            # 已进入拖动：把本地坐标转给容器做实时重排
+            if self._container is not None:
+                gp = self.mapToGlobal(e.position().toPoint())
+                lp = self._container.mapFromGlobal(gp)
+                self._container.live_drag_to(lp)
+            e.accept()
+            return
+        if (e.position().toPoint() - self._press_pos).manhattanLength() > 4:
             self._dragged = True
             if self._container is not None and self._card is not None:
-                self._container.start_drag(self._card)
+                self._container.begin_live_drag(
+                    self._card, self.mapToGlobal(self._press_pos))
+                gp = self.mapToGlobal(e.position().toPoint())
+                lp = self._container.mapFromGlobal(gp)
+                self._container.live_drag_to(lp)
             e.accept()
 
     def mouseReleaseEvent(self, e):
         was_pressed = self._pressed
         self._pressed = False
-        if (was_pressed and not self._dragged
+        if self._dragged:
+            if self._container is not None:
+                self._container.end_live_drag()
+            self._dragged = False
+            self._on_handle = False
+            e.accept()
+            return
+        # 仅标题/箭头区单击 = 折叠；手柄区单击不折叠
+        if (was_pressed and not self._on_handle
                 and e.button() == Qt.LeftButton):
             self._on_toggle()
             e.accept()
+        self._on_handle = False
 
     def set_collapsed(self, collapsed: bool):
         self.arrow.setText("▸" if collapsed else "▾")
 
 
 class _CardListWidget(QWidget):
-    """卡片容器（QVBoxLayout）：支持卡片拖动排序。
-    拖动只是把卡片在布局里 insertWidget 重排，无 widget 重建，流畅不卡顿。"""
+    """卡片容器：就地拖动排序（压实让位 + 置顶落点条）。
+
+    拖动中：压实其余卡，再在插入点打开「一格卡位」的空隙；
+    被拖卡跟手；落点条作为独立子控件 raise 到最上层，不被卡片盖住。
+    """
+
+    _GAP_MS = 120
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -361,9 +400,19 @@ class _CardListWidget(QWidget):
         self._lay.setSpacing(6)
         self._cards = []
         self._drop_index = -1
+        self._drag_card = None
+        self._drag_order = []
+        self._base = {}
+        self._drag_offset = 0
+        self._move_anims = []
         self.on_order_changed = None
         self.setAcceptDrops(True)
-        self._lay.addStretch(1)  # 卡片保持自身高度，多余空间留在底部
+        self._lay.addStretch(1)
+        # 落点条：独立控件，始终盖在卡片之上
+        self._indicator = QWidget(self)
+        self._indicator.setObjectName("dropIndicator")
+        self._indicator.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._indicator.hide()
 
     def add_card(self, card):
         self._lay.insertWidget(self._lay.count() - 1, card)
@@ -371,26 +420,185 @@ class _CardListWidget(QWidget):
         card.header.attach(self, card)
 
     def clear(self):
+        self._cancel_anims()
+        self._hide_indicator()
         for c in self._cards:
             self._lay.removeWidget(c)
             c.deleteLater()
         self._cards.clear()
         self._drop_index = -1
+        self._drag_card = None
+        self._drag_order = []
+        self._base = {}
         self.update()
 
     def order(self) -> list:
         return [c.target for c in self._cards]
 
+    # ---- 就地拖动：跟手 + 压实空位 ----
+
+    def begin_live_drag(self, card, global_pos: QPoint):
+        if card not in self._cards or self._drag_card is not None:
+            return
+        self._cancel_anims()
+        self._drag_card = card
+        self._drag_order = list(self._cards)
+        raw = {}
+        for c in self._cards:
+            self._lay.removeWidget(c)
+            raw[c] = c.geometry()
+        # 压实：忽略被拖卡原洞，其余卡从 0 紧凑排布
+        self._base = {}
+        y = 0
+        spacing = max(1, self._lay.spacing())
+        for c in self._drag_order:
+            if c is card:
+                continue
+            r = raw[c]
+            self._base[c] = QRect(r.left(), y, r.width(), r.height())
+            y += r.height() + spacing
+        card.raise_()
+        self._set_dragging(card, True)
+        self._style_indicator()
+        self.grabMouse()
+        self.setCursor(Qt.ClosedHandCursor)
+        lp = self.mapFromGlobal(global_pos)
+        self._drag_offset = max(0, min(lp.y() - raw[card].top(),
+                                       raw[card].height()))
+        self._drop_index = self._drag_order.index(card)
+        self.live_drag_to(lp)
+
+    def _slot_h(self) -> int:
+        """插入槽 = 一格卡位（卡高 + 间距），压实后清晰可见"""
+        card = self._drag_card
+        spacing = max(1, self._lay.spacing())
+        h = card.height() if card is not None else 30
+        if h < 20:
+            h = 30
+        return h + spacing
+
+    def _style_indicator(self):
+        try:
+            from src.theme import get_ui
+            t = get_ui()
+            self._indicator.setStyleSheet(
+                f"QWidget#dropIndicator {{ background: {t.accent};"
+                f" border-radius: 1.5px; min-height: 3px; max-height: 3px; }}")
+        except Exception:
+            self._indicator.setStyleSheet(
+                "QWidget#dropIndicator { background: #3b82f6;"
+                " border-radius: 1px; min-height: 3px; max-height: 3px; }")
+
+    def _hide_indicator(self):
+        self._indicator.hide()
+
+    def _show_indicator(self, y: float):
+        """把落点条放到空隙中心，并抬到最上层"""
+        w = max(20, self.width() - 20)
+        self._indicator.setGeometry(10, int(round(y)) - 1, w, 3)
+        self._indicator.raise_()
+        self._indicator.show()
+
+    def live_drag_to(self, pos):
+        if self._drag_card is None:
+            return
+        card = self._drag_card
+        y = pos.y()
+        non = [c for c in self._drag_order if c is not card]
+        idx = len(non)
+        for i, c in enumerate(non):
+            b = self._base[c]
+            if y < b.top() + b.height() * 0.45:
+                idx = i
+                break
+        self._drop_index = idx
+        slot = self._slot_h()
+        for i, c in enumerate(non):
+            b = self._base[c]
+            ty = b.top() + (slot if i >= idx else 0)
+            self._animate_to(c, b.left(), ty)
+        left = self._base[non[0]].left() if non else 0
+        w = card.width() or (non[0].width() if non else self.width())
+        card.setGeometry(left, int(y - self._drag_offset),
+                         w, card.height())
+        # 落点条中心 = 空隙中线（按目标几何，不跟动画中间帧）
+        if not non:
+            line_y = slot / 2.0
+        elif idx <= 0:
+            line_y = slot / 2.0
+        elif idx >= len(non):
+            line_y = self._base[non[-1]].bottom() + slot / 2.0
+        else:
+            line_y = (self._base[non[idx - 1]].bottom()
+                      + self._base[non[idx]].top() + slot) / 2.0
+        self._show_indicator(line_y)
+        self.update()
+
+    def end_live_drag(self):
+        card = self._drag_card
+        if card is None:
+            return
+        self._cancel_anims()
+        self._hide_indicator()
+        idx = self._drop_index
+        non = [c for c in self._drag_order if c is not card]
+        new_order = non[:idx] + [card] + non[idx:]
+        self._cards = new_order
+        self._drag_card = None
+        self._drag_order = []
+        self._base = {}
+        self._drop_index = -1
+        self._set_dragging(card, False)
+        for i, c in enumerate(new_order):
+            self._lay.insertWidget(i, c)
+        self.releaseMouse()
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+        if self.on_order_changed is not None:
+            self.on_order_changed([c.target for c in self._cards])
+
+    def _animate_to(self, card, x, y):
+        target = QPoint(int(x), int(y))
+        if card.pos() == target:
+            return
+        for a in list(self._move_anims):
+            if a.targetObject() is card:
+                a.stop()
+                self._move_anims.remove(a)
+        anim = QPropertyAnimation(card, b"pos", self)
+        anim.setDuration(self._GAP_MS)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.setStartValue(card.pos())
+        anim.setEndValue(target)
+        anim.start()
+        self._move_anims.append(anim)
+
+    def _cancel_anims(self):
+        for a in self._move_anims:
+            a.stop()
+        self._move_anims.clear()
+
+    def _set_dragging(self, card, on: bool):
+        card.setProperty("dragging", bool(on))
+        card.style().unpolish(card)
+        card.style().polish(card)
+
+    def mouseMoveEvent(self, e):
+        if self._drag_card is not None:
+            self.live_drag_to(e.position())
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._drag_card is not None and e.button() == Qt.LeftButton:
+            self.end_live_drag()
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
+
     def start_drag(self, card):
-        mime = QMimeData()
-        mime.setData(_CARD_MIME, card.target.encode("utf-8"))
-        drag = QDrag(self)
-        drag.setMimeData(mime)
-        pm = card.grab()
-        if not pm.isNull():
-            drag.setPixmap(pm)
-            drag.setHotSpot(QPoint(pm.width() // 2, 14))
-        drag.exec(Qt.MoveAction)
+        self.begin_live_drag(card, self.mapToGlobal(card.rect().center()))
 
     def _drop_index_at(self, y: int) -> int:
         for i, c in enumerate(self._cards):
@@ -409,8 +617,9 @@ class _CardListWidget(QWidget):
             e.acceptProposedAction()
 
     def dragLeaveEvent(self, e):
-        self._drop_index = -1
-        self.update()
+        if self._drag_card is None:
+            self._drop_index = -1
+            self.update()
 
     def dropEvent(self, e):
         if not e.mimeData().hasFormat(_CARD_MIME):
@@ -431,23 +640,6 @@ class _CardListWidget(QWidget):
         e.acceptProposedAction()
         if self.on_order_changed is not None:
             self.on_order_changed([c.target for c in self._cards])
-
-    def paintEvent(self, e):
-        super().paintEvent(e)
-        if self._drop_index < 0:
-            return
-        painter = QPainter(self)
-        pen = QPen(QColor(get_ui().accent), 2)
-        painter.setPen(pen)
-        if self._drop_index == 0:
-            y = 3
-        elif self._drop_index >= len(self._cards):
-            y = self.height() - 3
-        else:
-            c = self._cards[self._drop_index]
-            y = max(0, c.geometry().top() - 3)
-        painter.drawLine(8, y, self.width() - 8, y)
-        painter.end()
 
 
 class _ProfileCard(QFrame):
@@ -670,7 +862,7 @@ class QConfigGUI(QMainWindow):
         # 触发前关窗，这些回调不应把已关闭的窗口重新拉起（"复活窗口"坑）
         self._closing = False
 
-        self.setWindowTitle(T("CAD鼠标手势 - 配置"))
+        self.setWindowTitle(T("CAD Gesture - 配置"))
         icon_path = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "assets", "icon.ico")
         if os.path.exists(icon_path):
@@ -802,6 +994,11 @@ class QConfigGUI(QMainWindow):
         set_ui_mode(mode)
         QApplication.instance().setStyleSheet(build_app_qss(mode))
         set_title_bar_theme(self, current_ui_mode() == "dark")
+        # 圆盘预览主题随界面深浅切换（缓存的 theme 需重建）
+        try:
+            self.preview.update_config(self.config)
+        except Exception:
+            pass
 
     def _on_language_changed(self, lang: str):
         """语言切换（常规页）：保存配置 + 通知全局刷新"""
@@ -810,7 +1007,7 @@ class QConfigGUI(QMainWindow):
 
     def _apply_language(self):
         """语言切换后的全量文本刷新（侧栏 / 顶栏 / 命令库 / 设置页 / 浮层）"""
-        self.setWindowTitle(T("CAD鼠标手势 - 配置"))
+        self.setWindowTitle(T("CAD Gesture - 配置"))
         for b, zh in self._nav_texts:
             b.setText(T(zh))
         self.btn_add.setToolTip(T("新增方案"))
@@ -845,7 +1042,7 @@ class QConfigGUI(QMainWindow):
         logo_icon.setPixmap(self._app_logo_pixmap())
         logo_icon.setFixedSize(22, 22)
         logo_row.addWidget(logo_icon)
-        logo = QLabel("CAD 鼠标手势")
+        logo = QLabel("CAD Gesture")
         logo.setObjectName("appLogo")
         logo_row.addWidget(logo)
         logo_row.addStretch(1)
@@ -985,7 +1182,7 @@ class QConfigGUI(QMainWindow):
         head.addWidget(self.btn_add)
         v.addLayout(head)
 
-        # 卡片容器（纯布局 + 自定义 QDrag，拖放不重建 widget，不卡顿）
+        # 卡片容器（就地实时重排，无 widget 重建，跟手不卡顿）
         self.profile_list = _CardListWidget()
         self.profile_list.on_order_changed = self._on_card_order_changed
         # 折叠状态（target -> 是否折叠；默认全部折叠）与卡片索引
@@ -1140,8 +1337,9 @@ class QConfigGUI(QMainWindow):
         self._btn_clear_all.setProperty("class", "topBtn")
         self._btn_clear_all.setObjectName("btnClearAll")
         top.addWidget(self._btn_clear_all, 0, Qt.AlignVCenter)
-        self._btn_reset_default = QPushButton(T("恢复默认"))
-        self._btn_reset_default.setToolTip(T("把当前方案恢复为默认命令"))
+        self._btn_reset_default = QPushButton(T("重置当前方案"))
+        self._btn_reset_default.setToolTip(
+            T("仅把当前方案的三圈命令恢复为默认内容，不影响其他方案和设置"))
         self._btn_reset_default.clicked.connect(self._reset_default_profile)
         self._btn_reset_default.setFixedHeight(28)
         self._btn_reset_default.setProperty("class", "topBtn")
@@ -1813,8 +2011,8 @@ class QConfigGUI(QMainWindow):
             self._set_status(T("未找到可恢复的默认配置"))
             return
         ret = QMessageBox.question(
-            self, T("恢复默认"),
-            T("确定把方案「{name}」的三圈命令\n恢复为默认内容吗？（可用 Ctrl+Z 撤销）")
+            self, T("重置当前方案"),
+            T("确定把方案「{name}」的三圈命令\n恢复为默认内容吗？\n\n仅影响当前方案，其他方案与全局设置不变。（可用 Ctrl+Z 撤销）")
             .format(name=self.current_profile))
         if ret != QMessageBox.StandardButton.Yes:
             return
@@ -2104,11 +2302,62 @@ class QConfigGUI(QMainWindow):
         if not ok:
             QMessageBox.warning(self, T("错误"), data)
             return
+        # 二选一：默认另存为新方案，避免静默覆盖当前方案
+        box = QMessageBox(self)
+        box.setWindowTitle(T("导入方案"))
+        src_name = data.get("name") or T("未命名方案")
+        box.setText(T("已读取方案「{name}」，如何导入？").format(name=src_name))
+        box.setInformativeText(
+            T("另存为新方案：不动当前方案，推荐。\n覆盖当前方案：替换「{name}」的三圈命令（可用 Ctrl+Z 撤销）。")
+            .format(name=self.current_profile))
+        btn_new = box.addButton(T("另存为新方案"), QMessageBox.AcceptRole)
+        btn_over = box.addButton(T("覆盖当前方案"), QMessageBox.DestructiveRole)
+        box.addButton(T("取消"), QMessageBox.RejectRole)
+        box.setDefaultButton(btn_new)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_new:
+            self._import_as_new_profile(data)
+        elif clicked is btn_over:
+            self._import_overwrite_profile(data)
+
+    def _import_as_new_profile(self, data: dict):
+        """导入为新方案：自动去重命名后加载"""
+        base = (data.get("name") or "").strip() or T("导入方案")
+        name = base
+        i = 2
+        while name in self.config.get("profiles", {}):
+            name = f"{base}-{i}"
+            i += 1
+        target = data.get("target") or (
+            self.config.get("profiles", {}).get(
+                self.current_profile, {}).get("target") or "autocad")
+        self._push_undo()
+        ok, err = add_profile(self.config, name, target,
+                              sector_count=int(self.config.get(
+                                  "settings", {}).get("sector_count", 8)),
+                              tr=T)
+        if not ok:
+            QMessageBox.warning(self, T("错误"), err)
+            return
+        profile = self.config["profiles"][name]
+        apply_profile_data(profile, data)
+        profile["name"] = name
+        profile["target"] = target
+        self._refresh_profiles()
+        self._load_profile(name)
+        self.preview.update()
+        self._set_status(T("已导入为新方案「{name}」").format(name=name))
+        self._autosave_timer.start()
+
+    def _import_overwrite_profile(self, data: dict):
+        """覆盖当前方案的三圈命令"""
         self._push_undo()
         profile = self.config.get("profiles", {}).get(self.current_profile, {})
         apply_profile_data(profile, data)
         self.preview.update()
-        self._set_status(T("已从 {path} 导入配置").format(path=path))
+        self._set_status(
+            T("已覆盖当前方案「{name}」").format(name=self.current_profile))
         self._autosave_timer.start()
 
     def _delete_profile(self):

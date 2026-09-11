@@ -249,13 +249,14 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
             icon_pm = resolve_icon(icon_ref, icon_color, icon_size)
         if light:
             # 浅色：普通近白扇面，高亮直接填主题色 + 白字（对比反转）；
-            # 扇区边界用白色模糊线条（soft_outline），高亮扇区用深主题色
+            # 扇区边界用白色模糊线条（soft_outline），高亮/选中扇区用深主题色
             # 描边（白色线条在主题色底上不可见）
             if is_hl:
                 fill = blend(rc.hover, rc.highlight, hl_fade)
-                pen, w, bold = QColor(rc.outline_hl), 2, True
+                pen, w, bold = QColor(rc.outline_hl), 2.5, True
             elif is_sel:
-                fill, pen, w, bold = QColor(rc.highlight), QColor(rc.outline_hl), 2, True
+                # 选中（编辑态）：比 hover 更实的主题色底 + 加粗描边 + 光晕
+                fill, pen, w, bold = QColor(rc.highlight), QColor(rc.outline_hl), 3, True
             elif is_hov:
                 fill = blend(rc.normal, rc.hover, 0.6)
                 pen, w, bold = QColor(255, 255, 255, 170), 1, False
@@ -266,9 +267,10 @@ def draw_ring(p: QPainter, cx: float, cy: float, inner_r: float,
         else:
             if is_hl:
                 fill = blend(rc.normal, rc.hover, hl_fade)
-                pen, w, bold = QColor(rc.outline_hl), 2, True
+                pen, w, bold = QColor(rc.outline_hl), 2.5, True
             elif is_sel:
-                fill, pen, w, bold = QColor(rc.hover), QColor(rc.outline_hl), 2, True
+                # 选中：悬停底色 + 主题色描边 + 光晕，保证与普通扇区可区分
+                fill, pen, w, bold = QColor(rc.highlight), QColor(rc.outline_hl), 3, True
             elif is_hov:
                 fill = blend(rc.normal, rc.hover, 0.55)
                 pen, w, bold = QColor(rc.outline_hl), 1, False
