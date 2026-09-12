@@ -2,30 +2,48 @@
 """自动更新模块（纯逻辑无 Qt 依赖）
 
 安装版 / 绿色版统一走 GitHub Releases：
-检查 Releases 是否有新版 → 下载 `Setup-CADGesture-vX.exe` 安装包 →
-`/VERYSILENT` 静默覆盖安装 → 主进程退出。检查走 releases HTML 页面
-（不受未认证 API 60 次/小时/IP 限流），下载用资产直链。
+检查是否有新版 → 下载 `Setup-CADGesture-vX.exe` 安装包 →
+`/VERYSILENT` 静默覆盖安装 → 主进程退出。
+
+检查流量最小化（跨境链路下整页 HTML 有 200KB+ 且慢）：
+1. 优先 GitHub API JSON（约 7KB，含版本号 / 更新说明 / 安装包体积 /
+   官方 SHA256 校验值）；
+2. API 失败（限流 403 / 被墙）时退回 releases/latest 的 302 跳转探测，
+   只读 Location 头拿版本号，不下载页面正文。
+两者都失败才报网络错误。
+
+下载走多源回退链：GitHub 直连 → 镜像前缀列表（settings.update_mirrors，
+借鉴 Clash Verge Rev 的 endpoints 模式）→ 直连不设速限重试。每个源先
+测速 3 秒，低于阈值立即换下一个；下载全程按 API 提供的官方 SHA256
+校验，防第三方镜像篡改。所有源均失败才报错（提示配置 update_proxy）。
+支持显式代理（settings.update_proxy，留空则跟随系统代理）。
 
 线程模型：检查/下载应在后台线程；进度回调由下载线程触发。
 `run_installer` 应在主线程调用并随后尽快 `_quit()`。
 
 UpdateInfo(dict) 结构：
-    {"version", "notes", "download_url", "size", "mode": "github"}
+    {"version", "notes", "download_url", "size", "sha256", "mode": "github"}
 """
 
+import hashlib
 import html
+import json
 import os
 import re
 import subprocess
-import sys
 import time
+import urllib.error
 import urllib.request
 
 from src.version import __version__
 
 _USER_AGENT = f"CADGesture/{__version__}"
 _TIMEOUT = 15
+_CHECK_TIMEOUT = 10
 _CHUNK_SIZE = 64 * 1024
+# 每个下载源先测速 _BAIL_SECONDS 秒，不足 _BAIL_BYTES 视为过慢换下一个
+_BAIL_SECONDS = 3.0
+_BAIL_BYTES = 512 * 1024
 
 # ========== 错误类型 ==========
 
@@ -36,6 +54,23 @@ class UpdateError(Exception):
 
 class UpdateCancelled(UpdateError):
     """下载被用户取消（progress_cb 抛此异常中断下载）"""
+
+
+# ========== 代理 ==========
+
+
+def proxy_handlers(proxy: str) -> list:
+    """按代理设置构造 opener handlers。
+
+    空串 = 跟随系统（urllib 默认读注册表/环境变量，注意 PAC 脚本不支持）；
+    非空 = 强制走指定代理（如 http://127.0.0.1:7890，可省略 http:// 前缀）。
+    """
+    if not proxy or not str(proxy).strip():
+        return []
+    addr = str(proxy).strip()
+    if "://" not in addr:
+        addr = "http://" + addr
+    return [urllib.request.ProxyHandler({"http": addr, "https": addr})]
 
 
 # ========== 纯函数 ==========
@@ -79,7 +114,7 @@ def compare_versions(a: str, b: str) -> int:
 
 
 def to_releases_latest_url(url: str) -> str:
-    """规范化为 GitHub releases/latest 页面地址（HTML 检查用）。
+    """规范化为 GitHub releases/latest 页面地址（检查入口）。
 
     接受仓库根、releases/latest、api.github.com latest 等写法。
     """
@@ -101,11 +136,74 @@ def to_releases_latest_url(url: str) -> str:
     return url
 
 
-# ========== GitHub Releases HTML 检查 / 下载 / Inno 静默安装 ==========
+def _tag_from_url(url: str) -> str:
+    """从 .../releases/tag/vX.Y.Z 形式的 URL 提取 tag；失败返回空串"""
+    m = re.search(r"/releases/tag/([^/?#]+)", url or "")
+    return m.group(1) if m else ""
 
 
-def check_for_update(current_version: str, update_url: str) -> dict | None:
-    """检查 GitHub Release 是否有新版本（走 HTML 页面，不限流）。
+def normalize_mirror(entry: str) -> str:
+    """规范化镜像前缀：接受域名或完整 URL，返回 `https://host[/path]/`。
+
+    非法（空 / 无 host）返回空串。例：
+    "gh-proxy.com" → "https://gh-proxy.com/"；
+    "https://x.com/gh" → "https://x.com/gh/"（gh-proxy 自建 PREFIX 路径写法）。
+    """
+    e = str(entry or "").strip()
+    if not e:
+        return ""
+    if "://" not in e:
+        e = "https://" + e
+    e = e.rstrip("/") + "/"
+    if not re.match(r"^https?://[^/]+/", e):
+        return ""
+    return e
+
+
+def download_source_urls(url: str, mirrors=None) -> list:
+    """构造下载源列表：直连在前，镜像前缀 URL 依次追加（去重）"""
+    urls = [url]
+    for m in mirrors or []:
+        prefix = normalize_mirror(m)
+        candidate = prefix + url
+        if prefix and candidate not in urls:
+            urls.append(candidate)
+    return urls
+
+
+def _parse_release(data: dict) -> tuple:
+    """解析 GitHub API releases/latest JSON → (tag, notes, size, sha256)。
+
+    size / sha256 取与固定命名 `Setup-CADGesture-vX.exe` 匹配的资产；
+    sha256 来自 GitHub 官方 digest 字段（2025-06 起新上传的资产才有），
+    用于镜像下载后的完整性校验；缺资产或缺字段返回 "" / 0。
+    """
+    tag = str(data.get("tag_name") or "").strip()
+    if not tag:
+        return ("", "", 0, "")
+    notes = str(data.get("body") or "")[:2000]
+    size = 0
+    sha256 = ""
+    want = f"Setup-CADGesture-v{tag.lstrip('vV')}.exe".lower()
+    for a in data.get("assets") or []:
+        try:
+            if str(a.get("name") or "").lower() == want:
+                size = int(a.get("size") or 0)
+                digest = str(a.get("digest") or "").strip().lower()
+                if digest.startswith("sha256:"):
+                    sha256 = digest[len("sha256:"):]
+                break
+        except (TypeError, ValueError):
+            continue
+    return (tag, notes, size, sha256)
+
+
+# ========== GitHub Releases 检查 / 下载 / Inno 静默安装 ==========
+
+
+def check_for_update(current_version: str, update_url: str,
+                     proxy: str = "") -> dict | None:
+    """检查 GitHub Release 是否有新版本。
 
     Returns:
         有新版本: {"version", "notes", "download_url", "size", "mode": "github"}
@@ -114,7 +212,14 @@ def check_for_update(current_version: str, update_url: str) -> dict | None:
         UpdateError: 网络失败 / 页面无版本号
     """
     html_url = to_releases_latest_url(update_url)
-    tag, page_html = _fetch_latest_release(html_url)
+    base = html_url.rsplit("/releases/latest", 1)[0]
+    if re.match(r"https?://github\.com/[^/]+/[^/]+$", base):
+        tag, notes, size, sha256 = _latest_via_github(base, proxy)
+    else:
+        # 自定义非 GitHub 更新源：保留旧的整页 HTML 路径
+        tag, page_html = _fetch_latest_release(html_url, proxy)
+        notes = _extract_notes(page_html) if tag else ""
+        size, sha256 = 0, ""
     if not tag:
         raise UpdateError("检查更新失败（无法从 Release 页面获取版本号）")
     version = tag.lstrip("vV")
@@ -124,29 +229,88 @@ def check_for_update(current_version: str, update_url: str) -> dict | None:
     if compare_versions(version, current_version) <= 0:
         return None
 
-    base = html_url.rsplit("/releases/latest", 1)[0]
     # 安装包固定命名（build.bat / 发版流程保证）
     download_url = (f"{base}/releases/download/{tag}/"
                     f"Setup-CADGesture-v{version}.exe")
     return {
         "version": version,
-        "notes": _extract_notes(page_html),
+        "notes": notes,
         "download_url": download_url,
-        "size": 0,
+        "size": size,
+        "sha256": sha256,
         "mode": "github",
     }
 
 
-def _fetch_latest_release(html_url: str) -> tuple:
-    """请求 releases/latest 页面；返回 (tag, html)。"""
+def _latest_via_github(base: str, proxy: str) -> tuple:
+    """github 仓库的最新稳定版：(tag, notes, size, sha256)。
+
+    先 API JSON（小而全），失败（限流/网络）退回 302 探测（只有版本号）。
+    """
+    api_url = (re.sub(r"https?://github\.com", "https://api.github.com/repos",
+                      base) + "/releases/latest")
+    try:
+        data = _fetch_via_api(api_url, proxy)
+        tag, notes, size, sha256 = _parse_release(data)
+        if tag:
+            return (tag, notes, size, sha256)
+    except UpdateError:
+        pass
+    tag = _probe_latest_tag(base + "/releases/latest", proxy)
+    return (tag, "", 0, "")
+
+
+def _fetch_via_api(api_url: str, proxy: str) -> dict:
+    try:
+        req = urllib.request.Request(
+            api_url, headers={"User-Agent": _USER_AGENT,
+                              "Accept": "application/vnd.github+json"})
+        opener = urllib.request.build_opener(*proxy_handlers(proxy))
+        with opener.open(req, timeout=_CHECK_TIMEOUT) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="ignore"))
+    except Exception as e:
+        raise UpdateError("API 检查失败") from e
+
+
+def _probe_latest_tag(html_url: str, proxy: str) -> str:
+    """请求 releases/latest 只取 302 Location 里的 tag（不下载页面正文）"""
+    try:
+        handlers = [_NoRedirect()] + proxy_handlers(proxy)
+        opener = urllib.request.build_opener(*handlers)
+        req = urllib.request.Request(html_url,
+                                     headers={"User-Agent": _USER_AGENT})
+        try:
+            with opener.open(req, timeout=_CHECK_TIMEOUT) as resp:
+                # 未按预期跳转（缓存/代理改写）时兜底从最终 URL 取
+                return _tag_from_url(resp.geturl())
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location") or ""
+            e.close()
+            return _tag_from_url(loc)
+    except UpdateError:
+        raise
+    except Exception as e:
+        raise UpdateError(
+            "检查更新失败（网络连接异常，请检查网络后重试）") from e
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """禁止自动跟随跳转：releases/latest 靠 302 Location 拿版本号"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _fetch_latest_release(html_url: str, proxy: str = "") -> tuple:
+    """（旧路径）请求 releases/latest 整页；返回 (tag, html)。"""
     try:
         req = urllib.request.Request(html_url,
                                      headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        opener = urllib.request.build_opener(*proxy_handlers(proxy))
+        with opener.open(req, timeout=_CHECK_TIMEOUT) as resp:
             final = resp.geturl()
             page_html = resp.read().decode("utf-8", errors="ignore")
-        m = re.search(r"/releases/tag/([^/?#]+)", final)
-        return (m.group(1), page_html) if m else ("", "")
+        return (_tag_from_url(final), page_html)
     except Exception as e:
         raise UpdateError(
             "检查更新失败（网络连接异常，请检查网络后重试）") from e
@@ -167,18 +331,56 @@ def _extract_notes(page_html: str) -> str:
 
 
 def download_installer(url: str, dest: str, expected_size: int = 0,
-                       progress_cb=None) -> bool:
-    """流式下载安装包到 dest（先写 .part 再原子改名）。
+                       progress_cb=None, proxy: str = "", mirrors=None,
+                       expected_sha256: str = "",
+                       status_cb=None) -> tuple:
+    """多源回退下载安装包到 dest（先写 .part 再原子改名）。
 
-    progress_cb(downloaded, total)：可抛 UpdateCancelled 中断。
-    Returns: 成功 True；失败 False
+    源顺序：直连 → 各镜像前缀（download_source_urls）→ 直连不设速限
+    重试兜底。每个源先测速 _BAIL_SECONDS 秒（最后一个重试除外），不足
+    _BAIL_BYTES 判定过慢，换下一个源；expected_sha256 非空时对每个源的
+    下载结果做 SHA256 校验，不过按失败处理继续换源。
+
+    progress_cb(downloaded, total)：可抛 UpdateCancelled 中断整个下载。
+    status_cb(text)：当前下载源变化提示（已做 i18n 的中文文案）。
+
+    Returns: (ok, reason)
     """
+    attempts = [(u, True) for u in download_source_urls(url, mirrors)]
+    attempts.append((url, False))  # 兜底：直连重试，不限速
+    ok, reason = False, ""
+    for src, bail in attempts:
+        host = re.sub(r"^https?://([^/]+).*$", r"\1", src)
+        if src == url:
+            status = ((T_DOWNLOAD_DIRECT, {})
+                      if bail else (T_DOWNLOAD_RETRY, {}))
+        else:
+            status = (T_DOWNLOAD_MIRROR, {"host": host})
+        if status_cb:
+            try:
+                status_cb(status)
+            except Exception:
+                pass
+        ok, reason = _download_one(src, dest, expected_size, progress_cb,
+                                   proxy, expected_sha256, bail)
+        if ok:
+            return True, ""
+    return False, (reason or T_DOWNLOAD_ALL_FAILED)
+
+
+def _download_one(url: str, dest: str, expected_size: int, progress_cb,
+                  proxy: str, expected_sha256: str, bail: bool) -> tuple:
+    """单源流式下载。Returns: (ok, reason)；用户取消抛 UpdateCancelled"""
     part = dest + ".part"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        opener = urllib.request.build_opener(*proxy_handlers(proxy))
+        with opener.open(req, timeout=_TIMEOUT) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
             downloaded = 0
+            hasher = hashlib.sha256() if expected_sha256 else None
+            start = time.monotonic()
+            too_slow = False
             with open(part, "wb") as f:
                 while True:
                     chunk = resp.read(_CHUNK_SIZE)
@@ -186,6 +388,12 @@ def download_installer(url: str, dest: str, expected_size: int = 0,
                         break
                     f.write(chunk)
                     downloaded += len(chunk)
+                    if hasher:
+                        hasher.update(chunk)
+                    if (bail and downloaded < _BAIL_BYTES
+                            and time.monotonic() - start > _BAIL_SECONDS):
+                        too_slow = True
+                        break
                     if progress_cb:
                         try:
                             progress_cb(downloaded, total)
@@ -193,20 +401,37 @@ def download_installer(url: str, dest: str, expected_size: int = 0,
                             raise
                         except Exception:
                             pass
+        if too_slow:
+            _safe_remove(part)
+            return False, T_DOWNLOAD_SLOW
         if expected_size > 0 and downloaded != expected_size:
             _safe_remove(part)
-            return False
+            return False, T_DOWNLOAD_SIZE_MISMATCH
         if expected_size <= 0 and total > 0 and downloaded != total:
             _safe_remove(part)
-            return False
+            return False, T_DOWNLOAD_SIZE_MISMATCH
+        if hasher and hasher.hexdigest().lower() != expected_sha256.lower():
+            _safe_remove(part)
+            return False, T_DOWNLOAD_BAD_SHA
         os.replace(part, dest)
-        return True
+        return True, ""
     except UpdateCancelled:
         _safe_remove(part)
         raise
-    except Exception:
+    except Exception as e:
         _safe_remove(part)
-        return False
+        return False, f"{type(e).__name__}: {e}"
+
+
+# 下载状态/失败文案（中文模板常量；界面展示处经 T() 翻译，i18n.py 有对应条目）
+T_DOWNLOAD_DIRECT = "正在从 GitHub 直连下载…（较慢会自动切换镜像）"
+T_DOWNLOAD_MIRROR = "直连较慢，正在用镜像 {host} 加速下载…"
+T_DOWNLOAD_RETRY = "镜像均不可用，直连重试（不限速）…"
+T_DOWNLOAD_SLOW = "下载速度过慢"
+T_DOWNLOAD_SIZE_MISMATCH = "下载文件不完整"
+T_DOWNLOAD_BAD_SHA = "下载文件校验失败"
+T_DOWNLOAD_ALL_FAILED = ("下载失败：所有下载源均不可用。"
+                         "可在 设置→关于→更新代理 填写代理地址后重试")
 
 
 def run_installer(installer_path: str) -> tuple:

@@ -195,10 +195,18 @@ Compress-Archive -Path dist\CADGesture-x64 -DestinationPath "Releases\CADGesture
 - **圆盘外观主题**：改圆盘配色去 `theme.py` 的 `MENU_THEMES`（5 套：graphite/azure/emerald/crimson/midnight + 自定义主色），由 `settings.menu_theme` 控制，`get_menu_theme(name)` 获取。改字体/位置/渲染去 `qt_renderer.py`（`draw_ring` 被运行时圆盘和两处预览共用，改动必须三处一致）。
 - **圆盘几何**：半径/缩放统一从 `menu_geometry.py` 取（`DEFAULT_RADII` + `menu_scale`），不要在各模块里各自写死半径默认值。
 - **配置自动迁移**：`config_manager._migrate_config` 自动补旧配置字段；空的 `extension_sectors` 会从默认配置按 target+name 自动补全。
-- **自动更新**：统一走 GitHub Releases HTML 检查（`src/updater.py`）：下载
-  `Setup-CADGesture-vX.exe` 到 %TEMP% → 静默 `/VERYSILENT` 启动 Inno 安装器 →
-  写 %TEMP% 更新标记 → 退出主进程；新版启动时消费标记弹"已更新"。
-  检查/下载在后台线程，进度与结果经 event_queue 回主线程。
+- **自动更新**：统一走 GitHub Releases 检查（`src/updater.py`）：优先 GitHub
+  API JSON（约 7KB，含版本/说明/安装包体积/官方 SHA256），API 失败（限流
+  403/被墙）退回 releases/latest 的 302 Location 探测（几乎零流量）；
+  **不要改回抓整页 HTML**（200KB+，跨境链路慢）。`settings.update_proxy`
+  可显式指定更新代理（urllib 认不出 PAC 模式的系统代理）。下载走多源回退链：
+  直连（先测速 3 秒，过慢换下一个）→ `settings.update_mirrors` 镜像前缀
+  （借鉴 Clash Verge Rev endpoints，默认 gh-proxy.com/ghfast.top/gh-proxy.org，
+  公共镜像常失效需可配置）→ 直连不限速重试兜底；全程按 API 的官方 SHA256
+  校验（防镜像篡改，校验不过自动换源）。下载 `Setup-CADGesture-vX.exe` 到
+  %TEMP% → 静默 `/VERYSILENT` 启动 Inno 安装器 → 写 %TEMP% 更新标记 →
+  退出主进程；新版启动时消费标记弹"已更新"。检查/下载在后台线程，进度与
+  结果经 event_queue 回主线程（下载源变化经 `update_download_status` 事件）。
 - **onedir 打包（启动免解压）**：PyInstaller 用 `--onedir`，`sys.executable`
   指向真实 exe 路径；版本号统一用 `src/version.py` 内置常量。绿色版 zip
   整包压缩 `dist\CADGesture-x64\`，解压后运行其中的 exe。
@@ -216,7 +224,7 @@ Compress-Archive -Path dist\CADGesture-x64 -DestinationPath "Releases\CADGesture
 
 `%APPDATA%\CADGesture\config.json` — `settings` + `profiles`（与 exe 位置无关，用户可编辑；旧版 `config/config.json` 仅用于首次迁移）。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 字段：`description` = COM 命令名，`key` = pyautogui 回退键（自定义应用只走按键模拟），`target` = `autocad`|`zwcad` 或自定义应用 id（`app_xxx`）。
-`settings` 关键项：`app_order`（卡片显示顺序，内置 autocad/zwcad 在前）、`custom_targets`（自定义应用列表：`id`/`name`/`match_exe`/`match_title`）、`gesture_exclude_apps`（不弹圆盘的应用，exe 关键字逗号分隔，默认 `sldworks` —— 自带右键笔势的程序；优先于自定义应用注册）、`autocad_profile`/`zwcad_profile`/`{target}_profile`（各应用当前方案绑定）、`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 false）、`update_source_url`（更新源，默认 GitHub Release 页面）、`last_update_check`（上次检查时间，24h 频率控制）、`ime_assist_sw`（SW 快捷键直通总开关，默认 true）、`ime_assist_mode`（`key`=按键直通 / `layout`=切键盘布局，默认 key）、`sw_key_list`（直通键集，默认 `A-Z,0-9,SPACE`）、`sw_key_extra_classes`（额外视口类名白名单，默认空）。
+`settings` 关键项：`app_order`（卡片显示顺序，内置 autocad/zwcad 在前）、`custom_targets`（自定义应用列表：`id`/`name`/`match_exe`/`match_title`）、`gesture_exclude_apps`（不弹圆盘的应用，exe 关键字逗号分隔，默认 `sldworks` —— 自带右键笔势的程序；优先于自定义应用注册）、`autocad_profile`/`zwcad_profile`/`{target}_profile`（各应用当前方案绑定）、`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 false）、`update_source_url`（更新源，默认 GitHub Release 页面）、`update_proxy`（更新专用代理，默认空 = 跟随系统；代理软件是 PAC 模式时程序感知不到，需手动填如 `http://127.0.0.1:7890`）、`update_mirrors`（下载加速镜像前缀列表，默认 gh-proxy.com/ghfast.top/gh-proxy.org，失效可编辑，逗号分隔展示在设置页）、`last_update_check`（上次检查时间，24h 频率控制）、`ime_assist_sw`（SW 快捷键直通总开关，默认 true）、`ime_assist_mode`（`key`=按键直通 / `layout`=切键盘布局，默认 key）、`sw_key_list`（直通键集，默认 `A-Z,0-9,SPACE`）、`sw_key_extra_classes`（额外视口类名白名单，默认空）。
 
 ## 提交规范
 

@@ -228,8 +228,18 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         settings["update_source_url"] = "https://github.com/Inonvation/cad-gesture"
         migrated = True
     if "update_token" not in settings:
-        # 可选 GitHub token（当前更新走 HTML 页检查，预留字段）
+        # 可选 GitHub token（当前更新走 API/302 探测检查，预留字段）
         settings["update_token"] = ""
+        migrated = True
+    if "update_proxy" not in settings:
+        # 更新专用代理：留空跟随系统；PAC 模式代理需手动填
+        settings["update_proxy"] = ""
+        migrated = True
+    if "update_mirrors" not in settings:
+        # 下载加速镜像前缀列表（下载慢/校验失败时自动换源）
+        settings["update_mirrors"] = ["https://gh-proxy.com/",
+                                      "https://ghfast.top/",
+                                      "https://gh-proxy.org/"]
         migrated = True
     if "last_update_check" not in settings:
         settings["last_update_check"] = ""

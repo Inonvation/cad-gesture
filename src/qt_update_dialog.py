@@ -194,6 +194,10 @@ class UpdateDialog(QDialog):
         self._on_later = None
         self._on_cancel = None
 
+    def set_status(self, text: str) -> None:
+        """下载源变化提示（副标题在下载模式下空闲，直接复用，零布局改动）"""
+        self._subtitle.setText(text)
+
     def set_progress_percent(self, pct: int) -> None:
         """按百分比更新下载进度（0-100）"""
         pct = max(0, min(int(pct), 100))

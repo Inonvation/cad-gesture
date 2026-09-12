@@ -435,6 +435,12 @@ def _default_config() -> Dict[str, Any]:
             "check_update_on_start": False,
             # 更新源：GitHub 仓库根或 releases/latest 地址（updater 会规范化）
             "update_source_url": "https://github.com/Inonvation/cad-gesture",
+            # 更新代理：留空跟随系统；代理软件走 PAC 时 urllib 不识别，可手动填
+            "update_proxy": "",
+            # 下载加速镜像前缀（借鉴 Clash Verge Rev endpoints 的多源回退模式）
+            "update_mirrors": ["https://gh-proxy.com/",
+                               "https://ghfast.top/",
+                               "https://gh-proxy.org/"],
             "update_token": "",
             "last_update_check": "",
             "app_order": ["autocad", "zwcad"],

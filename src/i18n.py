@@ -307,6 +307,25 @@ _EN: Dict[str, str] = {
     "立即检查是否有新版本": "Check for new version now",
     "上次检查更新": "Last Checked",
     "从未检查过": "Never checked",
+    "更新代理": "Update Proxy",
+    "如 http://127.0.0.1:7890，留空跟随系统":
+        "e.g. http://127.0.0.1:7890, empty = system proxy",
+    "下载加速": "Download Mirrors",
+    "如 gh-proxy.com, ghfast.top，逗号分隔，留空直连":
+        "e.g. gh-proxy.com, ghfast.top; comma separated, empty = direct",
+    # 更新下载状态 / 失败文案（updater 常量模板）
+    "正在从 GitHub 直连下载…（较慢会自动切换镜像）":
+        "Downloading from GitHub directly… (switches to mirrors if slow)",
+    "直连较慢，正在用镜像 {host} 加速下载…":
+        "Direct connection is slow, using mirror {host}…",
+    "镜像均不可用，直连重试（不限速）…":
+        "Mirrors unavailable, retrying direct (no speed limit)…",
+    "下载速度过慢": "Download too slow",
+    "下载文件不完整": "Downloaded file is incomplete",
+    "下载文件校验失败": "Downloaded file failed verification",
+    "下载失败：所有下载源均不可用。可在 设置→关于→更新代理 填写代理地址后重试":
+        "Download failed: all sources unavailable. Set a proxy under "
+        "Settings > About > Update Proxy, then retry",
     "配置目录": "Config Directory",
     "更改": "Change",
     "重置": "Reset",

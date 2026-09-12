@@ -1170,6 +1170,55 @@ class AboutPage(_BasePage):
         last_row.addStretch(1)
         self.body.addLayout(last_row)
 
+        # 更新代理：urllib 不认 PAC 模式的系统代理，走不动时手动填
+        proxy_row = QHBoxLayout()
+        proxy_row.setSpacing(6)
+        self._lb_update_proxy = QLabel(T("更新代理"))
+        self.register_text(self._lb_update_proxy, "更新代理")
+        proxy_row.addWidget(self._lb_update_proxy)
+        proxy_row.addWidget(self._help(
+            "检查与下载更新走这个代理。留空 = 跟随系统设置；如果开了代理软件"
+            "但更新仍很慢（代理是 PAC 模式时程序感知不到），手动填，"
+            "如 http://127.0.0.1:7890"))
+        self.proxy_edit = QLineEdit(
+            config.get("settings", {}).get("update_proxy", ""))
+        self.proxy_edit.setPlaceholderText(
+            T("如 http://127.0.0.1:7890，留空跟随系统"))
+        self.proxy_edit.setMaximumWidth(220)
+        self.proxy_edit.editingFinished.connect(
+            lambda: self._set("update_proxy", self.proxy_edit.text().strip()))
+        proxy_row.addWidget(self.proxy_edit)
+        proxy_row.addStretch(1)
+        self.body.addLayout(proxy_row)
+
+        # 下载加速镜像：逗号分隔域名/URL，下载慢或校验失败时自动换源
+        mirror_row = QHBoxLayout()
+        mirror_row.setSpacing(6)
+        self._lb_mirrors = QLabel(T("下载加速"))
+        self.register_text(self._lb_mirrors, "下载加速")
+        mirror_row.addWidget(self._lb_mirrors)
+        mirror_row.addWidget(self._help(
+            "下载安装包时依次尝试的加速镜像，用逗号分隔，留空只用 GitHub 直连。"
+            "直连太慢会自动切镜像，下载完自动校验官方校验值，校验不过会换源重下。"))
+        self.mirror_edit = QLineEdit(
+            self._fmt_mirrors(config.get("settings", {})
+                              .get("update_mirrors") or []))
+        self.mirror_edit.setPlaceholderText(
+            T("如 gh-proxy.com, ghfast.top，逗号分隔，留空直连"))
+        self.mirror_edit.setMaximumWidth(220)
+        from src.updater import normalize_mirror
+
+        def _save_mirrors():
+            text = self.mirror_edit.text().replace("，", ",")
+            self._set("update_mirrors",
+                      [m for m in (normalize_mirror(x)
+                                   for x in text.split(",")) if m])
+
+        self.mirror_edit.editingFinished.connect(_save_mirrors)
+        mirror_row.addWidget(self.mirror_edit)
+        mirror_row.addStretch(1)
+        self.body.addLayout(mirror_row)
+
         # ---- 方案与维护：目录 / 导入导出 / 测试 ----
         self._section("方案与维护")
         # 配置目录行：标题 + 当前路径 + 更改/重置（同一行）
@@ -1315,6 +1364,12 @@ class AboutPage(_BasePage):
         except Exception:
             return iso
 
+    @staticmethod
+    def _fmt_mirrors(mirrors) -> str:
+        """镜像前缀列表 → 输入框展示文本（只留域名/路径，逗号分隔）"""
+        return ", ".join(
+            str(m).split("//", 1)[-1].strip("/") for m in mirrors)
+
     def _on_check_update_click(self):
         if self.on_check_update:
             self.on_check_update()
@@ -1346,6 +1401,9 @@ class AboutPage(_BasePage):
         self._config_dir_label.setText(get_config_path())
         self._lb_last_check_value.setText(
             self._fmt_last_check(s.get("last_update_check", "")))
+        self.proxy_edit.setText(str(s.get("update_proxy", "") or ""))
+        self.mirror_edit.setText(
+            self._fmt_mirrors(s.get("update_mirrors") or []))
 
     def retranslate(self):
         super().retranslate()

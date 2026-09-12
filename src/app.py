@@ -474,6 +474,8 @@ class CADGestureApp:
                         elif event_type in ("update_progress_pct",
                                             "update_progress_bytes"):
                             self._on_update_progress(data)
+                        elif event_type == "update_download_status":
+                            self._on_update_download_status(data)
                         elif event_type == "update_download_done":
                             self._on_update_download_done(data)
                     except Exception as e:
@@ -1072,7 +1074,7 @@ class CADGestureApp:
     def _check_update(self, manual: bool):
         """检查更新（后台线程执行网络请求，结果经事件队列回主线程）
 
-        统一路径：Releases HTML 页查新版 → 下载 Setup-CADGesture-vX.exe
+        统一路径：GitHub API / 302 探测查新版 → 下载 Setup-CADGesture-vX.exe
         → 静默覆盖安装。
         """
         if manual is False and not self._should_auto_check():
@@ -1090,10 +1092,11 @@ class CADGestureApp:
                          args=(url, manual), daemon=True).start()
 
     def _check_worker(self, url: str, manual: bool):
-        """解析 GitHub Releases HTML 页检查新版本（不限流）"""
+        """检查新版（API JSON 优先 / 302 探测兜底，见 updater 模块说明）"""
         from src.updater import check_for_update, UpdateError
+        proxy = self.config.get("settings", {}).get("update_proxy", "") or ""
         try:
-            info = check_for_update(__version__, url)
+            info = check_for_update(__version__, url, proxy=proxy)
             result = {"ok": True, "info": info, "error": None, "manual": manual}
         except UpdateError as e:
             result = {"ok": False, "info": None, "error": str(e), "manual": manual}
@@ -1205,18 +1208,25 @@ class CADGestureApp:
                          daemon=True).start()
 
     def _download_worker(self, info: dict):
-        """后台下载线程：下载 Setup 安装包"""
+        """后台下载线程：多源回退下载 Setup 安装包（直连→镜像→直连重试）"""
         from src.updater import UpdateError, download_installer
         ok, reason = False, ""
         try:
             dest = getattr(self, "_update_dest", None)
             if not dest:
                 raise UpdateError("缺少下载目标路径")
-            ok = download_installer(
+            s = self.config.get("settings", {})
+            proxy = s.get("update_proxy", "") or ""
+            mirrors = s.get("update_mirrors") or []
+            ok, reason = download_installer(
                 info.get("download_url", ""), dest,
                 info.get("size") or 0,
-                progress_cb=self._download_progress_bytes)
-            if not ok:
+                progress_cb=self._download_progress_bytes,
+                proxy=proxy, mirrors=mirrors,
+                expected_sha256=str(info.get("sha256") or ""),
+                status_cb=lambda st: self.event_queue.put(
+                    ("update_download_status", st)))
+            if not ok and not reason:
                 reason = "下载失败"
         except UpdateError as e:
             ok, reason = False, str(e)
@@ -1245,6 +1255,16 @@ class CADGestureApp:
         except Exception as e:
             self.log.error("更新进度更新失败: %s", e, exc_info=True)
 
+    def _on_update_download_status(self, data: tuple):
+        """下载源变化提示：(模板, 参数)，显示在弹窗副标题位"""
+        try:
+            dialog = getattr(self, "_update_dialog", None)
+            if dialog is not None:
+                key, params = data
+                dialog.set_status(T(key).format(**params))
+        except Exception as e:
+            self.log.error("更新下载状态更新失败: %s", e, exc_info=True)
+
     def _on_update_download_done(self, data: tuple):
         """下载完成：切到"开始安装"确认，用户确认后应用更新并退出。"""
         ok, reason = data
@@ -1269,7 +1289,7 @@ class CADGestureApp:
                 self._show_msg_box(
                     T("更新失败"),
                     T("下载失败，请检查网络后重试") +
-                    (("\n" + reason) if reason and reason != "下载失败" else ""),
+                    (("\n" + T(reason)) if reason and reason != "下载失败" else ""),
                     warning=True)
             except Exception:
                 pass
