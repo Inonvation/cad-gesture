@@ -441,7 +441,9 @@ class AppearancePage(_BasePage):
         left = QWidget()
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(12)
+        # 行距 8：左列项目多（色板 2 行 + 7 条滑杆），窗口已是屏幕最大高度，
+        # 再松就会出现整页滚动条
+        lv.setSpacing(8)
 
         # 界面模式（浅/深）
         mode_row = QHBoxLayout()
@@ -458,10 +460,11 @@ class AppearancePage(_BasePage):
         mode_row.addStretch(1)
         lv.addLayout(mode_row)
 
-        # 圆盘主题色板网格（3 列）
+        # 圆盘主题色板网格（4 列：5 套主题 + 自定义共 7 个排 2 行，
+        # 3 列要 3 行、整页超高出现滚动条，挤占滑杆区）
         grid = QGridLayout()
         grid.setSpacing(12)
-        for c in range(3):
+        for c in range(4):
             grid.setColumnStretch(c, 1)
         self._theme_group = QButtonGroup(self)
         self._theme_group.setExclusive(True)
@@ -472,12 +475,12 @@ class AppearancePage(_BasePage):
             self._theme_tiles[th.name] = tile
             self._theme_group.addButton(tile)
             self._tile_by_btn[tile] = th.name
-            grid.addWidget(tile, i // 3, i % 3)
+            grid.addWidget(tile, i // 4, i % 4)
         i = len(MENU_THEMES)
         self._custom_tile = _ThemeTile("自定义", _custom_tile_pixmap())
         self._theme_group.addButton(self._custom_tile)
         self._tile_by_btn[self._custom_tile] = "custom"
-        grid.addWidget(self._custom_tile, i // 3, i % 3)
+        grid.addWidget(self._custom_tile, i // 4, i % 4)
         self._theme_group.buttonClicked.connect(self._on_theme_picked)
         lv.addLayout(grid)
 
