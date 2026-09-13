@@ -962,6 +962,10 @@ class QConfigGUI(QMainWindow):
                 QSettings("CADGesture", "CADGesture").remove("config_win_geometry")
             except Exception:
                 pass
+        if self.isMinimized():
+            # 位置记忆里带着最小化状态（异常会话遗留，restoreGeometry 会
+            # 连标记一起恢复）：强制正常显示，别让窗口以最小化条出现
+            self.showNormal()
         set_title_bar_theme(self, current_ui_mode() == "dark")
         # 窗口完全映射后再校验几何：showEvent 阶段 frameGeometry 可能未反映
         # 恢复后的位置（拔掉副屏/分辨率变化遗留的屏幕外位置）；
@@ -2462,13 +2466,31 @@ class QConfigGUI(QMainWindow):
             # 不再把它"复活"
             if getattr(self, "_closing", False):
                 return
+            if self.isMinimized():
+                # 最小化状态下 frame 在 -32000，下面的屏幕外判断会误判；
+                # 先恢复正常再校验
+                self.showNormal()
             if not self._frame_intersects_any_screen():
                 self._center_on_primary()
-                # 清掉异常的位置记忆，免下次启动再恢复屏幕外位置
+                # 清掉异常的位置记忆，免下次启动反复恢复屏幕外位置
                 try:
-                    QSettings("CADGesture", "CADGesture").remove("config_win_geometry")
+                    QSettings("CADGesture", "CADGesture").remove(
+                        "config_win_geometry")
                 except Exception:
                     pass
+            else:
+                # 部分露在屏幕外（位置记忆损坏/分辨率变化导致被截断）：
+                # 只把位置夹回工作区，不动大小和窗口状态 —— 实测改尺寸/
+                # 最大化会跟显示后 150ms 标题栏 DWM 重绘的「±2px 再还原」
+                # SetWindowPos 打架，把窗口顶成最小化条
+                av = self.screen().availableGeometry()
+                g = self.geometry()
+                x = max(av.left(), min(g.left(),
+                                       av.right() - g.width()))
+                y = max(av.top(), min(g.top(),
+                                      av.bottom() - g.height()))
+                if (x, y) != (g.left(), g.top()):
+                    self.move(x, y)
             if not self.isVisible():
                 self.show()
                 self.raise_()
