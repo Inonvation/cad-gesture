@@ -1,6 +1,7 @@
 """主应用模块 - Qt6 版（PySide6）"""
 
 import os
+import re
 import sys
 import math
 import queue
@@ -1253,18 +1254,24 @@ class CADGestureApp:
             info.get("version", ""), __version__,
             (info.get("notes") or "").strip(),
             on_update=lambda: self._start_update_download(info, dialog),
-            on_later=dialog.close)
+            on_later=dialog.close,
+            size_bytes=int(info.get("size") or 0))
         dialog.show()
         self._raise_foreground(dialog)
 
     def _start_update_download(self, info: dict, dialog=None):
         """开始后台下载，弹窗切换到下载进度模式
 
-        下载 Setup-CADGesture-vX.exe 到 %TEMP%，字节进度转百分比。
+        下载 Setup 安装包到 %TEMP%（文件名带版本号，断点续传的 .part
+        按版本隔离，旧版本残留分片不会串味）；保留已有 .part 以便续传。
         """
         self._update_cancel = False
         self._update_info = info
-        dest = os.path.join(tempfile.gettempdir(), "CADGesture-Setup.exe")
+        self._dl_last = None
+        self._dl_speed = 0.0
+        ver = re.sub(r"[^\w.\-]", "_", str(info.get("version") or "unknown"))
+        dest = os.path.join(tempfile.gettempdir(),
+                            f"CADGesture-Setup-v{ver}.exe")
         try:
             os.remove(dest)
         except OSError:
@@ -1274,12 +1281,24 @@ class CADGestureApp:
             from src.qt_update_dialog import UpdateDialog
             dialog = UpdateDialog()
         self._update_dialog = dialog
+        self._update_minimized_notified = False
+        self._update_dl_pct = -1
         dialog.show_download(
             info.get("version", ""),
-            on_cancel=lambda: setattr(self, "_update_cancel", True))
+            on_cancel=lambda: setattr(self, "_update_cancel", True),
+            on_minimized=self._on_update_dialog_minimized)
         dialog.show()
         threading.Thread(target=self._download_worker, args=(info,),
                          daemon=True).start()
+
+    def _retry_update_download(self):
+        """下载失败后一键重试：沿用上次检查到的更新信息与现有窗口"""
+        info = getattr(self, "_update_info", None)
+        if not info:
+            self.log.warning("重试下载但缺少更新信息，忽略")
+            return
+        self._start_update_download(info,
+                                    getattr(self, "_update_dialog", None))
 
     def _download_worker(self, info: dict):
         """后台下载线程：多源回退下载 Setup 安装包（直连→镜像→直连重试）"""
@@ -1310,24 +1329,90 @@ class CADGestureApp:
         self.event_queue.put(("update_download_done", (ok, reason)))
 
     def _download_progress_bytes(self, downloaded: int, total: int):
-        """下载回调：取消则抛异常中断；推字节进度给 UI（显示 MB/MB）"""
+        """下载回调（下载线程）：取消则抛异常中断；限频 ~200ms 推进度+速度
+
+        速度用指数平滑（窗口 = 两次推送间隔），换源/续传导致字节回退时
+        重置基线不清算瞬时速度（EMA 保留）。
+        """
         if self._update_cancel:
             from src.updater import UpdateCancelled
             raise UpdateCancelled("下载被取消")
-        self.event_queue.put(("update_progress_bytes", (downloaded, total)))
+        now = time.monotonic()
+        last = getattr(self, "_dl_last", None)
+        if last is None or downloaded < last[0]:
+            self._dl_last = (downloaded, now)
+            self.event_queue.put(
+                ("update_progress_bytes", (downloaded, total, 0.0)))
+            return
+        dt = now - last[1]
+        done = total > 0 and downloaded >= total
+        if dt <= 0 or (dt < 0.2 and not done):
+            return  # 窗口内合并，减小事件队列压力
+        inst = (downloaded - last[0]) / dt
+        prev = getattr(self, "_dl_speed", 0.0)
+        self._dl_speed = inst if prev <= 0 else prev * 0.7 + inst * 0.3
+        self._dl_last = (downloaded, now)
+        self.event_queue.put(
+            ("update_progress_bytes",
+             (downloaded, total, float(self._dl_speed))))
 
     def _on_update_progress(self, data):
         try:
             dialog = getattr(self, "_update_dialog", None)
             if dialog is None:
                 return
-            # 兼容旧事件：int=pct；新事件：(downloaded, total)
+            # 兼容旧事件：int=pct；(downloaded, total)；新事件带速度
             if isinstance(data, (tuple, list)) and len(data) >= 2:
-                dialog.set_progress(int(data[0]), int(data[1]))
+                speed = float(data[2]) if len(data) >= 3 else 0.0
+                dialog.set_progress(int(data[0]), int(data[1]), speed)
+                total = int(data[1])
+                if total > 0:
+                    self._update_dl_pct = min(int(data[0]) * 100 // total,
+                                              100)
             else:
                 dialog.set_progress_percent(int(data))
+                self._update_dl_pct = int(data)
+            # 弹窗最小化时把进度同步到托盘 tooltip（悬停可见）
+            if dialog.isMinimized():
+                self._update_tray_download_tooltip()
         except Exception as e:
             self.log.error("更新进度更新失败: %s", e, exc_info=True)
+
+    def _on_update_dialog_minimized(self, minimized: bool):
+        """更新弹窗最小化/恢复：托盘气泡告知后台下载，tooltip 显示进度"""
+        try:
+            if not hasattr(self, "tray") or self.tray is None:
+                return
+            if minimized:
+                if not getattr(self, "_update_minimized_notified", False):
+                    self._update_minimized_notified = True
+                    self._tray_message(
+                        T("软件更新"),
+                        T("已最小化，下载在后台继续，完成后会通知你"))
+                self._update_tray_download_tooltip()
+            else:
+                self._reset_tray_tooltip()
+        except Exception as e:
+            self.log.error("更新弹窗最小化提示失败: %s", e, exc_info=True)
+
+    def _update_tray_download_tooltip(self):
+        """最小化下载时把进度写进托盘 tooltip"""
+        if not hasattr(self, "tray") or self.tray is None:
+            return
+        pct = getattr(self, "_update_dl_pct", -1)
+        if pct >= 0:
+            self.tray.setToolTip(T("正在下载更新… {pct}%").format(pct=pct))
+        else:
+            self.tray.setToolTip(T("正在下载更新…"))
+
+    def _reset_tray_tooltip(self):
+        """托盘 tooltip 恢复常规文案（按暂停状态）"""
+        if not hasattr(self, "tray") or self.tray is None:
+            return
+        paused = bool(self.config.get("settings", {}).get(
+            "gesture_paused", False))
+        self.tray.setToolTip(
+            T("CAD Gesture — 手势已暂停") if paused else T("CAD Gesture"))
 
     def _on_update_download_status(self, data: tuple):
         """下载源变化提示：(模板, 参数)，显示在弹窗副标题位"""
@@ -1343,6 +1428,7 @@ class CADGestureApp:
         """下载完成：切到"开始安装"确认，用户确认后应用更新并退出。"""
         ok, reason = data
         dialog = getattr(self, "_update_dialog", None)
+        self._reset_tray_tooltip()
         if self._update_cancel:
             self._update_dialog = None
             try:
@@ -1353,22 +1439,42 @@ class CADGestureApp:
             self._tray_message(T("CAD Gesture"), T("更新已取消"))
             return
         if not ok:
-            self._update_dialog = None
-            try:
-                if dialog is not None:
-                    dialog.close()
-            except Exception:
-                pass
-            try:
-                self._show_msg_box(
-                    T("更新失败"),
-                    T("下载失败，请检查网络后重试") +
-                    (("\n" + T(reason)) if reason and reason != "下载失败" else ""),
-                    warning=True)
-            except Exception:
-                pass
+            reason_txt = (T(reason) if reason and reason != "下载失败"
+                          else T("下载失败，请检查网络后重试"))
+            if dialog is not None:
+                # 失败模式留在原窗口：主按钮一键重试（断点续传接着下）
+                try:
+                    dialog.show_download_failed(
+                        reason_txt, on_retry=self._retry_update_download)
+                    if dialog.isMinimized():
+                        self._raise_foreground(dialog)
+                except Exception as e:
+                    self.log.error("切换下载失败模式异常: %s", e, exc_info=True)
+                    self._update_dialog = None
+                    try:
+                        dialog.close()
+                    except Exception:
+                        pass
+                    try:
+                        self._show_msg_box(T("更新失败"), reason_txt,
+                                           warning=True)
+                    except Exception:
+                        pass
+            else:
+                try:
+                    self._show_msg_box(T("更新失败"), reason_txt,
+                                       warning=True)
+                except Exception:
+                    pass
             return
         self._show_confirm_install(dialog)
+        try:
+            if dialog is not None and dialog.isMinimized():
+                # 下载期间窗口被最小化：恢复显示并托盘提醒，避免用户不知道已就绪
+                self._raise_foreground(dialog)
+                self._tray_message(T("更新就绪"), T("更新包已下载完成。"))
+        except Exception as e:
+            self.log.error("恢复更新弹窗失败: %s", e, exc_info=True)
         self.log.info("更新包已就绪，等待用户确认后应用")
 
     def _show_confirm_install(self, dialog):

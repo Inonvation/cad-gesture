@@ -205,11 +205,18 @@ Compress-Archive -Path dist\CADGesture-x64 -DestinationPath "Releases\CADGesture
   可显式指定更新代理（urllib 认不出 PAC 模式的系统代理）。下载走多源回退链：
   直连（先测速 3 秒，过慢换下一个）→ `settings.update_mirrors` 镜像前缀
   （借鉴 Clash Verge Rev endpoints，默认 gh-proxy.com/ghfast.top/gh-proxy.org，
-  公共镜像常失效需可配置）→ 直连不限速重试兜底；全程按 API 的官方 SHA256
-  校验（防镜像篡改，校验不过自动换源）。下载 `Setup-CADGesture-vX.exe` 到
-  %TEMP% → 静默 `/VERYSILENT` 启动 Inno 安装器 → 写 %TEMP% 更新标记 →
-  退出主进程；新版启动时消费标记弹"已更新"。检查/下载在后台线程，进度与
-  结果经 event_queue 回主线程（下载源变化经 `update_download_status` 事件）。
+  公共镜像常失效需可配置）→ 直连不限速重试兜底；**expected_sha256 为空
+  （302 兜底拿不到校验值）时只用直连不启用镜像**（无校验的第三方镜像有
+  篡改风险）。全程按 API 的官方 SHA256 校验（防镜像篡改，校验不过自动换
+  源）。**断点续传**：先写 `dest.part`（HTTP Range/206，服务器不支持则整段
+  重下），换源/测速失败/网络异常/用户取消都保留 .part 下次续传，仅 SHA 或
+  大小不符时删除。下载临时文件名带版本号 `CADGesture-Setup-vX.exe` 到
+  %TEMP%（.part 按版本隔离）→ 静默 `/VERYSILENT` 启动 Inno 安装器 →
+  写 %TEMP% 更新标记 → 退出主进程；新版启动时消费标记弹"已更新"。
+  弹窗行为：下载阶段非模态可最小化（最小化后托盘 tooltip 显示进度、完成
+  自动恢复窗口）；进度事件限频 ~200ms 且带平滑速度/剩余时间；下载失败
+  弹窗内一键重试（不弹系统错误框）。检查/下载在后台线程，进度与结果经
+  event_queue 回主线程（下载源变化经 `update_download_status` 事件）。
 - **onedir 打包（启动免解压）**：PyInstaller 用 `--onedir`，`sys.executable`
   指向真实 exe 路径；版本号统一用 `src/version.py` 内置常量。绿色版 zip
   整包压缩 `dist\CADGesture-x64\`，解压后运行其中的 exe。

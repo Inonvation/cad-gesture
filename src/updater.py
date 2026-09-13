@@ -334,20 +334,30 @@ def download_installer(url: str, dest: str, expected_size: int = 0,
                        progress_cb=None, proxy: str = "", mirrors=None,
                        expected_sha256: str = "",
                        status_cb=None) -> tuple:
-    """多源回退下载安装包到 dest（先写 .part 再原子改名）。
+    """多源回退下载安装包到 dest（先写 .part 再原子改名，支持断点续传）。
 
     源顺序：直连 → 各镜像前缀（download_source_urls）→ 直连不设速限
     重试兜底。每个源先测速 _BAIL_SECONDS 秒（最后一个重试除外），不足
-    _BAIL_BYTES 判定过慢，换下一个源；expected_sha256 非空时对每个源的
-    下载结果做 SHA256 校验，不过按失败处理继续换源。
+    _BAIL_BYTES 判定过慢，换下一个源；换源不删 .part，下一个源从中断处
+    续传。expected_sha256 非空时对下载结果做 SHA256 校验，不过按失败
+    处理继续换源。
 
-    progress_cb(downloaded, total)：可抛 UpdateCancelled 中断整个下载。
+    安全约束：expected_sha256 为空（如 API 被限流退回 302 探测，拿不到
+    官方校验值）时只走直连、不启用镜像——镜像属第三方中转，无校验值时
+    有被篡改风险，防篡改保证优先于下载加速。
+
+    progress_cb(downloaded, total)：可抛 UpdateCancelled 中断整个下载
+    （取消保留 .part，下次下载可续传）。
     status_cb(text)：当前下载源变化提示（已做 i18n 的中文文案）。
 
     Returns: (ok, reason)
     """
-    attempts = [(u, True) for u in download_source_urls(url, mirrors)]
-    attempts.append((url, False))  # 兜底：直连重试，不限速
+    if expected_sha256:
+        attempts = [(u, True) for u in download_source_urls(url, mirrors)]
+        attempts.append((url, False))  # 兜底：直连重试，不限速
+    else:
+        # 无官方校验值：只用直连（见上安全约束）
+        attempts = [(url, True), (url, False)]
     ok, reason = False, ""
     for src, bail in attempts:
         host = re.sub(r"^https?://([^/]+).*$", r"\1", src)
@@ -368,29 +378,83 @@ def download_installer(url: str, dest: str, expected_size: int = 0,
     return False, (reason or T_DOWNLOAD_ALL_FAILED)
 
 
+def _hash_file(path: str, expected_sha256: str) -> bool:
+    """校验文件 SHA256；expected_sha256 为空视为通过"""
+    if not expected_sha256:
+        return True
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(_CHUNK_SIZE)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest().lower() == expected_sha256.lower()
+
+
 def _download_one(url: str, dest: str, expected_size: int, progress_cb,
                   proxy: str, expected_sha256: str, bail: bool) -> tuple:
-    """单源流式下载。Returns: (ok, reason)；用户取消抛 UpdateCancelled"""
+    """单源流式下载（支持断点续传）。Returns: (ok, reason)；用户取消抛 UpdateCancelled
+
+    dest.part 为断点文件：已存在且服务器支持 Range（206 响应）则从中断处
+    续传；服务器忽略 Range（200 整段返回）则丢弃分片重下。换源/测速失败
+    /网络异常/用户取消均保留 .part 供下次续传，仅校验失败或大小不符时
+    删除。下载完成经 SHA256 校验后原子改名。
+    """
     part = dest + ".part"
+    base = 0
+    if os.path.exists(part):
+        base = os.path.getsize(part)
+        if expected_size > 0:
+            if base > expected_size:
+                _safe_remove(part)
+                base = 0
+            elif base == expected_size:
+                # 断点文件已下满（上次完成后未及改名）：直接校验晋级，免重复请求
+                if _hash_file(part, expected_sha256):
+                    os.replace(part, dest)
+                    return True, ""
+                _safe_remove(part)
+                base = 0
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        headers = {"User-Agent": _USER_AGENT}
+        if base > 0:
+            headers["Range"] = f"bytes={base}-"
+        req = urllib.request.Request(url, headers=headers)
         opener = urllib.request.build_opener(*proxy_handlers(proxy))
         with opener.open(req, timeout=_TIMEOUT) as resp:
-            total = int(resp.headers.get("Content-Length") or 0)
-            downloaded = 0
-            hasher = hashlib.sha256() if expected_sha256 else None
+            status = getattr(resp, "status", None) or resp.getcode()
+            if base > 0 and status == 206:
+                total = base + int(resp.headers.get("Content-Length") or 0)
+                mode = "ab"
+            else:
+                # 服务器不支持断点续传：丢弃分片整段重下
+                base = 0
+                total = int(resp.headers.get("Content-Length") or 0)
+                mode = "wb"
+            hasher = hashlib.sha256()
+            if base > 0:
+                # 校验和覆盖完整文件：先把已有分片喂进哈希
+                with open(part, "rb") as pf:
+                    while True:
+                        prev = pf.read(_CHUNK_SIZE)
+                        if not prev:
+                            break
+                        hasher.update(prev)
+            downloaded = base
+            session = 0
             start = time.monotonic()
             too_slow = False
-            with open(part, "wb") as f:
+            with open(part, mode) as f:
                 while True:
                     chunk = resp.read(_CHUNK_SIZE)
                     if not chunk:
                         break
                     f.write(chunk)
+                    session += len(chunk)
                     downloaded += len(chunk)
-                    if hasher:
-                        hasher.update(chunk)
-                    if (bail and downloaded < _BAIL_BYTES
+                    hasher.update(chunk)
+                    if (bail and session < _BAIL_BYTES
                             and time.monotonic() - start > _BAIL_SECONDS):
                         too_slow = True
                         break
@@ -402,7 +466,7 @@ def _download_one(url: str, dest: str, expected_size: int, progress_cb,
                         except Exception:
                             pass
         if too_slow:
-            _safe_remove(part)
+            # 保留分片：换下一个源可从此处续传（进度不回退）
             return False, T_DOWNLOAD_SLOW
         if expected_size > 0 and downloaded != expected_size:
             _safe_remove(part)
@@ -410,16 +474,22 @@ def _download_one(url: str, dest: str, expected_size: int, progress_cb,
         if expected_size <= 0 and total > 0 and downloaded != total:
             _safe_remove(part)
             return False, T_DOWNLOAD_SIZE_MISMATCH
-        if hasher and hasher.hexdigest().lower() != expected_sha256.lower():
+        if (expected_sha256
+                and hasher.hexdigest().lower() != expected_sha256.lower()):
             _safe_remove(part)
             return False, T_DOWNLOAD_BAD_SHA
         os.replace(part, dest)
         return True, ""
     except UpdateCancelled:
-        _safe_remove(part)
-        raise
+        raise  # 用户取消：保留 .part，下次下载可续传
+    except urllib.error.HTTPError as e:
+        e.close()
+        if e.code == 416:  # Range 超出文件末尾：分片异常，弃用重下
+            _safe_remove(part)
+            return False, T_DOWNLOAD_SIZE_MISMATCH
+        return False, f"{type(e).__name__}: {e}"
     except Exception as e:
-        _safe_remove(part)
+        # 网络中断等：保留分片前缀，下次续传
         return False, f"{type(e).__name__}: {e}"
 
 
