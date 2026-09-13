@@ -472,7 +472,10 @@ def _default_config() -> Dict[str, Any]:
             "feedback_offset_x": 0,
             "feedback_offset_y": 0,
             "gesture_exclude_apps": "sldworks",
-            "gesture_paused": False
+            "gesture_paused": False,
+            # 暂停手势全局快捷键（QKeySequence PortableText，如 "Ctrl+Alt+P"）：
+            # 留空 = 不启用，只从托盘菜单切换暂停状态
+            "pause_hotkey": ""
         },
         "profiles": {
             "AutoCAD-常用": {

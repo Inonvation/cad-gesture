@@ -108,14 +108,31 @@ _EN: Dict[str, str] = {
     "▾ 收起高级选项": "▾ Collapse advanced options",
     "日常无需修改。仅当 SolidWorks 里单键快捷键仍不生效时再打开":
         "Usually leave closed. Open only if single-key shortcuts still fail in SolidWorks",
-    "当前窗口": "This window",
-    "读取当前前台窗口的 exe 名，追加到排除列表（需先切到目标程序再点）":
-        "Append the foreground window's exe name to the exclude list "
-        "(switch to the target app first)",
-    "读取当前窗口失败": "Failed to read the foreground window",
-    "「{exe}」已在排除列表中": "\"{exe}\" is already excluded",
-    "已添加": "Added",
-    "已把「{exe}」加入不弹圆盘列表": "Added \"{exe}\" to the no-disc list",
+    "拾取窗口": "Pick a window",
+    "按住并拖到目标程序窗口上，松手后自动读取其进程名加入名单；拖回本工具窗口松手则取消":
+        "Hold and drag onto the target program's window and release to read "
+        "its process name and add it; drop back on this tool's own window to cancel",
+    "松手添加：{exe}": "Release to add: {exe}",
+    "无法识别的窗口": "Unrecognized window",
+    "松手取消（这里是本工具自己的窗口）":
+        "Release to cancel (this is this tool's own window)",
+    "添加应用…": "Add app…",
+    "添加应用": "Add application",
+    "输入进程名（可带路径或 .exe 后缀）加入名单":
+        "Type a process name (path or .exe suffix allowed) to add",
+    "进程名（可带路径或 .exe 后缀，自动归一化）：":
+        "Process name (path or .exe suffix allowed, normalised automatically):",
+    "如 excel 或 C:\\Program Files\\X\\EXCEL.EXE":
+        "e.g. excel or C:\\Program Files\\X\\EXCEL.EXE",
+    "「{name}」已在名单中": "\"{name}\" is already in the list",
+    "{name} 已在名单中": "{name} is already in the list",
+    "未能识别该窗口的程序": "Could not identify the program of this window",
+    "已取消拾取": "Pick cancelled",
+    "暂无应用 —— 点击「添加应用…」或「拾取窗口」添加":
+        "No apps yet — use \"Add app…\" or \"Pick a window\" to add one",
+    "进程名包含 {name} 的程序将不弹出圆盘":
+        "Programs whose process name contains \"{name}\" never show the disc",
+    "从名单移除": "Remove from list",
     "打开日志文件（%TEMP%\\cad-gesture.log）": "Open log file (%TEMP%\\cad-gesture.log)",
     "把全部方案命令和全局设置恢复为出厂默认（不可按方案撤销）":
         "Restore all profile commands and global settings to factory defaults "
@@ -222,6 +239,7 @@ _EN: Dict[str, str] = {
     "放弃": "Discard",
     "取消": "Cancel",
     "确定": "OK",
+    "添加": "Add",
     "修改未保存，已丢弃": "Changes discarded",
     "已取消选择": "Selection cancelled",
     "● 保存中…": "● Saving...",
@@ -416,6 +434,26 @@ _EN: Dict[str, str] = {
     "暂停手势": "Pause Gestures",
     "暂停后 CAD 内长按右键恢复原生菜单，手势不触发":
         "Paused: right-click in CAD returns to native menu, gestures off",
+    "暂停快捷键": "Pause Hotkey",
+    "点击后按下组合键即可录制；按 Esc 清空当前输入":
+        "Click and press a key combination to record; press Esc to clear",
+    "取消该快捷键（恢复为不启用）": "Remove this hotkey (back to disabled)",
+    "清除": "Clear",
+    "点击右侧输入框后按下想要的组合键（如 Ctrl+Alt+P）完成录制。之后在任意程序里按该键即可暂停/恢复手势（等同托盘菜单的「暂停手势」）。留空 = 不启用快捷键，只从托盘菜单切换。":
+        "Click the box and press the combination you want (e.g. Ctrl+Alt+P) "
+        "to record it. Afterwards, pressing that key in any app pauses/"
+        "resumes gestures (same as \"Pause Gestures\" in the tray menu); "
+        "leave empty to use the tray menu only.",
+    "设置后随时按下可暂停/恢复手势（暂停时 CAD 内长按右键恢复原生菜单）；留空 = 不启用。":
+        "Press the key anytime to pause/resume gestures (while paused, "
+        "right-click in CAD restores the native menu); leave empty to disable.",
+    "这个组合不适合做全局快捷键：请带上 Ctrl、Alt 或 Win 修饰键（如 Ctrl+Alt+P），或使用 F1~F12 单键，避免影响正常打字。":
+        "This combination is not safe as a global hotkey: include Ctrl, Alt "
+        "or Win (e.g. Ctrl+Alt+P), or use a single F1–F12 key, so normal "
+        "typing is not affected.",
+    "暂停快捷键 {key} 注册失败，可能已被其他程序占用":
+        "Failed to register pause hotkey {key}; it may already be in use "
+        "by another program",
     "手势已暂停，长按右键恢复原生菜单":
         "Gestures paused, right-click returns to native menu",
     "手势已恢复": "Gestures resumed",
@@ -692,7 +730,13 @@ _EN: Dict[str, str] = {
 
     # ---- 设置项说明（helpIcon tooltip） ----
     "按下哪个键呼出圆盘。侧键需要鼠标带前进/后退按键。": "Which mouse button opens the disc. Side buttons require a mouse with back/forward buttons.",
-    "这些程序里右键拖拽交给它们自己处理（逗号分隔 exe 关键字，如 sldworks、acad）。SolidWorks 的「鼠标笔势」本身就是右键拖动，默认已排除；不排除的话会弹出本工具圆盘，和它互相打架。排除优先于自定义应用注册 —— 写在这里就一定是「不弹圆盘」。": "In these programs right-drag is left to the program itself (comma-separated exe keywords, e.g. sldworks, acad). The SolidWorks mouse gesture is itself a right-drag, so it is excluded by default; otherwise this tool's disc would pop up and fight with it. The exclude list takes precedence over custom app registrations — anything listed here never shows the disc.",
+    "名单中的程序不触发圆盘，右键操作交由程序自身处理 —— 适用于自带右键手势的软件（如 SolidWorks）。":
+        "Apps in this list never show the disc — right-drag stays with the app "
+        "itself, for software with built-in right-drag gestures (e.g. SolidWorks).",
+    "匹配规则：按窗口所属进程名做包含匹配（如 excel 命中 excel.exe），不区分大小写、忽略 .exe 后缀；此名单优先于自定义应用注册，命中后必定不弹圆盘。":
+        "Matching: substring match on the window's process name (e.g. excel "
+        "matches excel.exe), case-insensitive, .exe suffix ignored; this list "
+        "takes precedence over custom app registrations.",
     "按下后不动时，经过该时长且有小幅位移即弹出圆盘；数值越小响应越快。": "Hold delay before the disc appears when you hold still with slight movement; smaller is more responsive.",
     "按下后滑动多少像素立即弹出圆盘。越小越灵敏，也越容易误触。": "Drag distance that pops up the disc immediately. Smaller is more sensitive but easier to trigger by accident.",
     "拖动时从圆心画一条跟随光标的线，帮你判断当前滑向哪个扇区。": "Draw a trail from the center following the cursor while dragging, to help aim at a sector.",

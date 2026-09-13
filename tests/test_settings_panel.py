@@ -112,9 +112,57 @@ def test_trigger_page_has_exclude_apps_field():
     from src.qt_settings_panel import TriggerPage
     cfg = {"settings": {}}
     page = TriggerPage(cfg)
-    assert page.exclude_edit.text() == "sldworks"
-    page.refresh({"settings": {"gesture_exclude_apps": "sldworks,acad"}})
-    assert page.exclude_edit.text() == "sldworks,acad"
+    assert page.exclude_widget.text() == "sldworks"
+    # 列表增删 → 归一化后写回配置（changed 信号联动 _set）
+    assert page.exclude_widget.add_entry(r"D:\X\ACAD.EXE") is True
+    assert cfg["settings"]["gesture_exclude_apps"] == "sldworks,acad"
+    # 重复添加（大小写不敏感）不写配置
+    assert page.exclude_widget.add_entry("acad") is False
+    assert cfg["settings"]["gesture_exclude_apps"] == "sldworks,acad"
+    # 进页面时按配置重建列表，重复项会被去重（refresh 换用新 config dict）
+    cfg2 = {"settings": {"gesture_exclude_apps": "sldworks,acad,sldworks"}}
+    page.refresh(cfg2)
+    assert page.exclude_widget.text() == "sldworks,acad"
+    assert page.exclude_widget.list.count() == 2
+    # 删除条目 → 同步写回当前配置
+    page.exclude_widget.remove_entry("acad")
+    assert cfg2["settings"]["gesture_exclude_apps"] == "sldworks"
+
+
+def test_trigger_page_pause_hotkey_editor():
+    """暂停快捷键：合法组合写配置，非法组合回退，清除恢复为不启用"""
+    _app()
+    from PySide6.QtGui import QKeySequence
+    from src.qt_settings_panel import TriggerPage
+    cfg = {"settings": {}}
+    page = TriggerPage(cfg)
+    # 默认留空 = 不启用
+    assert page.hotkey_edit.keySequence().isEmpty()
+    assert cfg["settings"].get("pause_hotkey", "") == ""
+    # 录制合法组合 → 写入配置
+    page.hotkey_edit.setKeySequence(QKeySequence("Ctrl+Alt+P"))
+    page._on_pause_hotkey_changed()
+    assert cfg["settings"]["pause_hotkey"] == "Ctrl+Alt+P"
+    # 非法组合（裸字母会全局吞打字）→ 拒绝并回退到上一个有效值
+    page.hotkey_edit.setKeySequence(QKeySequence("P"))
+    page._on_pause_hotkey_changed()
+    assert cfg["settings"]["pause_hotkey"] == "Ctrl+Alt+P"
+    # 清除 = 不启用
+    page._clear_pause_hotkey()
+    assert cfg["settings"]["pause_hotkey"] == ""
+    assert page.hotkey_edit.keySequence().isEmpty()
+
+
+def test_trigger_page_refresh_syncs_pause_hotkey():
+    """进入页面时用配置值回写快捷键（切方案/重载后不串状态）"""
+    _app()
+    from PySide6.QtGui import QKeySequence
+    from src.qt_settings_panel import TriggerPage
+    page = TriggerPage({"settings": {}})
+    page.refresh({"settings": {"pause_hotkey": "Ctrl+Alt+K"}})
+    assert page.hotkey_edit.keySequence() == QKeySequence("Ctrl+Alt+K")
+    page.refresh({"settings": {}})
+    assert page.hotkey_edit.keySequence().isEmpty()
 
 
 def test_help_icons_have_tooltips():

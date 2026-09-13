@@ -327,6 +327,11 @@ def _migrate_config(config: Dict[str, Any]) -> bool:
         # AutoCAD 而误弹圆盘
         settings["gesture_exclude_apps"] = "sldworks"
         migrated = True
+    if "pause_hotkey" not in settings:
+        # 暂停手势全局快捷键（如 "Ctrl+Alt+P"）：留空 = 不启用，
+        # 只从托盘菜单切换暂停状态
+        settings["pause_hotkey"] = ""
+        migrated = True
     if "feedback_position" not in settings:
         settings["feedback_position"] = "bottom_center"
         migrated = True
@@ -721,4 +726,3 @@ def ensure_auto_start_silent() -> None:
                               cmd.rstrip() + " " + _SILENT_ARG)
     except Exception:
         pass
-

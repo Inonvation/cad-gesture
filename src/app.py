@@ -160,6 +160,10 @@ class CADGestureApp:
         # 检查更新防重入（避免连点托盘/关于页重复开线程）
         self._update_check_busy = False
 
+        # 暂停快捷键状态：注册失败的提示去重 + 覆盖启动竞态的静默重试计数
+        self._pause_hotkey_err = ""
+        self._pause_hotkey_retries = 0
+
     def _init_late(self):
         """事件循环启动后的异步初始化：构建 QSS / 圆盘 / 引擎 / 钩子。
 
@@ -186,6 +190,20 @@ class CADGestureApp:
             )
             # 菜单被 Esc/左键取消时复位引擎手势状态，阻止松键补发命令
             self.menu._on_cancel = self.gesture_engine.cancel_gesture
+
+            # 暂停手势全局快捷键（可选，settings.pause_hotkey）：独立线程
+            # 注册 Win32 热键，失败不阻塞启动；触发经事件队列回主线程切换，
+            # 避免热键线程直接碰 Qt/引擎
+            try:
+                from src.hotkey_pause import PauseHotkey
+                self._pause_hotkey = PauseHotkey(
+                    on_toggle=lambda: self.event_queue.put(
+                        ("toggle_pause", None)),
+                    log=self.log)
+                if self._pause_hotkey.start():
+                    self._sync_pause_hotkey()
+            except Exception as e:
+                self.log.error("启动暂停快捷键失败: %s", e, exc_info=True)
 
             # 命令执行 worker：COM SendCommand 在 CAD 忙时可能阻塞数秒，
             # 放后台线程串行执行，主线程只做入队——弹窗/菜单/下一次手势即时响应
@@ -479,6 +497,15 @@ class CADGestureApp:
                                         cmd_queue.put((key, desc, target))
                             except Exception as e:
                                 self.log.error("命令执行错误: %s", e, exc_info=True)
+                        elif event_type == "toggle_pause":
+                            # 暂停快捷键（热键线程）经事件队列回主线程切换
+                            try:
+                                cur = bool(self.config.get("settings", {}).get(
+                                    "gesture_paused", False))
+                                self._toggle_pause(not cur)
+                            except Exception as e:
+                                self.log.error(
+                                    "快捷键切换暂停失败: %s", e, exc_info=True)
                         elif event_type == "update_check_result":
                             self._on_update_check_result(data)
                         elif event_type in ("update_progress_pct",
@@ -910,6 +937,41 @@ class CADGestureApp:
         except Exception as e:
             self.log.error("切换暂停手势失败: %s", e, exc_info=True)
 
+    def _sync_pause_hotkey(self):
+        """按 settings.pause_hotkey 注册/更换/注销暂停快捷键
+
+        _init_late 与每次配置重载都会调用；键值未变时 PauseHotkey 内部
+        直接短路，不重复注册。
+        """
+        hk = getattr(self, "_pause_hotkey", None)
+        if hk is None:
+            return
+        text = self.config.get("settings", {}).get("pause_hotkey", "") or ""
+        ok, err = hk.set_hotkey(text)
+        if ok:
+            self._pause_hotkey_err = ""
+            self._pause_hotkey_retries = 0
+            return
+        if err == "invalid":
+            # 设置界面会拦，只有手改配置文件才可能出现：记日志不提示
+            self.log.warning("暂停快捷键无效，已忽略: %r", text)
+            return
+        if err == "occupied":
+            # 覆盖启动竞态：旧实例还没退出时新实例注册会短暂失败，
+            # 先静默重试几次，仍被占用才提示一次（换键/重载不再刷屏）
+            if self._pause_hotkey_retries < 5:
+                self._pause_hotkey_retries += 1
+                QTimer.singleShot(2000, self._sync_pause_hotkey)
+                return
+            if self._pause_hotkey_err != text:
+                self._pause_hotkey_err = text
+                self._tray_message(
+                    T("CAD Gesture"),
+                    T("暂停快捷键 {key} 注册失败，可能已被其他程序占用")
+                    .format(key=text))
+            return
+        self.log.warning("暂停快捷键设置未响应: %r", text)
+
     def _open_config(self):
         """打开配置界面（Qt 版，独立窗口；延迟 import 避免启动加载整个界面链）
 
@@ -1076,6 +1138,8 @@ class CADGestureApp:
                 self._apply_ui_mode(mode)
             # SW 输入法助手开关可能变了：启停轮询定时器
             self._sync_ime_assist_timer()
+            # 暂停快捷键可能变了：重新注册/注销
+            self._sync_pause_hotkey()
         except Exception as e:
             self.log.error("重载配置失败: %s", e, exc_info=True)
 
@@ -1438,6 +1502,14 @@ class CADGestureApp:
                 self._sw_interceptor = None
         except Exception as e:
             self.log.error("停止 SolidWorks 按键直通失败: %s", e, exc_info=True)
+        try:
+            # 注销暂停快捷键并退出热键线程（热键绑定线程，先退干净再退出进程）
+            hk = getattr(self, "_pause_hotkey", None)
+            if hk is not None:
+                hk.stop()
+                self._pause_hotkey = None
+        except Exception as e:
+            self.log.error("停止暂停快捷键失败: %s", e, exc_info=True)
         try:
             menu = getattr(self, "menu", None)
             if menu is not None:

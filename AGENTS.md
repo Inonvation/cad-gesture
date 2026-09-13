@@ -30,6 +30,8 @@ src/
 ├── qt_config_gui.py    # Qt 配置界面（导航式 + 撤销重做 + 方案拖放排序 + Delete 删除）
 ├── qt_popup.py         # 扇区编辑浮层控制器（定位/信号接线，定位算法可单测）
 ├── qt_profile_ops.py   # 方案增删改查/导入导出的纯函数（无 Qt，可单测）
+├── qt_exclude_apps.py  # 不弹圆盘应用名单控件（列表 + 添加 + 拖动拾取窗口识别 exe；存储仍是逗号分隔串）
+├── hotkey_pause.py     # 全局暂停快捷键（Win32 RegisterHotKey，切换暂停手势；留空不启用）
 ├── sw_key_assist.py    # [SW] 按键直通（默认）：键盘钩子拦截被输入法吞掉的单键 → 直投 SW 窗口
 ├── sw_ime_assist.py    # [SW] 输入法助手（可选回退）：按焦点自动切换键盘布局
 ├── updater.py          # 自动更新（GitHub Releases → 下载 Setup → Inno 静默安装）
@@ -106,6 +108,7 @@ qt_radial_menu hover、配置两处预览共用）：
 | 新增 Python 依赖 | `requirements.txt` + `cad_gesture.spec`（PySide6 由 PyInstaller 内置 hook 自动收集） |
 | SW 按键直通（处理方式/键集/类名白名单） | `config_presets` 默认值 + `config_manager._migrate_config` + `qt_settings_panel`(TriggerPage) + `i18n.py` + `src/sw_key_assist.py` |
 | 不弹圆盘的应用名单（`gesture_exclude_apps`） | `config_presets` 默认值 + `config_manager._migrate_config` + `qt_settings_panel`(TriggerPage) + `i18n.py`；匹配逻辑在 `gesture_engine.parse_exclude_apps`/`match_exclude_exe` |
+| 暂停快捷键（`pause_hotkey`） | `config_presets` 默认值（""=不启用） + `config_manager._migrate_config` + `qt_settings_panel`(TriggerPage 录制控件) + `i18n.py` + `src/hotkey_pause.py`（解析/校验/RegisterHotKey） + `app.py`（`_sync_pause_hotkey` 注册、`toggle_pause` 事件、退出注销） |
 | 改圈层/触发阈值 | 只改 `menu_geometry.py` 的 `DEFAULT_RADII`（gesture_engine 与 qt_radial_menu 都从它取） |
 
 ## 一键验证
@@ -224,7 +227,7 @@ Compress-Archive -Path dist\CADGesture-x64 -DestinationPath "Releases\CADGesture
 
 `%APPDATA%\CADGesture\config.json` — `settings` + `profiles`（与 exe 位置无关，用户可编辑；旧版 `config/config.json` 仅用于首次迁移）。每个 profile 有 `sectors`（内层）、`outer_sectors`（外层）、`extension_sectors`（扩展圈）。
 字段：`description` = COM 命令名，`key` = pyautogui 回退键（自定义应用只走按键模拟），`target` = `autocad`|`zwcad` 或自定义应用 id（`app_xxx`）。
-`settings` 关键项：`app_order`（卡片显示顺序，内置 autocad/zwcad 在前）、`custom_targets`（自定义应用列表：`id`/`name`/`match_exe`/`match_title`）、`gesture_exclude_apps`（不弹圆盘的应用，exe 关键字逗号分隔，默认 `sldworks` —— 自带右键笔势的程序；优先于自定义应用注册）、`autocad_profile`/`zwcad_profile`/`{target}_profile`（各应用当前方案绑定）、`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 false）、`update_source_url`（更新源，默认 GitHub Release 页面）、`update_proxy`（更新专用代理，默认空 = 跟随系统；代理软件是 PAC 模式时程序感知不到，需手动填如 `http://127.0.0.1:7890`）、`update_mirrors`（下载加速镜像前缀列表，默认 gh-proxy.com/ghfast.top/gh-proxy.org，失效可编辑，逗号分隔展示在设置页）、`last_update_check`（上次检查时间，24h 频率控制）、`ime_assist_sw`（SW 快捷键直通总开关，默认 true）、`ime_assist_mode`（`key`=按键直通 / `layout`=切键盘布局，默认 key）、`sw_key_list`（直通键集，默认 `A-Z,0-9,SPACE`）、`sw_key_extra_classes`（额外视口类名白名单，默认空）。
+`settings` 关键项：`app_order`（卡片显示顺序，内置 autocad/zwcad 在前）、`custom_targets`（自定义应用列表：`id`/`name`/`match_exe`/`match_title`）、`gesture_exclude_apps`（不弹圆盘的应用，exe 关键字逗号分隔，默认 `sldworks` —— 自带右键笔势的程序；优先于自定义应用注册）、`autocad_profile`/`zwcad_profile`/`{target}_profile`（各应用当前方案绑定）、`menu_theme`（圆盘外观）、`menu_scale`（整体缩放 50~150%）、`menu_opacity`（不透明度）、`ui_mode`（dark/light/system）、`language`（zh/en）、`hold_threshold_ms`（长按延迟，默认 80）、`trigger_distance`（触发距离，默认 10，可调 5~40）、`open_config_on_start`、`auto_switch_profile`、`check_update_on_start`（启动时检查更新，默认 false）、`update_source_url`（更新源，默认 GitHub Release 页面）、`update_proxy`（更新专用代理，默认空 = 跟随系统；代理软件是 PAC 模式时程序感知不到，需手动填如 `http://127.0.0.1:7890`）、`update_mirrors`（下载加速镜像前缀列表，默认 gh-proxy.com/ghfast.top/gh-proxy.org，失效可编辑，逗号分隔展示在设置页）、`last_update_check`（上次检查时间，24h 频率控制）、`ime_assist_sw`（SW 快捷键直通总开关，默认 true）、`ime_assist_mode`（`key`=按键直通 / `layout`=切键盘布局，默认 key）、`sw_key_list`（直通键集，默认 `A-Z,0-9,SPACE`）、`sw_key_extra_classes`（额外视口类名白名单，默认空）、`pause_hotkey`（暂停手势全局快捷键，如 `Ctrl+Alt+P`，默认空 = 不启用；按下等同托盘「暂停手势」，注册走 Win32 RegisterHotKey，不带 Ctrl/Alt/Win 修饰的组合会被安全校验拒绝）。
 
 ## 提交规范
 

@@ -16,14 +16,15 @@
 import os
 from datetime import datetime
 from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
-from PySide6.QtGui import (QColor, QFont, QIcon, QPainter, QPixmap,
-                           QRadialGradient)
+from PySide6.QtGui import (QColor, QFont, QIcon, QKeySequence, QPainter,
+                           QPixmap, QRadialGradient)
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QColorDialog,
                                QComboBox, QFileDialog, QFrame, QGridLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QScrollArea, QSlider, QSpinBox,
-                               QToolTip, QVBoxLayout, QWidget, QMessageBox)
+                               QKeySequenceEdit, QPushButton, QScrollArea,
+                               QSlider, QSpinBox, QToolTip, QVBoxLayout,
+                               QWidget, QMessageBox)
 
 from src.config_manager import (save_config, get_auto_start, set_auto_start,
                                 get_config_path, set_config_dir,
@@ -789,30 +790,33 @@ class TriggerPage(_BasePage):
         self.body.addLayout(btn_row)
 
         # 不弹圆盘的应用（自带右键拖拽手势的程序，如 SolidWorks 鼠标笔势）
-        excl_row = QHBoxLayout()
-        excl_row.setSpacing(10)
+        # 标题行右侧放操作按钮；标题下方一行常驻说明讲用途，匹配规则放「?」悬浮
+        from src.qt_exclude_apps import ExcludeAppsWidget
+        self.exclude_widget = ExcludeAppsWidget(
+            config.get("settings", {}).get("gesture_exclude_apps", "sldworks"))
+        self.exclude_widget.changed.connect(
+            lambda text: self._set("gesture_exclude_apps", text))
+        excl_head = QHBoxLayout()
+        excl_head.setSpacing(10)
         self._lb_exclude = QLabel(T("不弹圆盘的应用"))
         self.register_text(self._lb_exclude, "不弹圆盘的应用")
-        excl_row.addWidget(self._lb_exclude)
-        excl_row.addWidget(self._help(
-            "这些程序里右键拖拽交给它们自己处理（逗号分隔 exe 关键字，"
-            "如 sldworks、acad）。SolidWorks 的「鼠标笔势」本身就是右键拖动，"
-            "默认已排除；不排除的话会弹出本工具圆盘，和它互相打架。"
-            "排除优先于自定义应用注册 —— 写在这里就一定是「不弹圆盘」。"))
-        self.exclude_edit = QLineEdit(
-            config.get("settings", {}).get("gesture_exclude_apps", "sldworks"))
-        self.exclude_edit.setMaximumWidth(180)
-        self.exclude_edit.editingFinished.connect(
-            lambda: self._set("gesture_exclude_apps",
-                              self.exclude_edit.text().strip()))
-        excl_row.addWidget(self.exclude_edit)
-        self.btn_exclude_capture = QPushButton(T("当前窗口"))
-        self.btn_exclude_capture.setToolTip(
-            T("读取当前前台窗口的 exe 名，追加到排除列表（需先切到目标程序再点）"))
-        self.btn_exclude_capture.clicked.connect(self._capture_exclude_window)
-        excl_row.addWidget(self.btn_exclude_capture)
-        excl_row.addStretch(1)
-        self.body.addLayout(excl_row)
+        excl_head.addWidget(self._lb_exclude)
+        excl_head.addWidget(self._help(
+            "匹配规则：按窗口所属进程名做包含匹配（如 excel 命中 excel.exe），"
+            "不区分大小写、忽略 .exe 后缀；此名单优先于自定义应用注册，"
+            "命中后必定不弹圆盘。"))
+        excl_head.addStretch(1)
+        excl_head.addWidget(self.exclude_widget.btn_pick)
+        excl_head.addWidget(self.exclude_widget.btn_add)
+        self.body.addLayout(excl_head)
+        exclude_desc = ("名单中的程序不触发圆盘，右键操作交由程序自身处理"
+                        " —— 适用于自带右键手势的软件（如 SolidWorks）。")
+        self._exclude_desc = QLabel(T(exclude_desc))
+        self._exclude_desc.setObjectName("pageSub")
+        self._exclude_desc.setWordWrap(True)
+        self.register_text(self._exclude_desc, exclude_desc)
+        self.body.addWidget(self._exclude_desc)
+        self.body.addWidget(self.exclude_widget)
 
         self._hold_slider, self._hold_label = self._slider_row(
             "长按延迟", "hold_threshold_ms", 0, 200, "ms",
@@ -825,6 +829,39 @@ class TriggerPage(_BasePage):
         self.chk_trail = self._check_row(
             "手势轨迹线", "gesture_trail", True,
             help="拖动时从圆心画一条跟随光标的线，帮你判断当前滑向哪个扇区。")
+
+        # ===== 暂停手势（全局快捷键开关，默认留空不启用） =====
+        self._section("暂停手势")
+        hk_row = QHBoxLayout()
+        hk_row.setSpacing(10)
+        self._lb_pause_hk = QLabel(T("暂停快捷键"))
+        self.register_text(self._lb_pause_hk, "暂停快捷键")
+        hk_row.addWidget(self._lb_pause_hk)
+        hk_row.addWidget(self._help(
+            "点击右侧输入框后按下想要的组合键（如 Ctrl+Alt+P）完成录制。"
+            "之后在任意程序里按该键即可暂停/恢复手势（等同托盘菜单的"
+            "「暂停手势」）。留空 = 不启用快捷键，只从托盘菜单切换。"))
+        self.hotkey_edit = QKeySequenceEdit(self)
+        self.hotkey_edit.setMaximumWidth(170)
+        self.hotkey_edit.setToolTip(
+            T("点击后按下组合键即可录制；按 Esc 清空当前输入"))
+        cur_hk = config.get("settings", {}).get("pause_hotkey", "") or ""
+        if cur_hk:
+            self.hotkey_edit.setKeySequence(QKeySequence(cur_hk))
+        self.hotkey_edit.editingFinished.connect(self._on_pause_hotkey_changed)
+        hk_row.addWidget(self.hotkey_edit)
+        self.btn_hotkey_clear = QPushButton(T("清除"))
+        self.btn_hotkey_clear.setToolTip(T("取消该快捷键（恢复为不启用）"))
+        self.btn_hotkey_clear.clicked.connect(self._clear_pause_hotkey)
+        self.register_text(self.btn_hotkey_clear, "清除")
+        hk_row.addWidget(self.btn_hotkey_clear)
+        hk_row.addStretch(1)
+        self.body.addLayout(hk_row)
+        self._pause_hk_hint = QLabel("")
+        self._pause_hk_hint.setObjectName("pageSub")
+        self._pause_hk_hint.setWordWrap(True)
+        self.body.addWidget(self._pause_hk_hint)
+        self._set_pause_hk_hint("info")
 
         # ===== 命令反馈（原「命令反馈」分类合并进来） =====
         self._section("命令反馈")
@@ -994,51 +1031,45 @@ class TriggerPage(_BasePage):
             (T("▾ 收起高级选项") if checked
              else T("▸ 仅当快捷键失效时，展开高级选项")))
 
-    def _capture_exclude_window(self):
-        """把当前前台窗口的 exe 名追加到排除列表（避免手填记不住 exe）"""
-        try:
-            import ctypes
-            import ctypes.wintypes as wintypes
-            user32 = ctypes.windll.user32
-            user32.GetForegroundWindow.restype = wintypes.HWND
-            hwnd = user32.GetForegroundWindow()
-            if not hwnd:
-                return
-            pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            kernel32 = ctypes.windll.kernel32
-            h = kernel32.OpenProcess(
-                0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
-            exe = ""
-            if h:
-                try:
-                    buf = ctypes.create_unicode_buffer(1024)
-                    size = wintypes.DWORD(1024)
-                    if kernel32.QueryFullProcessImageNameW(
-                            h, 0, buf, ctypes.byref(size)):
-                        exe = os.path.basename(buf.value)
-                finally:
-                    kernel32.CloseHandle(h)
-            if not exe:
-                QMessageBox.warning(self, T("提示"), T("读取当前窗口失败"))
-                return
-            key = os.path.splitext(exe)[0].lower()
-            cur = self.exclude_edit.text().strip()
-            parts = [p.strip().lower() for p in cur.split(",") if p.strip()]
-            if key in parts:
-                QMessageBox.information(
-                    self, T("提示"),
-                    T("「{exe}」已在排除列表中").format(exe=key))
-                return
-            parts.append(key)
-            text = ",".join(parts)
-            self.exclude_edit.setText(text)
-            self._set("gesture_exclude_apps", text)
-            QMessageBox.information(
-                self, T("已添加"),
-                T("已把「{exe}」加入不弹圆盘列表").format(exe=key))
-        except Exception as e:
-            QMessageBox.warning(self, T("错误"), str(e))
+    # ---- 暂停快捷键 ----
+
+    _PAUSE_HK_HINTS = {
+        "info": "设置后随时按下可暂停/恢复手势（暂停时 CAD 内长按右键恢复"
+                "原生菜单）；留空 = 不启用。",
+        "error": "这个组合不适合做全局快捷键：请带上 Ctrl、Alt 或 Win 修饰键"
+                 "（如 Ctrl+Alt+P），或使用 F1~F12 单键，避免影响正常打字。",
+    }
+
+    def _set_pause_hk_hint(self, kind: str):
+        """切换快捷键行的提示文案（info 常态说明 / error 非法组合警告）"""
+        self._pause_hk_state = kind
+        self._pause_hk_hint.setText(T(self._PAUSE_HK_HINTS[kind]))
+
+    def _on_pause_hotkey_changed(self):
+        """快捷键录制完成：安全校验通过才写配置，非法组合回退并提示"""
+        seq = self.hotkey_edit.keySequence()
+        text = seq.toString(QKeySequence.PortableText).strip()
+        if not text:
+            self._set("pause_hotkey", "")
+            self._set_pause_hk_hint("info")
+            return
+        from src.hotkey_pause import is_valid_hotkey
+        if not is_valid_hotkey(text):
+            # 回退到上一个有效值（可能为空）：非法组合不写入配置
+            prev = self.config.get("settings", {}).get("pause_hotkey", "") or ""
+            self.hotkey_edit.blockSignals(True)
+            self.hotkey_edit.setKeySequence(QKeySequence(prev))
+            self.hotkey_edit.blockSignals(False)
+            self._set_pause_hk_hint("error")
+            return
+        self._set("pause_hotkey", text)
+        self._set_pause_hk_hint("info")
+
+    def _clear_pause_hotkey(self):
+        """清除快捷键 = 不启用该功能"""
+        self.hotkey_edit.setKeySequence(QKeySequence())
+        self._set("pause_hotkey", "")
+        self._set_pause_hk_hint("info")
 
     def _on_ime_mode_changed(self, idx):
         self._set("ime_assist_mode", self.ime_mode_combo.itemData(idx))
@@ -1071,10 +1102,10 @@ class TriggerPage(_BasePage):
         self.chk_trail.blockSignals(False)
         # 命令反馈
         s = config.get("settings", {})
-        self.exclude_edit.blockSignals(True)
-        self.exclude_edit.setText(
+        self.exclude_widget.blockSignals(True)
+        self.exclude_widget.set_text(
             s.get("gesture_exclude_apps", "sldworks"))
-        self.exclude_edit.blockSignals(False)
+        self.exclude_widget.blockSignals(False)
         self.chk_feedback.blockSignals(True)
         self.chk_feedback.setChecked(s.get("command_feedback", True))
         self.chk_feedback.blockSignals(False)
@@ -1105,11 +1136,21 @@ class TriggerPage(_BasePage):
         self.extra_cls_edit.setText(s.get("sw_key_extra_classes", ""))
         self.extra_cls_edit.blockSignals(False)
         self._sync_ime_mode_rows()
+        # 暂停快捷键（空 = 不启用）
+        self.hotkey_edit.blockSignals(True)
+        self.hotkey_edit.setKeySequence(
+            QKeySequence(s.get("pause_hotkey", "") or ""))
+        self.hotkey_edit.blockSignals(False)
+        self._set_pause_hk_hint("info")
 
     def retranslate(self):
         super().retranslate()
+        # 不弹圆盘名单控件的按钮/提示文案跟随语言切换
+        self.exclude_widget.retranslate()
         # 高级折叠按钮文案随展开态切换，不能被 register_text 固定成折叠文案
         self._toggle_ime_adv(self._adv_toggle.isChecked())
+        # 快捷键提示是动态文案（常态说明/非法警告），单独刷新
+        self._set_pause_hk_hint(getattr(self, "_pause_hk_state", "info"))
 
 
 class AboutPage(_BasePage):

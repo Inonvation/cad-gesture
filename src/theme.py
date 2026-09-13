@@ -303,7 +303,8 @@ QPushButton.danger {{ background: {t.danger_bg}; border-color: {t.danger_border}
                       color: {t.danger}; }}
 QPushButton.danger:hover {{ background: {t.danger_border}; }}
 QPushButton.iconBtn {{ background: transparent; border: 1px solid transparent;
-                       border-radius: {RADIUS_SM}px; padding: 4px 8px; }}
+                       border-radius: {RADIUS_SM}px; padding: 4px 8px;
+                       min-height: 0; }}
 QPushButton.iconBtn:hover {{ background: {t.bg_hover}; border-color: {t.border}; }}
 QPushButton.iconBtn:disabled {{ color: {t.text_muted}; }}
 
@@ -405,6 +406,19 @@ QListWidget#ctxList::item:hover {{ background: {t.bg_hover}; }}
 QListWidget#ctxList::item:selected {{
     background: transparent; color: {t.accent};
     border-left: 3px solid {t.accent}; padding-left: 7px; }}
+
+/* ---- 不弹圆盘名单列表（干净卡片框：细边框 + 卡片底色，条目行全透明） ---- */
+QListWidget#excludeList {{
+    background: {t.bg_card}; border: 1px solid {t.border};
+    border-radius: {RADIUS_MD}px; padding: 2px;
+}}
+QListWidget#excludeList::item {{
+    background: transparent; padding: 0px; border-radius: {RADIUS_SM}px; }}
+QListWidget#excludeList::item:hover {{ background: transparent; }}
+QLabel#excludeHint {{ color: {t.text_muted}; background: transparent; }}
+QLabel#excludeToast {{ color: {t.text}; background: {t.bg_raised};
+    border: 1px solid {t.border_strong}; border-radius: {RADIUS_SM}px;
+    padding: 5px 12px; }}
 
 /* ---- 方案卡片（可折叠、可拖动排序） ---- */
 QFrame#profileCard {{
