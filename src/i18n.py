@@ -707,7 +707,7 @@ _EN: Dict[str, str] = {
     "提示文字显示多久后自动消失。": "How long the hint text stays before disappearing.",
     "打开 AutoCAD 时自动使用 AutoCAD 方案，切换到中望CAD 时自动使用对应方案。": "Automatically use the AutoCAD profile when AutoCAD is active and the ZWCAD profile when ZWCAD is active.",
     "程序启动后自动打开设置窗口，适合第一次配置时使用。": "Open the settings window on startup; handy for first-time setup.",
-    "登录 Windows 后自动在后台启动本工具，无需手动打开。": "Launch in the background automatically after you sign in to Windows.",
+    "登录 Windows 后自动在后台静默启动，仅显示托盘图标，不弹任何窗口。": "Start silently in the background after you sign in to Windows — only the tray icon appears, no windows pop up.",
     "每次启动自动联网检查新版本，发现更新会提示你。": "Check for updates automatically on every startup and notify you when a new version is found.",
     "配置和方案的保存位置。默认在 %APPDATA%\\CADGesture，可迁移到其他磁盘。": "Where config and profiles are stored. Default: %APPDATA%\\CADGesture; can be moved to another drive.",
 

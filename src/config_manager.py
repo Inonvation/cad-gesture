@@ -622,6 +622,8 @@ def set_active_profile(config: Dict[str, Any], profile_name: str) -> bool:
 
 _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _RUN_VALUE = "CADGesture"
+# 静默启动参数：开机自启的启动命令带它，进程启动后只显示托盘图标不弹窗口
+_SILENT_ARG = "--silent"
 
 
 def export_full_config(path: str) -> tuple:
@@ -647,6 +649,23 @@ def import_full_config(path: str) -> tuple:
     return True, data
 
 
+def _autostart_command() -> str:
+    """构建注册到 Run 键的启动命令（带静默参数）
+
+    打包 exe 注册可执行文件本身；源码运行优先 pythonw.exe（不闪控制台黑框）。
+    """
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}" {_SILENT_ARG}'
+    python_exe = sys.executable
+    if os.path.basename(python_exe).lower() == "python.exe":
+        pythonw = os.path.join(os.path.dirname(python_exe), "pythonw.exe")
+        if os.path.exists(pythonw):
+            python_exe = pythonw
+    main_py = os.path.abspath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "main.py"))
+    return f'"{python_exe}" "{main_py}" {_SILENT_ARG}'
+
+
 def get_auto_start() -> bool:
     """查询是否已注册开机自启（以注册表为准）"""
     try:
@@ -660,7 +679,8 @@ def get_auto_start() -> bool:
 def set_auto_start(enabled: bool) -> bool:
     """设置/取消开机自启
 
-    源码运行注册 python.exe + main.py；打包 exe 注册可执行文件本身。
+    源码运行注册 pythonw + main.py；打包 exe 注册可执行文件本身。
+    注册的命令带 --silent 参数（静默启动，只显示托盘图标）。
 
     Returns:
         True 表示注册表写入成功；False 表示失败。
@@ -669,13 +689,8 @@ def set_auto_start(enabled: bool) -> bool:
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0,
                                 winreg.KEY_SET_VALUE) as key:
             if enabled:
-                if getattr(sys, "frozen", False):
-                    cmd = f'"{sys.executable}"'
-                else:
-                    main_py = os.path.abspath(os.path.join(
-                        os.path.dirname(os.path.abspath(__file__)), "..", "main.py"))
-                    cmd = f'"{sys.executable}" "{main_py}"'
-                winreg.SetValueEx(key, _RUN_VALUE, 0, winreg.REG_SZ, cmd)
+                winreg.SetValueEx(key, _RUN_VALUE, 0, winreg.REG_SZ,
+                                  _autostart_command())
             else:
                 try:
                     winreg.DeleteValue(key, _RUN_VALUE)
@@ -684,4 +699,26 @@ def set_auto_start(enabled: bool) -> bool:
         return True
     except Exception:
         return False
+
+
+def ensure_auto_start_silent() -> None:
+    """旧版本注册的自启动命令没有 --silent 参数，启动时静默补上
+
+    只在已注册且命令缺参数时重写一次；未启用自启动或已是新格式则不动。
+    任何失败都忽略（下次启动再试），不影响正常启动流程。
+    """
+    try:
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, _RUN_KEY, 0,
+                winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as key:
+            try:
+                cmd, _ = winreg.QueryValueEx(key, _RUN_VALUE)
+            except OSError:
+                return  # 未启用开机自启，无事可做
+            if _SILENT_ARG in cmd:
+                return
+            winreg.SetValueEx(key, _RUN_VALUE, 0, winreg.REG_SZ,
+                              cmd.rstrip() + " " + _SILENT_ARG)
+    except Exception:
+        pass
 

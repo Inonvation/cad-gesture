@@ -1150,7 +1150,7 @@ class AboutPage(_BasePage):
             help="打开 AutoCAD 时自动使用 AutoCAD 方案，切换到中望CAD 时自动使用对应方案。")
         self.chk_startup = self._check_row(
             "开机自启", "auto_start", False, toggled=self._on_startup,
-            help="登录 Windows 后自动在后台启动本工具，无需手动打开。")
+            help="登录 Windows 后自动在后台静默启动，仅显示托盘图标，不弹任何窗口。")
         self.chk_update = self._check_row(
             "启动时检查更新", "check_update_on_start", False,
             help="每次启动自动联网检查新版本，发现更新会提示你。")

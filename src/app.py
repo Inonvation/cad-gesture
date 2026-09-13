@@ -19,7 +19,7 @@ from src.config_manager import (
     load_config, save_config, get_active_profile,
     get_profile_for_window, get_profile_names, set_active_profile,
     set_profile_for_target, get_target_order, get_target_label,
-    get_config_path, get_sector_command
+    get_config_path, get_sector_command, ensure_auto_start_silent
 )
 from src.gesture_engine import GestureEngine
 from src.qt_radial_menu import QRadialMenu
@@ -35,6 +35,9 @@ from src.version import __version__
 
 _CHECK_INTERVAL_SEC = 24 * 3600  # 启动自动检查的最小间隔
 _UPDATE_NOTES_MAX = 800
+# 开机自启注册命令带的静默参数：进程启动后只显示托盘图标，
+# 不按 open_config_on_start 弹设置窗口（手动启动无此参数，行为不变）
+_SILENT_ARG = "--silent"
 # 更新标记文件：更新流程退出前写入"期望安装的新版本号"，新版启动时读取并
 # 与自身版本比对——达到期望 = 更新成功弹确认；仍低于期望 = 上次静默安装中途
 # 失败（旧版已退出，用户无感知），弹提示引导手动处理。随后删除标记。
@@ -112,6 +115,8 @@ class CADGestureApp:
 
     def __init__(self):
         self._is_first_run = not os.path.exists(get_config_path())
+        # 静默启动：开机自启的启动命令带 --silent（config_manager 注册）
+        self._silent_start = _SILENT_ARG in sys.argv[1:]
         self.config = load_config()
         self.log = get_logger()
 
@@ -230,9 +235,14 @@ class CADGestureApp:
                 target=self._preload_then_install_hooks,
                 daemon=True).start()
 
-            # 首次运行或配置了"启动时打开此界面"则自动打开配置
-            if self._is_first_run or self.config.get("settings", {}).get(
-                    "open_config_on_start", False):
+            # 旧版本注册的自启动命令缺 --silent 参数，补一次（未启用则无操作）
+            ensure_auto_start_silent()
+
+            # 首次运行或配置了"启动时打开此界面"则自动打开配置；
+            # 开机自启（--silent）静默启动，只保留托盘图标不弹窗口
+            if not self._silent_start and (self._is_first_run or
+                    self.config.get("settings", {}).get(
+                        "open_config_on_start", False)):
                 QTimer.singleShot(500, self._open_config)
         except Exception as e:
             self.log.error("异步初始化失败: %s", e, exc_info=True)
